@@ -160,6 +160,14 @@ export default function Buscar() {
   const [infoLoading, setInfoLoading] = useState(false);
   const [infoError, setInfoError] = useState('');
 
+  // Instalación iOS PWA
+  const [iosInstallOpen, setIosInstallOpen] = useState(false);
+  const esIosSafari =
+    Platform.OS === 'web' &&
+    typeof window !== 'undefined' &&
+    /iPhone|iPad|iPod/.test((window.navigator as any)?.userAgent || '') &&
+    !(window.navigator as any)?.standalone;
+
   const player = useVideoPlayer(null, (p) => { p.loop = false; p.timeUpdateEventInterval = 0.5; });
 
   useEffect(() => { mediaUriRef.current = mediaUri; }, [mediaUri]);
@@ -279,8 +287,16 @@ export default function Buscar() {
     setDur(0);
     pendingSeekRef.current = null;
     player.replace({ uri: mediaUri });
+    if (Platform.OS === 'web') {
+      const el = (globalThis as any).document?.querySelector('video') as any;
+      if (el) {
+        try {
+          el.src = mediaUri;
+          el.load();
+        } catch (e) {}
+      }
+    }
     if (autoPlayRef.current) {
-      // No tocamos setReproduciendo aquí — el polling lo sincronizará con el DOM real.
       player.play();
       if (Platform.OS === 'web') {
         const el = (globalThis as any).document?.querySelector('video') as any;
@@ -424,8 +440,8 @@ export default function Buscar() {
 
   function reproducir(lista: YtResult[], idx: number, audio: boolean) {
     if (!lista.length) return;
-    autoPlayRef.current = false;
-    setReproduciendo(false);
+    autoPlayRef.current = true;
+    setReproduciendo(true);
     let arr = lista; let start = idx;
     if (shuffleRef.current) {
       const first = lista[idx];
@@ -433,7 +449,7 @@ export default function Buscar() {
       for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
       arr = [first, ...rest]; start = 0;
     }
-    setCola(arr); colaRef.current = arr; aplicar(arr[start], audio, start, false);
+    setCola(arr); colaRef.current = arr; aplicar(arr[start], audio, start, true);
   }
 
   function siguiente(auto?: boolean | any) {
@@ -471,12 +487,39 @@ export default function Buscar() {
     }
     setPos(target);
   }
-  function togglePlay() {
+  async function togglePlay() {
+    const uri = mediaUri || mediaUriRef.current;
     if (Platform.OS === 'web') {
       const el = (globalThis as any).document?.querySelector('video') as any;
-      if (el) { el.paused ? el.play().catch(() => {}) : el.pause(); return; }
+      if (el) {
+        if (!el.src && uri) {
+          try {
+            el.src = uri;
+            el.load();
+          } catch (e) {}
+        }
+        if (el.paused) {
+          try {
+            await el.play();
+            setReproduciendo(true);
+            return;
+          } catch (e) {
+            console.warn('el.play fallo, usando player.play', e);
+          }
+        } else {
+          el.pause();
+          setReproduciendo(false);
+          return;
+        }
+      }
     }
-    reproduciendo ? player.pause() : player.play();
+    if (reproduciendo) {
+      player.pause();
+      setReproduciendo(false);
+    } else {
+      player.play();
+      setReproduciendo(true);
+    }
   }
   function cerrar() {
     player.pause();
@@ -595,13 +638,26 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
     setInfoLoading(false);
   }
 
-  const enCola = cola.length > 1 && qIdx >= 0;
-  const proximos = enCola ? cola.slice(qIdx + 1) : [];
+  const listaActiva = cola.length > 0 ? cola : results;
+  const idxEfectivo = qIdx >= 0 ? qIdx : 0;
+  const enCola = listaActiva.length > 1;
+  const proximos = enCola ? listaActiva.slice(idxEfectivo + 1) : [];
   const durEfectiva = dur > 0 ? dur : (actual?.duration || 0);
   const estaSonando = Boolean(mediaUri && reproduciendo);
 
   return (
     <View style={s.container}>
+      {esIosSafari ? (
+        <Pressable style={s.iosBanner} onPress={() => setIosInstallOpen(true)}>
+          <Text style={s.iosBannerIcon}>📲</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.iosBannerTitle}>Instalar YouThink en este iPhone</Text>
+            <Text style={s.iosBannerSub}>Usalo a pantalla completa como una app real</Text>
+          </View>
+          <Text style={s.iosBannerBtn}>Instalar ›</Text>
+        </Pressable>
+      ) : null}
+
       <View style={s.searchRow}>
         <TextInput style={s.input} placeholder="Buscá en YouTube…" placeholderTextColor={theme.colors.textDim}
           value={query} onChangeText={setQuery} onSubmitEditing={buscar} returnKeyType="search" autoCorrect={false} />
@@ -698,76 +754,83 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             allowsPictureInPicture={modo === 'video'} contentFit="contain" />
 
           {modo === 'audio' ? (
-            <View style={{ flex: 1 }}>
-              <View style={s.audioBox}>
-                <Text style={s.audioIcon}>🔊</Text>
-                <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
-                <Text style={s.audioSub}>{actual?.channel}</Text>
-                {!mediaUri ? (
-                  error ? <Text style={s.audioErr}>{error}</Text> : <CargaAnim texto="Generando audio…" />
-                ) : null}
-                <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
-                <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
-                <View style={s.ctrlRow}>
-                  <Pressable style={s.ctrlBtn} onPress={anterior} disabled={!enCola || qIdx <= 0}>
-                    <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
-                  </Pressable>
-                  <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
-                  <Pressable style={s.playBtnCenter} onPress={togglePlay}>
-                    <Text style={[s.playBtnCenterIcon, !estaSonando && { marginLeft: 3 }]}>
-                      {estaSonando ? '⏸' : '▶'}
-                    </Text>
-                  </Pressable>
-                  <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
-                  <Pressable style={s.ctrlBtn} onPress={siguiente} disabled={!enCola || (qIdx >= cola.length - 1 && repeat !== 'all')}>
-                    <Text style={[s.ctrl, (!enCola || (qIdx >= cola.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
-                  </Pressable>
-                </View>
-
-                {/* ── Botones de Descarga y Lista ── */}
-                <View style={s.actionRow}>
-                  <Pressable
-                    style={[s.actionBtn, descargando && { opacity: 0.5 }]}
-                    onPress={descargar}
-                    disabled={!mediaUri || descargando}
-                  >
-                    <Text style={s.actionBtnIcon}>⬇️</Text>
-                    <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={s.actionBtn}
-                    onPress={abrirModalPlaylists}
-                    disabled={addingToPlaylist}
-                  >
-                    <Text style={s.actionBtnIcon}>➕</Text>
-                    <Text style={s.actionBtnText}>Añadir a lista</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
-              <FlatList data={proximos} keyExtractor={(it) => 'q-' + it.id}
-                renderItem={({ item }) => {
-                  const realIdx = cola.indexOf(item);
-                  return (
-                    <Pressable style={s.qRow} onPress={() => aplicar(item, true, realIdx)}>
-                      <Image source={{ uri: item.thumb }} style={s.qThumb} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
-                        <Text style={s.qSub} numberOfLines={1}>
-                          {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+            <FlatList
+              data={proximos}
+              keyExtractor={(it) => 'q-' + it.id}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <View>
+                  <View style={s.audioBox}>
+                    <Text style={s.audioIcon}>🔊</Text>
+                    <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
+                    <Text style={s.audioSub}>{actual?.channel}</Text>
+                    {!mediaUri ? (
+                      error ? <Text style={s.audioErr}>{error}</Text> : <CargaAnim texto="Generando audio…" />
+                    ) : null}
+                    <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
+                    <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
+                    <View style={s.ctrlRow}>
+                      <Pressable style={s.ctrlBtn} onPress={anterior} disabled={!enCola || qIdx <= 0}>
+                        <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
+                      </Pressable>
+                      <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
+                      <Pressable style={s.playBtnCenter} onPress={togglePlay}>
+                        <Text style={[s.playBtnCenterIcon, !estaSonando && { marginLeft: 3 }]}>
+                          {estaSonando ? '⏸' : '▶'}
                         </Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
-                        {item.duration ? <Text style={s.qDurText}>{fmtTiempo(item.duration)}</Text> : null}
-                        <Text style={s.play}>▶</Text>
-                      </View>
-                    </Pressable>
-                  );
-                }}
-                ListEmptyComponent={<Text style={s.empty}>{enCola ? 'Es el último de la cola.' : 'Sin cola. Usá "Reproducir todo".'}</Text>}
-              />
-            </View>
+                      </Pressable>
+                      <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
+                      <Pressable style={s.ctrlBtn} onPress={siguiente} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
+                        <Text style={[s.ctrl, (!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
+                      </Pressable>
+                    </View>
+
+                    {/* ── Botones de Descarga y Lista ── */}
+                    <View style={s.actionRow}>
+                      <Pressable
+                        style={[s.actionBtn, descargando && { opacity: 0.5 }]}
+                        onPress={descargar}
+                        disabled={!mediaUri || descargando}
+                      >
+                        <Text style={s.actionBtnIcon}>⬇️</Text>
+                        <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
+                      </Pressable>
+                      <Pressable
+                        style={s.actionBtn}
+                        onPress={abrirModalPlaylists}
+                        disabled={addingToPlaylist}
+                      >
+                        <Text style={s.actionBtnIcon}>➕</Text>
+                        <Text style={s.actionBtnText}>Añadir a lista</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
+                </View>
+              }
+              renderItem={({ item }) => {
+                const realIdx = listaActiva.indexOf(item);
+                return (
+                  <Pressable style={s.qRow} onPress={() => aplicar(item, true, realIdx, true)}>
+                    <Image source={{ uri: item.thumb }} style={s.qThumb} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
+                      <Text style={s.qSub} numberOfLines={1}>
+                        {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
+                      {item.duration ? <Text style={s.qDurText}>{fmtTiempo(item.duration)}</Text> : null}
+                      <Text style={s.play}>▶</Text>
+                    </View>
+                  </Pressable>
+                );
+              }}
+              ListEmptyComponent={<Text style={s.empty}>{enCola ? 'Es el último de la cola.' : 'Sin cola. Usá "Reproducir todo".'}</Text>}
+            />
           ) : (
             <>
               {mediaUri && enCola ? (
@@ -901,6 +964,54 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Text style={s.infoRefreshText}>↻ Regenerar</Text>
               </Pressable>
             </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Modal de instrucciones de instalación para iPhone */}
+      <Modal visible={iosInstallOpen} transparent animationType="fade" onRequestClose={() => setIosInstallOpen(false)}>
+        <Pressable style={s.eqBackdrop} onPress={() => setIosInstallOpen(false)}>
+          <Pressable style={s.eqPanel} onPress={() => {}}>
+            <Text style={s.eqTitle}>📲 Instalar en tu iPhone</Text>
+            <Text style={[s.eqFoot, { textAlign: 'left', marginBottom: 14, color: theme.colors.text }]}>
+              Instalalo en 5 segundos para usarlo a pantalla completa sin barras de Safari:
+            </Text>
+
+            <View style={{ gap: 12, marginVertical: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Text style={{ fontSize: 20 }}>1️⃣</Text>
+                <Text style={{ color: theme.colors.text, flex: 1, fontSize: 13, lineHeight: 18 }}>
+                  Tocá el botón <Text style={{ fontWeight: '800', color: theme.colors.gold }}>Compartir</Text> (el cuadradito con la flecha ⎋) abajo en Safari.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Text style={{ fontSize: 20 }}>2️⃣</Text>
+                <Text style={{ color: theme.colors.text, flex: 1, fontSize: 13, lineHeight: 18 }}>
+                  Buscá y tocá <Text style={{ fontWeight: '800', color: theme.colors.gold }}>"Añadir a pantalla de inicio"</Text> ➕.
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Text style={{ fontSize: 20 }}>3️⃣</Text>
+                <Text style={{ color: theme.colors.text, flex: 1, fontSize: 13, lineHeight: 18 }}>
+                  Tocá <Text style={{ fontWeight: '800', color: theme.colors.gold }}>"Añadir"</Text> arriba a la derecha.
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 14, backgroundColor: theme.colors.surface2, padding: 10, borderRadius: 8 }}>
+              <Text style={{ color: theme.colors.textDim, fontSize: 11, textAlign: 'center' }}>
+                ✨ ¡Listo! Se abre independiente con su ícono en tu pantalla de inicio.
+              </Text>
+            </View>
+
+            <Pressable
+              style={[s.btn, { backgroundColor: theme.colors.gold, marginTop: 14, width: '100%' }]}
+              onPress={() => setIosInstallOpen(false)}
+            >
+              <Text style={[s.btnText, { color: '#111' }]}>Entendido</Text>
+            </Pressable>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1198,4 +1309,21 @@ const s = StyleSheet.create({
   infoFootLabel: { color: theme.colors.textDim, fontSize: 11, fontWeight: '600' },
   infoRefreshBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
   infoRefreshText: { color: theme.colors.text, fontSize: 12, fontWeight: '600' },
+
+  // Banner instalador iPhone
+  iosBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(244, 207, 63, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(244, 207, 63, 0.35)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+  },
+  iosBannerIcon: { fontSize: 24 },
+  iosBannerTitle: { color: theme.colors.gold, fontSize: 14, fontWeight: '700' },
+  iosBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
+  iosBannerBtn: { color: theme.colors.gold, fontSize: 13, fontWeight: '800' },
 });
