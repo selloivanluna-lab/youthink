@@ -11,11 +11,23 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://youthink-1.onrender.com",
+        "EXPO_PUBLIC_QP_TOKEN": "7a5df9bf6747453fa4a97c9b55a62145",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://prixtmnilittshdegrxq.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://youthink-1.onrender.com",
+        "EXPO_PUBLIC_QP_TOKEN": "7a5df9bf6747453fa4a97c9b55a62145",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://prixtmnilittshdegrxq.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4"
       }
     }
   },
