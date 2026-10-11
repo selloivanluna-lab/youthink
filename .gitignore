@@ -1,0 +1,30 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Expo / RN
+.expo/
+.expo-shared/
+dist/
+web-build/
+*.jks
+*.keystore
+*.orig.*
+*.key
+*.mobileprovision
+android/
+ios/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs / tmp
+*.log
+tmp/
+server/tmp/
+
+# OS
+.DS_Store
+Thumbs.db

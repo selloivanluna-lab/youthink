@@ -1,0 +1,104 @@
+import { API_URL, QP_TOKEN } from '../config';
+
+export type YtResult = {
+  id: string;
+  title: string;
+  url: string;
+  duration: number;
+  channel: string;
+  thumb: string;
+};
+
+export type CookieStatus = {
+  ok: boolean;
+  tiene_cookies: boolean;
+  _renovado: number;
+  _expira: number;
+  sesiones: number;
+};
+
+export type BrowserSession = { ok: boolean; sid: string; url: string };
+
+function authHeaders(): Record<string, string> {
+  return {
+    Authorization: 'Bearer ' + QP_TOKEN,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function getJson<T>(path: string, timeoutMs = 15000): Promise<T> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(API_URL + path, { headers: authHeaders(), signal: ctrl.signal });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
+    return data as T;
+  } finally { clearTimeout(t); }
+}
+
+async function postJson<T>(path: string, body: unknown, timeoutMs = 15000): Promise<T> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(API_URL + path, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: ctrl.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
+    return data as T;
+  } finally { clearTimeout(t); }
+}
+
+// Reintenta con backoff progresivo. Útil para cold starts del server Fly (~3-4s de arranque).
+async function withRetry<T>(fn: () => Promise<T>, tries = 3, baseMs = 1500): Promise<T> {
+  let lastErr: any;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); } catch (e: any) {
+      lastErr = e;
+      // No reintentar si fue un abort intencional (timeout)
+      if (e?.name === 'AbortError' && i === tries - 1) throw lastErr;
+      await new Promise((r) => setTimeout(r, baseMs * (i + 1))); // 1.5s, 3s, 4.5s
+    }
+  }
+  throw lastErr;
+}
+
+export const api = {
+  health: () => getJson<{ ok: boolean; ytdlp: boolean; ffmpeg: boolean; deno: boolean }>('/api/health', 8000),
+
+  search: (q: string, n = 15) =>
+    getJson<{ ok: boolean; results: YtResult[] }>(`/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}`, 15000),
+
+  // preview necesita yt-dlp + ffmpeg — hasta 20s en cold start
+  preview: (id: string) =>
+    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 20000)),
+
+  // URL absoluta para expo-video. El token va en la URL (los reproductores no mandan headers).
+  clipUrl: (id: string) => `${API_URL}/api/clip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
+
+  // Modo solo audio (ahorra datos en 4G). Reintenta por si el server está despertando (cold start).
+  previewAudio: (id: string) =>
+    withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 20000)),
+  audioClipUrl: (id: string) =>
+    `${API_URL}/api/aclip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
+
+  radio: (seed: string, n = 25) =>
+    getJson<{ ok: boolean; tracks: YtResult[] }>(`/api/radio?seed=${encodeURIComponent(seed)}&n=${n}`),
+
+  getCookies: () => getJson<{ ok: boolean; cookies: Record<string, unknown> }>('/api/cookies'),
+  saveCookies: (youtube: string) =>
+    postJson<{ ok: boolean; _renovado: number; _expira: number }>('/api/cookies', { youtube }),
+
+  // Cookie Keeper (Plan B: navegador remoto en el backend)
+  cookieStatus: () => getJson<CookieStatus>('/api/cookies/status'),
+  refreshCookies: () => getJson<{ ok: boolean; cookies: number; logueado: boolean; _renovado: number; _expira: number }>('/api/cookies/refresh'),
+  startBrowserSession: (url?: string) =>
+    postJson<BrowserSession>('/api/browser/session', url ? { url } : {}),
+  closeBrowserSession: (sid: string) => postJson<{ ok: boolean }>('/api/browser/close', { sid }),
+  browserWsUrl: (sid: string) =>
+    API_URL.replace(/^http/, 'ws') + '/ws/browser?sid=' + encodeURIComponent(sid) + '&token=' + encodeURIComponent(QP_TOKEN),
+
+  // Headers para fuentes de expo-video.
+  mediaHeaders: () => ({ Authorization: 'Bearer ' + QP_TOKEN }),
+};

@@ -1,0 +1,17 @@
+{
+  "name": "quepensabas-bajar-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend de Qué Pensabas Bajar (búsqueda/descarga YouTube, radio ytmusic, cookie keeper)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

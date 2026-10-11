@@ -1,0 +1,248 @@
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View,
+} from 'react-native';
+import { supabase } from '../lib/supabase';
+import { theme } from '../theme';
+
+type UserInfo = {
+  id: string;
+  email?: string;
+  full_name?: string;
+  avatar_url?: string;
+};
+
+export default function Sesion() {
+  const [user, setUser] = useState<UserInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [signing, setSigning] = useState(false);
+  const [error, setError] = useState('');
+
+  // Carga la sesión actual al montar.
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data, error: e }) => {
+      if (data?.user) {
+        const m = data.user.user_metadata || {};
+        setUser({
+          id: data.user.id,
+          email: data.user.email,
+          full_name: m.full_name || m.name || '',
+          avatar_url: m.avatar_url || m.picture || '',
+        });
+      }
+      setLoading(false);
+    });
+
+    // Escucha cambios de sesión (por ejemplo, después del redirect OAuth).
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const m = session.user.user_metadata || {};
+        setUser({
+          id: session.user.id,
+          email: session.user.email,
+          full_name: m.full_name || m.name || '',
+          avatar_url: m.avatar_url || m.picture || '',
+        });
+      } else {
+        setUser(null);
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  const loginGoogle = async () => {
+    setSigning(true);
+    setError('');
+    try {
+      // redirectTo debe ser la URL exacta de esta app (registrada en Supabase → Auth → Redirect URLs).
+      const redirectTo =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? window.location.href           // e.g. http://localhost:8081
+          : 'quepensabasbajar://auth/callback';
+
+      const { data, error: e } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          // En web, abre en la misma pestaña para que Supabase pueda leer el hash de vuelta.
+          skipBrowserRedirect: false,
+        },
+      });
+      if (e) throw e;
+      // En nativo, data.url contiene la URL de Google → la abrimos en el navegador del sistema.
+      if (Platform.OS !== 'web' && data?.url) await Linking.openURL(data.url);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo iniciar sesión con Google');
+      setSigning(false);
+    }
+  };
+
+  const logout = async () => {
+    setSigning(true);
+    await supabase.auth.signOut();
+    setUser(null);
+    setSigning(false);
+  };
+
+  if (loading) {
+    return (
+      <View style={s.center}>
+        <ActivityIndicator color={theme.colors.gold} size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={s.root} contentContainerStyle={s.content}>
+      {/* Header */}
+      <View style={s.hero}>
+        <Text style={s.heroIcon}>🎵</Text>
+        <Text style={s.heroTitle}>YouThink</Text>
+        <Text style={s.heroSub}>Tu cuenta para guardar listas y descubrir música</Text>
+      </View>
+
+      {user ? (
+        /* ── SESIÓN ACTIVA ── */
+        <View style={s.card}>
+          <View style={s.profileRow}>
+            {user.avatar_url ? (
+              <Image source={{ uri: user.avatar_url }} style={s.avatar} />
+            ) : (
+              <View style={s.avatarPlaceholder}>
+                <Text style={s.avatarLetter}>{(user.full_name || user.email || '?')[0].toUpperCase()}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              {user.full_name ? <Text style={s.userName}>{user.full_name}</Text> : null}
+              <Text style={s.userEmail}>{user.email}</Text>
+            </View>
+          </View>
+
+          <View style={s.divider} />
+
+          <View style={s.infoRow}>
+            <Text style={s.infoIcon}>✅</Text>
+            <Text style={s.infoText}>Sesión activa con Google</Text>
+          </View>
+          <View style={s.infoRow}>
+            <Text style={s.infoIcon}>🎵</Text>
+            <Text style={s.infoText}>Tus listas de reproducción se sincronizan automáticamente</Text>
+          </View>
+
+          <Pressable style={[s.btn, { backgroundColor: theme.colors.surface2, marginTop: 20 }]} onPress={logout} disabled={signing}>
+            <Text style={[s.btnText, { color: theme.colors.textDim }]}>
+              {signing ? 'Cerrando…' : 'Cerrar sesión'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        /* ── SIN SESIÓN ── */
+        <View style={s.card}>
+          <Text style={s.cardTitle}>Iniciá sesión</Text>
+          <Text style={s.hint}>
+            Usá tu cuenta de Google para guardar listas de reproducción y acceder desde cualquier dispositivo.
+          </Text>
+
+          {error ? <Text style={s.err}>{error}</Text> : null}
+
+          <Pressable
+            style={[s.googleBtn, signing && { opacity: 0.6 }]}
+            onPress={loginGoogle}
+            disabled={signing}
+          >
+            {signing ? (
+              <ActivityIndicator color="#111" size="small" />
+            ) : (
+              <>
+                <Text style={s.googleLetter}>G</Text>
+                <Text style={s.googleText}>Continuar con Google</Text>
+              </>
+            )}
+          </Pressable>
+
+          <Text style={s.legal}>
+            Al iniciar sesión aceptás los términos de uso. No compartimos tus datos con terceros.
+          </Text>
+        </View>
+      )}
+
+      {/* Info sobre la cuenta */}
+      <View style={s.card}>
+        <Text style={s.cardTitle}>¿Para qué sirve la cuenta?</Text>
+        <View style={s.infoRow}><Text style={s.infoIcon}>📋</Text><Text style={s.infoText}>Guardar listas de reproducción personalizadas</Text></View>
+        <View style={s.infoRow}><Text style={s.infoIcon}>⬇️</Text><Text style={s.infoText}>Historial de descargas sincronizado</Text></View>
+        <View style={s.infoRow}><Text style={s.infoIcon}>🔄</Text><Text style={s.infoText}>Accedé desde cualquier dispositivo</Text></View>
+        <View style={s.infoRow}><Text style={s.infoIcon}>⭐</Text><Text style={s.infoText}>Canciones favoritas siempre disponibles</Text></View>
+      </View>
+    </ScrollView>
+  );
+}
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: theme.colors.bg },
+  content: { padding: 16, gap: 14, paddingBottom: 40 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.bg },
+
+  hero: { alignItems: 'center', paddingVertical: 28 },
+  heroIcon: { fontSize: 48, marginBottom: 8 },
+  heroTitle: { color: theme.colors.text, fontSize: 28, fontWeight: '900', letterSpacing: 1 },
+  heroSub: { color: theme.colors.textDim, fontSize: 14, marginTop: 6, textAlign: 'center' },
+
+  card: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 18,
+  },
+  cardTitle: { color: theme.colors.text, fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  hint: { color: theme.colors.textDim, fontSize: 13, marginBottom: 18, lineHeight: 20 },
+  err: { color: theme.colors.danger, fontSize: 13, marginBottom: 12 },
+
+  profileRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.colors.surface2 },
+  avatarPlaceholder: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: theme.colors.gold,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarLetter: { color: '#111', fontSize: 24, fontWeight: '900' },
+  userName: { color: theme.colors.text, fontSize: 16, fontWeight: '700' },
+  userEmail: { color: theme.colors.textDim, fontSize: 13, marginTop: 2 },
+
+  divider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 14 },
+
+  infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 5 },
+  infoIcon: { fontSize: 16, width: 22, textAlign: 'center' },
+  infoText: { color: theme.colors.text, fontSize: 14, flex: 1, lineHeight: 20 },
+
+  googleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingVertical: 13,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    marginBottom: 14,
+  },
+  googleLetter: {
+    color: '#4285F4',
+    fontSize: 20,
+    fontWeight: '900',
+    fontStyle: 'italic',
+    letterSpacing: -1,
+  },
+  googleText: { color: '#111', fontSize: 16, fontWeight: '700' },
+
+  btn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center' },
+  btnText: { fontSize: 14, fontWeight: '600' },
+
+  legal: { color: theme.colors.textDim, fontSize: 11, textAlign: 'center', lineHeight: 16 },
+});
