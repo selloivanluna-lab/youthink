@@ -107,16 +107,15 @@ function cookieArgs() {
   return [];
 }
 
-// Argumentos extra para YouTube: fuerza un cliente que esquiva el PO token
-// ("Sign in to confirm you're not a bot" / "The page needs to be reloaded").
-// OJO: pasar cookies de una cuenta personal desde una IP datacenter puede
-// cerrar/banear la sesión, así que por defecto NO se usan (activar con YT_COOKIES=1).
-const YT_PLAYER_CLIENT = process.env.YT_PLAYER_CLIENT || 'default,-tv_downgraded,web_embedded';
-function ytExtraArgs() {
-  const a = ['--extractor-args', 'youtube:player_client=' + YT_PLAYER_CLIENT];
-  if (process.env.YT_COOKIES === '1') a.push(...cookieArgs());
-  return a;
-}
+// Clientes de YouTube a probar EN ORDEN hasta que uno funcione. YouTube cambia
+// cuál cliente esquiva el PO token ("Sign in to confirm you're not a bot") y el
+// "The page needs to be reloaded" cada pocas semanas. Override con YT_PLAYER_CLIENT
+// (sets separados por "|"). OJO: cookies de cuenta personal desde una IP datacenter
+// pueden cerrar/banear la sesión -> OFF por defecto (activar con YT_COOKIES=1).
+const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'tv,web_safari|default,-tv_downgraded,web_embedded|mweb|web_embedded').split('|');
+function ytExtractorArgs(set) { return ['--extractor-args', 'youtube:player_client=' + set]; }
+function ytExtraArgs() { return ytExtractorArgs(YT_CLIENT_SETS[0]); }
+function ytRetryable(msg) { return /Sign in to confirm|needs to be reloaded|not a bot|Requested format is not available|player response|HTTP Error 403|Unable to extract/i.test(msg || ''); }
 
 // ── proxy GET genérico ───────────────────────────────────────────────
 function proxyGet(urlStr, headers, cb) {
@@ -187,29 +186,42 @@ function runYtClip(id, cb) {
   const ytdlp = findBin('yt-dlp');
   if (!ytdlp) return done(new Error('yt-dlp no encontrado en PATH'));
   try { fs.mkdirSync(CLIP_DIR, { recursive: true }); } catch (e) {}
-  const args = [];
   const deno = findDeno();
-  if (deno) args.push('--js-runtimes', 'deno:' + deno);
-  args.push(...ytExtraArgs());
-  args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
-    '--merge-output-format', 'mp4',
-    '--download-sections', '*0-' + CLIP_SECONDS,
-    '-o', out,
-    '--no-warnings', '--no-playlist',
-    'https://www.youtube.com/watch?v=' + id);
-  let p;
-  try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return done(e); }
-  let err = '', settled = false;
-  const finish = (e) => { if (settled) return; settled = true; done(e); };
-  const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de vista previa (>150s)')); }, 150000);
-  p.stderr.on('data', (d) => { err += d.toString(); });
-  p.on('error', (e) => { clearTimeout(timer); finish(e); });
-  p.on('close', (code) => {
-    clearTimeout(timer);
-    try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return finish(null); } catch (e) {}
-    const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
-    finish(new Error(det || ('yt-dlp code ' + code)));
-  });
+  let lastErr = null;
+  const attempt = (i) => {
+    if (i >= YT_CLIENT_SETS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    const args = [];
+    if (deno) args.push('--js-runtimes', 'deno:' + deno);
+    args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    if (process.env.YT_COOKIES === '1') args.push(...cookieArgs());
+    args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
+      '--merge-output-format', 'mp4',
+      '--download-sections', '*0-' + CLIP_SECONDS,
+      '-o', out,
+      '--no-warnings', '--no-playlist',
+      'https://www.youtube.com/watch?v=' + id);
+    let p;
+    try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return done(e); }
+    let err = '', settled = false;
+    const timer = setTimeout(() => {
+      try { p.kill('SIGKILL'); } catch (e) {}
+      if (settled) return; settled = true;
+      lastErr = new Error('timeout de vista previa');
+      attempt(i + 1);
+    }, 90000);
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; done(e); });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return; settled = true;
+      try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return done(null); } catch (e) {}
+      const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
+      lastErr = new Error(det || ('yt-dlp code ' + code));
+      if (ytRetryable(det) && i + 1 < YT_CLIENT_SETS.length) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
+      done(lastErr);
+    });
+  };
+  attempt(0);
 }
 
 // ── audio solo (modo "solo audio", ahorra datos en 4G) ───────────────
@@ -227,30 +239,43 @@ function runYtAudio(id, cb) {
   const ytdlp = findBin('yt-dlp');
   if (!ytdlp) return done(new Error('yt-dlp no encontrado en PATH'));
   try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
-  const args = [];
   const deno = findDeno();
-  if (deno) args.push('--js-runtimes', 'deno:' + deno);
-  args.push(...ytExtraArgs());
-  // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
-  // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
-  args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
-    '--download-sections', '*0-' + AUDIO_SECONDS,
-    '-o', out,
-    '--no-warnings', '--no-playlist',
-    'https://www.youtube.com/watch?v=' + id);
-  let p;
-  try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return done(e); }
-  let err = '', settled = false;
-  const finish = (e) => { if (settled) return; settled = true; done(e); };
-  const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de audio (>180s)')); }, 180000);
-  p.stderr.on('data', (d) => { err += d.toString(); });
-  p.on('error', (e) => { clearTimeout(timer); finish(e); });
-  p.on('close', (code) => {
-    clearTimeout(timer);
-    try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return finish(null); } catch (e) {}
-    const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
-    finish(new Error(det || ('yt-dlp code ' + code)));
-  });
+  let lastErr = null;
+  const attempt = (i) => {
+    if (i >= YT_CLIENT_SETS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    const args = [];
+    if (deno) args.push('--js-runtimes', 'deno:' + deno);
+    args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    if (process.env.YT_COOKIES === '1') args.push(...cookieArgs());
+    // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
+    // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
+    args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
+      '--download-sections', '*0-' + AUDIO_SECONDS,
+      '-o', out,
+      '--no-warnings', '--no-playlist',
+      'https://www.youtube.com/watch?v=' + id);
+    let p;
+    try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return done(e); }
+    let err = '', settled = false;
+    const timer = setTimeout(() => {
+      try { p.kill('SIGKILL'); } catch (e) {}
+      if (settled) return; settled = true;
+      lastErr = new Error('timeout de audio');
+      attempt(i + 1);
+    }, 90000);
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; done(e); });
+    p.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return; settled = true;
+      try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return done(null); } catch (e) {}
+      const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
+      lastErr = new Error(det || ('yt-dlp code ' + code));
+      if (ytRetryable(det) && i + 1 < YT_CLIENT_SETS.length) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
+      done(lastErr);
+    });
+  };
+  attempt(0);
 }
 
 // ── streaming de archivo local con Range ─────────────────────────────
