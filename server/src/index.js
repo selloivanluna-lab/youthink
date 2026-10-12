@@ -116,6 +116,8 @@ function cookieArgs() {
 const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'default,-tv_downgraded,web_embedded|web_embedded|mweb|tv,web_safari').split('|');
 function ytExtractorArgs(set) { return ['--extractor-args', 'youtube:player_client=' + set]; }
 function ytExtraArgs() { return ytExtractorArgs(YT_CLIENT_SETS[0]); }
+// Proxy opcional (p.ej. residencial) si Google bloquea la IP del datacenter. Env: YT_PROXY=http://user:pass@host:port
+function ytProxyArgs() { return process.env.YT_PROXY ? ['--proxy', process.env.YT_PROXY] : []; }
 function ytRetryable(msg) { return /Sign in to confirm|needs to be reloaded|not a bot|Requested format is not available|player response|HTTP Error 403|Unable to extract/i.test(msg || ''); }
 
 // ── proxy GET genérico ───────────────────────────────────────────────
@@ -194,6 +196,7 @@ function runYtClip(id, cb) {
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
     args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    args.push(...ytProxyArgs());
     if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
       '--merge-output-format', 'mp4',
@@ -247,6 +250,7 @@ function runYtAudio(id, cb) {
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
     args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    args.push(...ytProxyArgs());
     if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
     // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
@@ -332,7 +336,12 @@ const server = http.createServer(async (req, res) => {
 
   const p = url.pathname;
   if (p === '/api/health') {
-    respond(res, 200, { ok: true, ts: Date.now(), ytdlp: !!findBin('yt-dlp'), ffmpeg: !!findBin('ffmpeg'), deno: !!findDeno() });
+    respond(res, 200, {
+      ok: true, ts: Date.now(), ytdlp: !!findBin('yt-dlp'), ffmpeg: !!findBin('ffmpeg'), deno: !!findDeno(),
+      // Diagnóstico del deploy: commit que corre Render y config de YouTube (sin secretos).
+      commit: process.env.RENDER_GIT_COMMIT || null,
+      yt: { clientes: YT_CLIENT_SETS, cookies: process.env.YT_COOKIES !== '0', proxy: !!process.env.YT_PROXY },
+    });
     return;
   }
 
