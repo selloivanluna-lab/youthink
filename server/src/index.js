@@ -111,8 +111,9 @@ function cookieArgs() {
 // cuál cliente esquiva el PO token ("Sign in to confirm you're not a bot") y el
 // "The page needs to be reloaded" cada pocas semanas. Override con YT_PLAYER_CLIENT
 // (sets separados por "|"). OJO: cookies de cuenta personal desde una IP datacenter
-// pueden cerrar/banear la sesión -> OFF por defecto (activar con YT_COOKIES=1).
-const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'tv,web_safari|default,-tv_downgraded,web_embedded|mweb|web_embedded').split('|');
+// pueden cerrar/banear la sesión -> usar sólo con cuenta desechable; se activan
+// por defecto cuando hay cookies.txt y se desactivan con YT_COOKIES=0.
+const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'default,-tv_downgraded,web_embedded|web_embedded|mweb|tv,web_safari').split('|');
 function ytExtractorArgs(set) { return ['--extractor-args', 'youtube:player_client=' + set]; }
 function ytExtraArgs() { return ytExtractorArgs(YT_CLIENT_SETS[0]); }
 function ytRetryable(msg) { return /Sign in to confirm|needs to be reloaded|not a bot|Requested format is not available|player response|HTTP Error 403|Unable to extract/i.test(msg || ''); }
@@ -193,7 +194,7 @@ function runYtClip(id, cb) {
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
     args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
-    if (process.env.YT_COOKIES === '1') args.push(...cookieArgs());
+    if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
       '--merge-output-format', 'mp4',
       '--download-sections', '*0-' + CLIP_SECONDS,
@@ -246,7 +247,7 @@ function runYtAudio(id, cb) {
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
     args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
-    if (process.env.YT_COOKIES === '1') args.push(...cookieArgs());
+    if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
     // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
     args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
