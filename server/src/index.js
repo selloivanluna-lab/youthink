@@ -107,6 +107,17 @@ function cookieArgs() {
   return [];
 }
 
+// Argumentos extra para YouTube: fuerza un cliente que esquiva el PO token
+// ("Sign in to confirm you're not a bot" / "The page needs to be reloaded").
+// OJO: pasar cookies de una cuenta personal desde una IP datacenter puede
+// cerrar/banear la sesión, así que por defecto NO se usan (activar con YT_COOKIES=1).
+const YT_PLAYER_CLIENT = process.env.YT_PLAYER_CLIENT || 'default,-tv_downgraded,web_embedded';
+function ytExtraArgs() {
+  const a = ['--extractor-args', 'youtube:player_client=' + YT_PLAYER_CLIENT];
+  if (process.env.YT_COOKIES === '1') a.push(...cookieArgs());
+  return a;
+}
+
 // ── proxy GET genérico ───────────────────────────────────────────────
 function proxyGet(urlStr, headers, cb) {
   if (typeof headers === 'function') { cb = headers; headers = null; }
@@ -130,7 +141,7 @@ function runYtSearch(q, n, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
-  args.push(...cookieArgs());
+  args.push(...ytExtraArgs());
   args.push('--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
     'ytsearch' + n + ':' + q);
   let p;
@@ -179,7 +190,7 @@ function runYtClip(id, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
-  args.push(...cookieArgs());
+  args.push(...ytExtraArgs());
   args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
     '--merge-output-format', 'mp4',
     '--download-sections', '*0-' + CLIP_SECONDS,
@@ -219,7 +230,7 @@ function runYtAudio(id, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
-  args.push(...cookieArgs());
+  args.push(...ytExtraArgs());
   // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
   // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
   args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
