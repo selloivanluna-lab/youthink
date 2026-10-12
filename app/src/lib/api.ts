@@ -30,7 +30,10 @@ async function getJson<T>(path: string, timeoutMs = 15000): Promise<T> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(API_URL + path, { headers: authHeaders(), signal: ctrl.signal });
+    let r: Response;
+    try {
+      r = await fetch(API_URL + path, { headers: authHeaders(), signal: ctrl.signal });
+    } catch (e: any) { throw friendlyNetError(e); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
     return data as T;
@@ -41,13 +44,24 @@ async function postJson<T>(path: string, body: unknown, timeoutMs = 15000): Prom
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(API_URL + path, {
-      method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: ctrl.signal,
-    });
+    let r: Response;
+    try {
+      r = await fetch(API_URL + path, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: ctrl.signal,
+      });
+    } catch (e: any) { throw friendlyNetError(e); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
     return data as T;
   } finally { clearTimeout(t); }
+}
+
+// Traduce timeouts y fallos de red a mensajes claros (evita "signal is aborted without reason").
+function friendlyNetError(e: any): Error {
+  if (e?.name === 'AbortError') {
+    return new Error('El servidor tardó demasiado (puede estar despertando). Esperá unos segundos y reintentá.');
+  }
+  return new Error('No se pudo conectar con el servidor. Revisá tu conexión e intentá de nuevo.');
 }
 
 // Reintenta con backoff progresivo. Útil para cold starts del server Fly (~3-4s de arranque).
@@ -68,18 +82,18 @@ export const api = {
   health: () => getJson<{ ok: boolean; ytdlp: boolean; ffmpeg: boolean; deno: boolean }>('/api/health', 8000),
 
   search: (q: string, n = 15) =>
-    getJson<{ ok: boolean; results: YtResult[] }>(`/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}`, 15000),
+    withRetry(() => getJson<{ ok: boolean; results: YtResult[] }>(`/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}`, 25000)),
 
   // preview necesita yt-dlp + ffmpeg — hasta 20s en cold start
   preview: (id: string) =>
-    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 20000)),
+    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 30000)),
 
   // URL absoluta para expo-video. El token va en la URL (los reproductores no mandan headers).
   clipUrl: (id: string) => `${API_URL}/api/clip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
 
   // Modo solo audio (ahorra datos en 4G). Reintenta por si el server está despertando (cold start).
   previewAudio: (id: string) =>
-    withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 20000)),
+    withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 30000)),
   audioClipUrl: (id: string) =>
     `${API_URL}/api/aclip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
 

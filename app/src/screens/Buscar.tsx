@@ -21,7 +21,7 @@ import { api, YtResult } from '../lib/api';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
 import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/playlists';
 import { supabase } from '../lib/supabase';
-import { API_URL } from '../config';
+import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
 import { useNavigation } from '@react-navigation/native';
 
@@ -234,8 +234,11 @@ export default function Buscar() {
       siguiente(true);
     });
     const subErr = player.addListener('statusChange', (e: any) => {
-      if (e?.status === 'error') setError(e?.error || e?.message || 'Error del reproductor');
-      else if (e?.status === 'readyToPlay') setDur(player.duration || 0);
+      if (e?.status === 'error') {
+        const msg = String(e?.error?.message || e?.error || e?.message || '');
+        if (/abort/i.test(msg)) return; // clip reemplazado / carga cancelada: no es error real
+        setError(msg || 'Error del reproductor');
+      } else if (e?.status === 'readyToPlay') setDur(player.duration || 0);
     });
     return () => { try { subP.remove(); subE.remove(); subErr.remove(); } catch (e) {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -608,7 +611,7 @@ export default function Buscar() {
     setInfoLoading(true);
     try {
       // Usamos la Gemini API directamente desde el cliente (clave pública desde .env)
-      const apiKey = (process as any).env?.EXPO_PUBLIC_GEMINI_KEY || '';
+      const apiKey = GEMINI_KEY;
       if (!apiKey) throw new Error('Sin clave Gemini (EXPO_PUBLIC_GEMINI_KEY). Configurala en .env');
       const prompt = `Eres un musicólogo y crítico de cultura. Dame UN párrafo corto (máximo 120 palabras) en español rioplatense sobre:
 Canción/video: "${item.title}"
@@ -617,7 +620,7 @@ Canal/Artista: "${item.channel}"
 Contá algo interesante: curiosidades del artista, contexto del álbum, hito histórico, influencias, récords, o anécdota memorable. Sé específico y entretenido. Sin markdown, solo texto corrido.`;
 
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -627,7 +630,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           }),
         }
       );
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.error?.message || 'HTTP ' + res.status);
+      }
       const json = await res.json();
       const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
       if (!text) throw new Error('Sin respuesta de la IA');
@@ -698,16 +704,33 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       <Modal visible={!!actual} animationType="slide" onRequestClose={cerrar} statusBarTranslucent>
         <View style={s.modal}>
-          {/* ── Fondo con portada a baja opacidad cuando está sonando ── */}
+          {/* ── Fondo con portada a baja opacidad: usa background-image en web para no tapar botones ── */}
           {actual?.thumb ? (
-            <Image
-              source={{ uri: actual.thumb }}
-              style={[s.modalBg, { opacity: estaSonando ? 0.18 : 0.07 }]}
-              blurRadius={Platform.OS !== 'web' ? 18 : 0}
-              resizeMode="cover"
-            />
+            Platform.OS === 'web' ? (
+              <View
+                pointerEvents="none"
+                style={[s.modalBg, {
+                  opacity: estaSonando ? 0.18 : 0.07,
+                  ...(typeof document !== 'undefined' ? {
+                    backgroundImage: `url(${actual.thumb})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  } as any : {}),
+                }]}
+              />
+            ) : (
+              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                <Image
+                  source={{ uri: actual.thumb }}
+                  style={[s.modalBg, { opacity: estaSonando ? 0.18 : 0.07 }]}
+                  blurRadius={18}
+                  resizeMode="cover"
+                />
+              </View>
+            )
           ) : null}
 
+          <View style={s.modalContent}>
           <View style={s.modalHead}>
             <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
             <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
@@ -848,6 +871,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             {modo === 'video' ? 'Vista previa de 45s.' : 'Audio (hasta 10 min), calidad liviana.'}
             {enCola ? ' · Cola activa' : ''}{repeat !== 'off' ? (repeat === 'one' ? ' · Repetir 1' : ' · Repetir todo') : ''}{shuffle ? ' · Aleatorio' : ''}
           </Text>
+          </View>
         </View>
       </Modal>
 
@@ -1146,11 +1170,13 @@ const s = StyleSheet.create({
   play: { color: theme.colors.gold, fontSize: 18, paddingHorizontal: 8 },
   empty: { color: theme.colors.textDim, textAlign: 'center', marginTop: 24 },
   error: { color: theme.colors.danger, marginBottom: 8 },
-  modal: { flex: 1, backgroundColor: '#000', padding: 16, paddingTop: 56, overflow: 'hidden' },
+  modal: { flex: 1, backgroundColor: '#000', padding: 16, paddingTop: 56 },
   modalBg: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     width: '100%', height: '100%',
+    zIndex: 0,
   },
+  modalContent: { flex: 1, zIndex: 1, position: 'relative' },
   modalHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   modalTitle: { color: theme.colors.text, fontSize: 16, fontWeight: '700', flex: 1 },
   closeBtn: { padding: 8 },

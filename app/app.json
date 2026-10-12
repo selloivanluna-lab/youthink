@@ -36,7 +36,13 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "YouThink",
+      "shortName": "YouThink",
+      "themeColor": "#0a0a0a",
+      "backgroundColor": "#0a0a0a",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "platforms": [
       "ios",

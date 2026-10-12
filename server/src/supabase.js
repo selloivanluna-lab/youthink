@@ -7,7 +7,11 @@ const CONFIG_UID = process.env.CONFIG_USER_ID || '9dd9fe61-d95e-436a-9497-2aedc7
 function cfg() {
   return {
     url: process.env.SUPABASE_URL || 'https://prixtmnilittshdegrxq.supabase.co',
-    key: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '',
+    // La service role key es lo ideal (lectura+escritura). Si falta, cae a la
+    // anon/publishable key (pública, ya viaja en el bundle del cliente): alcanza
+    // para LEER la fila de cookies y pasárselas a yt-dlp.
+    key: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY ||
+      'sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4',
   };
 }
 

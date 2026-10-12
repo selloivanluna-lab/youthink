@@ -71,6 +71,42 @@ function findDeno() {
   return null;
 }
 
+// ── cookies para yt-dlp (Cookie Keeper desde Supabase) ───────────────
+// Escribe el Netscape guardado en Supabase a un archivo y se lo pasa a yt-dlp.
+// Sin esto, YouTube frena audio/video con "Sign in to confirm you're not a bot".
+const COOKIES_TXT = path.join(TMP_DIR, 'cookies.txt');
+let cookiesFetchedAt = 0;
+let cookiesFetching = null;
+
+async function ensureCookiesFile(force) {
+  const TTL = 10 * 60 * 1000;
+  if (!force && cookiesFetchedAt && Date.now() - cookiesFetchedAt < TTL) return fs.existsSync(COOKIES_TXT);
+  if (cookiesFetching) return cookiesFetching;
+  cookiesFetching = (async () => {
+    try {
+      const data = await cookies.read();
+      const yt = data && data.cookies && data.cookies.youtube;
+      if (!yt || typeof yt !== 'string' || yt.indexOf('Netscape') < 0) return false;
+      try { fs.mkdirSync(TMP_DIR, { recursive: true }); } catch (e) {}
+      fs.writeFileSync(COOKIES_TXT, yt, { mode: 0o600 });
+      cookiesFetchedAt = Date.now();
+      log('cookies: archivo listo (' + yt.length + ' bytes)');
+      return true;
+    } catch (e) {
+      log('cookies: no se pudieron cargar (' + (e && e.message) + ')');
+      return false;
+    } finally { cookiesFetching = null; }
+  })();
+  return cookiesFetching;
+}
+
+function cookieArgs() {
+  try {
+    if (fs.existsSync(COOKIES_TXT) && fs.statSync(COOKIES_TXT).size > 40) return ['--cookies', COOKIES_TXT];
+  } catch (e) {}
+  return [];
+}
+
 // ── proxy GET genérico ───────────────────────────────────────────────
 function proxyGet(urlStr, headers, cb) {
   if (typeof headers === 'function') { cb = headers; headers = null; }
@@ -94,6 +130,7 @@ function runYtSearch(q, n, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...cookieArgs());
   args.push('--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
     'ytsearch' + n + ':' + q);
   let p;
@@ -142,6 +179,7 @@ function runYtClip(id, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...cookieArgs());
   args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
     '--merge-output-format', 'mp4',
     '--download-sections', '*0-' + CLIP_SECONDS,
@@ -181,6 +219,7 @@ function runYtAudio(id, cb) {
   const args = [];
   const deno = findDeno();
   if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...cookieArgs());
   // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
   // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
   args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
@@ -271,6 +310,7 @@ const server = http.createServer(async (req, res) => {
     const q = (url.searchParams.get('q') || '').trim();
     const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '12', 10) || 12, 1), 25);
     if (!q) { respond(res, 400, { error: 'falta ?q=' }); return; }
+    await ensureCookiesFile();
     runYtSearch(q, n, (err, results) => {
       if (err) { respond(res, 502, { error: 'ytsearch: ' + err.message }); return; }
       respond(res, 200, { ok: true, results });
@@ -281,6 +321,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/ytpreview') {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{6,20}$/.test(id)) { respond(res, 400, { error: 'falta ?id= válido' }); return; }
+    await ensureCookiesFile();
     runYtClip(id, (err) => {
       if (err) { respond(res, 502, { error: 'ytpreview: ' + err.message }); return; }
       respond(res, 200, { ok: true, clip: '/api/clip?id=' + id });
@@ -298,6 +339,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/audio') {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{6,20}$/.test(id)) { respond(res, 400, { error: 'falta ?id= válido' }); return; }
+    await ensureCookiesFile();
     runYtAudio(id, (err) => {
       if (err) { respond(res, 502, { error: 'audio: ' + err.message }); return; }
       respond(res, 200, { ok: true, audio: '/api/aclip?id=' + id });
@@ -354,6 +396,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}');
       if (!body.youtube) { respond(res, 400, { error: 'falta youtube' }); return; }
       const data = await cookies.store({ youtube: body.youtube });
+      await ensureCookiesFile(true);
       respond(res, 200, data);
     } catch (e) { respond(res, 400, { error: 'cookies store: ' + e.message }); }
     return;
@@ -368,6 +411,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/api/cookies/refresh') {
     try {
       const data = await browser.refresh(cookies);
+      await ensureCookiesFile(true);
       respond(res, 200, data);
     } catch (e) { respond(res, 502, { error: 'refresh: ' + e.message }); }
     return;
