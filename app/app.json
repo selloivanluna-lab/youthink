@@ -7,7 +7,7 @@
     "scheme": "youthink",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "backgroundColor": "#0a0a0a",
       "resizeMode": "contain",

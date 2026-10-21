@@ -18,6 +18,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { api, YtResult } from '../lib/api';
+import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
+import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
 import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/playlists';
 import { supabase } from '../lib/supabase';
@@ -170,6 +172,37 @@ export default function Buscar() {
 
   const player = useVideoPlayer(null, (p) => { p.loop = false; p.timeUpdateEventInterval = 0.5; });
 
+  // Reproductor nativo (Android): audio sin anuncios, en segundo plano y con EQ real.
+  const native = useNativeAudio();
+  const usarNativo = NATIVE_AUDIO && modo === 'audio';
+  const usarNativoRef = useRef(false);
+  const modoRef = useRef<Modo>(modo);
+  const eqRef = useRef(eq);
+  const siguienteRef = useRef<(auto?: any) => void>(() => {});
+  const [nativeBuffering, setNativeBuffering] = useState(false);
+  const [nativeResolving, setNativeResolving] = useState(false);
+
+  useEffect(() => { usarNativoRef.current = usarNativo; }, [usarNativo]);
+  useEffect(() => { modoRef.current = modo; }, [modo]);
+  useEffect(() => { eqRef.current = eq; }, [eq]);
+  useEffect(() => { siguienteRef.current = siguiente; });
+
+  // Estado del reproductor nativo: llega por eventos (se actualiza fuera del render).
+  useEffect(() => {
+    if (!NATIVE_AUDIO) return;
+    const sub = QpAudio.addListener('onPlaybackState', (st) => {
+      if (modoRef.current !== 'audio') return;
+      if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
+      if (isFinite(st.position) && st.position >= 0) setPos(st.position);
+      if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
+      setNativeBuffering(Boolean(st.buffering));
+      setNativeResolving(Boolean(st.resolving));
+      if (st.error) setError(st.error);
+      if (st.ended) siguienteRef.current(true);
+    });
+    return () => sub.remove();
+  }, []);
+
   useEffect(() => { mediaUriRef.current = mediaUri; }, [mediaUri]);
 
   useEffect(() => { colaRef.current = cola; }, [cola]);
@@ -195,6 +228,7 @@ export default function Buscar() {
   function aplicarEQ(preset: string) {
     setEq(preset);
     AsyncStorage.setItem('qp_eq', preset).catch(() => {});
+    if (NATIVE_AUDIO) { native.setEq(preset).catch(() => {}); return; }
     if (Platform.OS !== 'web') return;
     try {
       const doc = (globalThis as any).document;
@@ -286,6 +320,7 @@ export default function Buscar() {
 
   useEffect(() => {
     if (!mediaUri) return;
+    if (mediaUri.startsWith('native:')) return;
     setPos(0);
     setDur(0);
     pendingSeekRef.current = null;
@@ -412,7 +447,12 @@ export default function Buscar() {
     if (idx >= 0) setQIdx(idx);
     cargarLyrics(item);
     try {
-      if (audio) { await api.previewAudio(item.id); setMediaUri(api.audioClipUrl(item.id)); }
+      if (audio && NATIVE_AUDIO) {
+        setMediaUri('native:' + item.id);
+        setError(null);
+        await native.setEq(eqRef.current);
+        if (autoPlay) await native.play(item.id, item.title);
+      } else if (audio) { await api.previewAudio(item.id); setMediaUri(api.audioClipUrl(item.id)); }
       else { await api.preview(item.id); setMediaUri(api.clipUrl(item.id)); }
     } catch (e: any) { setError(e?.message || 'No se pudo cargar el medio'); }
   }
@@ -462,7 +502,7 @@ export default function Buscar() {
     if (i + 1 < c.length) aplicar(c[i + 1], audioRef.current, i + 1, isAuto);
     else if (repeatRef.current === 'all' && c.length) aplicar(c[0], audioRef.current, 0, isAuto);
     else {
-      player.pause();
+      if (usarNativoRef.current) native.pause(); else player.pause();
       setReproduciendo(false);
     }
   }
@@ -474,6 +514,7 @@ export default function Buscar() {
   function saltar(t: number) {
     const durTotal = dur > 0 ? dur : (actual?.duration || 0);
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
+    if (usarNativoRef.current) { native.seek(target); setPos(target); return; }
     if (Platform.OS === 'web') {
       const el = (globalThis as any).document?.querySelector('video') as any;
       if (el) {
@@ -491,6 +532,11 @@ export default function Buscar() {
     setPos(target);
   }
   async function togglePlay() {
+    if (usarNativoRef.current) {
+      if (reproduciendo) { await native.pause(); setReproduciendo(false); }
+      else { await native.resume(); setReproduciendo(true); }
+      return;
+    }
     const uri = mediaUri || mediaUriRef.current;
     if (Platform.OS === 'web') {
       const el = (globalThis as any).document?.querySelector('video') as any;
@@ -525,6 +571,7 @@ export default function Buscar() {
     }
   }
   function cerrar() {
+    if (usarNativoRef.current) native.stop();
     player.pause();
     setActual(null);
     setMediaUri(null);
@@ -770,7 +817,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <Text style={s.toolText}>💡 Info</Text>
             </Pressable>
           </View>
-          {eqOpen && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
+          {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
 
           <VideoView player={player} style={modo === 'video' ? s.video : s.videoHidden}
             nativeControls={modo === 'video'} fullscreenOptions={{ enable: modo === 'video' }}
@@ -789,8 +836,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     <Text style={s.audioIcon}>🔊</Text>
                     <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
                     <Text style={s.audioSub}>{actual?.channel}</Text>
-                    {!mediaUri ? (
-                      error ? <Text style={s.audioErr}>{error}</Text> : <CargaAnim texto="Generando audio…" />
+                    {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
+                      error ? <Text style={s.audioErr}>{error}</Text> : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Generando audio…"} />
                     ) : null}
                     <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
                     <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
@@ -888,7 +935,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               ))}
             </View>
             <Text style={s.eqFoot}>
-              {Platform.OS === 'web' ? 'Se aplica en vivo (Web Audio).' : 'Ajuste guardado. El procesado de audio se aplica en la versión web.'}
+              {Platform.OS === 'web'
+                ? 'Se aplica en vivo (Web Audio).'
+                : NATIVE_AUDIO
+                  ? 'Se aplica en vivo al reproductor nativo.'
+                  : 'Ajuste guardado.'}
             </Text>
           </Pressable>
         </Pressable>

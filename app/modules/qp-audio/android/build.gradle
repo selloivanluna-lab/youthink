@@ -1,0 +1,30 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.qpaudio'
+version = '0.1.0'
+
+repositories {
+  maven { url 'https://jitpack.io' }
+}
+
+android {
+  namespace "expo.modules.qpaudio"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // Extractor de NewPipe (GPL-3, uso personal). Versión verificada en JitPack.
+  implementation 'com.github.TeamNewPipe:NewPipeExtractor:v0.26.5'
+  // Reproductor y sesión multimedia (segundo plano + controles de notificación).
+  implementation 'androidx.media3:media3-exoplayer:1.4.1'
+  implementation 'androidx.media3:media3-session:1.4.1'
+}
