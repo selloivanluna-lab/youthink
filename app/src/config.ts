@@ -1,6 +1,6 @@
 // Configuración de entorno (variables EXPO_PUBLIC_*).
 // API_URL: backend Fly.io. QP_TOKEN: token compartido app<->backend.
-export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://quepensabas-bajar-api.fly.dev').replace(/\/+$/, '');
+export const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://youthink-1.onrender.com').replace(/\/+$/, '');
 export const QP_TOKEN = process.env.EXPO_PUBLIC_QP_TOKEN || '';
 
 // Supabase (mismo proyecto que el resto del ecosistema)

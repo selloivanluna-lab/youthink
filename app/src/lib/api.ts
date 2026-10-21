@@ -32,7 +32,7 @@ async function getJson<T>(path: string, timeoutMs = 15000): Promise<T> {
   try {
     let r: Response;
     try {
-      r = await fetch(API_URL + path, { headers: authHeaders(), signal: ctrl.signal });
+      r = await fetch(API_URL + path, { headers: authHeaders(), signal: ctrl.signal, cache: 'no-store' });
     } catch (e: any) { throw friendlyNetError(e); }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
@@ -47,7 +47,7 @@ async function postJson<T>(path: string, body: unknown, timeoutMs = 15000): Prom
     let r: Response;
     try {
       r = await fetch(API_URL + path, {
-        method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: ctrl.signal,
+        method: 'POST', headers: authHeaders(), body: JSON.stringify(body), signal: ctrl.signal, cache: 'no-store',
       });
     } catch (e: any) { throw friendlyNetError(e); }
     const data = await r.json().catch(() => ({}));

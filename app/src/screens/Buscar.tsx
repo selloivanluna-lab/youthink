@@ -582,6 +582,13 @@ export default function Buscar() {
     setLyricsData(null);
   }
 
+  // ── Actualizar app (abre enlace de APK) ──
+  function actualizarApp() {
+    try {
+      Linking.openURL('https://expo.dev/artifacts/eas/_z2QQbuqUx1NnQnopPWJfk-POmYxEIWJ9K6X5RM1Wfg.apk');
+    } catch (e) {}
+  }
+
   // ── Descarga: abre la URL directa del audio/video en el navegador ──
   function descargar() {
     if (!actual) return;
@@ -725,6 +732,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Text style={s.toggleLabel}>⏭️ Avanzar solo a la siguiente</Text>
         <Switch value={autoSiguiente} onValueChange={setAuto} trackColor={{ true: theme.colors.gold, false: theme.colors.border }} />
       </View>
+      <Pressable style={s.updateBtn} onPress={actualizarApp}>
+        <Text style={s.updateBtnText}>🔄 Actualizar app</Text>
+      </Pressable>
 
       {results.length > 0 ? (
         <Pressable style={s.playAll} onPress={() => reproducir(results, 0, soloAudio)}>
@@ -1211,6 +1221,8 @@ const s = StyleSheet.create({
   btnText: { fontSize: 18 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   toggleLabel: { color: theme.colors.textDim, fontSize: 13 },
+  updateBtn: { backgroundColor: theme.colors.surface2, borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginBottom: 8 },
+  updateBtnText: { color: theme.colors.gold, fontWeight: '600', fontSize: 13 },
   playAll: { backgroundColor: theme.colors.accent, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginVertical: 8 },
   playAllText: { color: '#001b1f', fontWeight: '800' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 8 },
