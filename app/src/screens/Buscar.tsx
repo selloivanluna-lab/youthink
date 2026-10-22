@@ -450,27 +450,32 @@ export default function Buscar() {
     setReproduciendo(autoPlay);
     if (idx >= 0) setQIdx(idx);
     cargarLyrics(item);
+    // Timeout para mostrar botón reintentar si se queda colgado
+    if (audio) {
+      audioTimeoutRef.current = setTimeout(() => {
+        setAudioTimeout((prev) => {
+          if (!prev) return true;
+          return prev;
+        });
+      }, 35000);
+    }
     try {
       if (audio && NATIVE_AUDIO) {
         setMediaUri('native:' + item.id);
         setError(null);
         await native.setEq(eqRef.current);
         if (autoPlay) await native.play(item.id, item.title);
-        // Timeout para mostrar botón reintentar si se queda colgado
-        audioTimeoutRef.current = setTimeout(() => {
-          setAudioTimeout(true);
-        }, 35000);
+        if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       } else if (audio) { 
         await api.previewAudio(item.id); 
         setMediaUri(api.audioClipUrl(item.id));
-        audioTimeoutRef.current = setTimeout(() => {
-          setAudioTimeout(true);
-        }, 35000);
+        if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       }
       else { await api.preview(item.id); setMediaUri(api.clipUrl(item.id)); }
     } catch (e: any) { 
       setError(e?.message || 'No se pudo cargar el medio');
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+      setAudioTimeout(false);
     }
   }
 
