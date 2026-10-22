@@ -116,6 +116,8 @@ export default function Buscar() {
   const [reproduciendo, setReproduciendo] = useState(false);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(0);
+  const [audioTimeout, setAudioTimeout] = useState(false);
+  const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cola / modos
   const [cola, setCola] = useState<YtResult[]>([]);
@@ -442,6 +444,8 @@ export default function Buscar() {
     setActual(item);
     setMediaUri(null);
     setError(null);
+    setAudioTimeout(false);
+    if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
     setModo(audio ? 'audio' : 'video');
     setReproduciendo(autoPlay);
     if (idx >= 0) setQIdx(idx);
@@ -452,9 +456,22 @@ export default function Buscar() {
         setError(null);
         await native.setEq(eqRef.current);
         if (autoPlay) await native.play(item.id, item.title);
-      } else if (audio) { await api.previewAudio(item.id); setMediaUri(api.audioClipUrl(item.id)); }
+        // Timeout para mostrar botón reintentar si se queda colgado
+        audioTimeoutRef.current = setTimeout(() => {
+          setAudioTimeout(true);
+        }, 35000);
+      } else if (audio) { 
+        await api.previewAudio(item.id); 
+        setMediaUri(api.audioClipUrl(item.id));
+        audioTimeoutRef.current = setTimeout(() => {
+          setAudioTimeout(true);
+        }, 35000);
+      }
       else { await api.preview(item.id); setMediaUri(api.clipUrl(item.id)); }
-    } catch (e: any) { setError(e?.message || 'No se pudo cargar el medio'); }
+    } catch (e: any) { 
+      setError(e?.message || 'No se pudo cargar el medio');
+      if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+    }
   }
 
   const versoActivoIdx = lyricsData?.lines
@@ -847,7 +864,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
                     <Text style={s.audioSub}>{actual?.channel}</Text>
                     {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
-                      error ? <Text style={s.audioErr}>{error}</Text> : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Generando audio…"} />
+                      error || audioTimeout ? (
+                        <View style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
+                          <Text style={s.audioErr}>{error || 'Tiempo de espera agotado'}</Text>
+                          {actual ? (
+                            <Pressable
+                              style={[s.updateBtn, { paddingHorizontal: 16 }]}
+                              onPress={() => { setError(null); setMediaUri(null); setAudioTimeout(false); if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; } aplicar(actual, true, idxRef.current, true); }}
+                            >
+                              <Text style={s.updateBtnText}>🔄 Reintentar</Text>
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      ) : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Generando audio…"} />
                     ) : null}
                     <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
                     <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
