@@ -1,10 +1,15 @@
 package expo.modules.qpaudio
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.media.audiofx.Equalizer
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -17,8 +22,8 @@ import androidx.media3.session.MediaSessionService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-// Servicio de reproducción: mantiene el audio sonando en segundo plano con
-// notificación y controles, y aplica el ecualizador sobre la sesión de audio.
+// Servicio de reproducci��n: mantiene el audio sonando en segundo plano con
+// notificaci��n y controles, y aplica el ecualizador sobre la sesi��n de audio.
 class QpPlayerService : MediaSessionService() {
 
   private var player: ExoPlayer? = null
@@ -37,6 +42,20 @@ class QpPlayerService : MediaSessionService() {
 
   override fun onCreate() {
     super.onCreate()
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val channel = NotificationChannel("qp_audio", "YouThink Audio", NotificationManager.IMPORTANCE_LOW)
+      val nm = getSystemService(NotificationManager::class.java)
+      nm?.createNotificationChannel(channel)
+    }
+    val notif = NotificationCompat.Builder(this, "qp_audio")
+      .setSmallIcon(android.R.drawable.ic_media_play)
+      .setContentTitle("YouThink")
+      .setContentText("Reproduciendo audio")
+      .setOngoing(true)
+      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .build()
+    try { startForeground(1001, notif) } catch (_: Exception) {}
 
     val http = DefaultHttpDataSource.Factory()
       .setUserAgent(QpDownloader.USER_AGENT)
