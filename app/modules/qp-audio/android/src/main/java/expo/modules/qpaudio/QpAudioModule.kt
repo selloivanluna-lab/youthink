@@ -4,7 +4,6 @@ import android.content.Intent
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.delay
 
 class QpAudioModule : Module() {
 
@@ -12,8 +11,8 @@ class QpAudioModule : Module() {
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
   // Arranca el servicio si hace falta y espera a que esté listo.
-  // Usa delay() (suspend) en vez de Thread.sleep() para no bloquear el hilo.
-  private suspend fun ensureService(): QpPlayerService {
+  // Corre en el hilo del AsyncFunction (IO), no bloquea el main thread.
+  private fun ensureService(): QpPlayerService {
     if (QpBridge.service == null) {
       try {
         reactContext.startService(Intent(reactContext, QpPlayerService::class.java))
@@ -21,11 +20,12 @@ class QpAudioModule : Module() {
       val deadline = System.currentTimeMillis() + 6000
       while (System.currentTimeMillis() < deadline) {
         QpBridge.service?.let { return it }
-        delay(40)
+        Thread.sleep(40)
       }
     }
     return QpBridge.service
       ?: run {
+        // El servicio no arrancó: notificamos al JS con un mensaje claro.
         QpEvents.push(
           mapOf(
             "resolving" to false,
