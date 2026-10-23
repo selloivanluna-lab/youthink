@@ -1,0 +1,110 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'app/**'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:   # permite lanzar el build manualmente desde la UI de GitHub
+
+jobs:
+  build:
+    name: Build APK (sin EAS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 (requerido por Gradle / React Native) ─────────────────────
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── 3. Node + cache de npm ───────────────────────────────────────────────
+      - name: Configurar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # ── 4. Instalar dependencias JS ──────────────────────────────────────────
+      - name: Instalar dependencias
+        working-directory: app
+        run: npm ci
+
+      # ── 5. Expo CLI ──────────────────────────────────────────────────────────
+      - name: Instalar Expo CLI
+        run: npm install -g expo-cli@latest
+
+      # ── 6. Generar proyecto nativo Android (expo prebuild) ───────────────────
+      #    --no-install evita reinstalar; --platform android es más rápido.
+      - name: expo prebuild (genera carpeta android/)
+        working-directory: app
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+          EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
+        run: npx expo prebuild --platform android --no-install --clean
+
+      # ── 7. Cache de Gradle ───────────────────────────────────────────────────
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      # ── 8. Permisos de ejecución para gradlew ────────────────────────────────
+      - name: Permisos gradlew
+        working-directory: app/android
+        run: chmod +x gradlew
+
+      # ── 9. Build debug (sin keystore — funciona sin configurar secretos) ──────
+      #    Para release firmado ver el step comentado abajo.
+      - name: Build APK debug
+        working-directory: app/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # ── 10. Subir APK como artifact ──────────────────────────────────────────
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: youthink-debug-${{ github.run_number }}
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPCIONAL: Build release firmado (requiere keystore en GitHub Secrets)
+# Para activarlo, comentá el step "Build APK debug" y descomentá este bloque.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#      - name: Build APK release (firmado)
+#        working-directory: app/android
+#        env:
+#          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+#          KEY_ALIAS:       ${{ secrets.ANDROID_KEY_ALIAS }}
+#          KEY_PASSWORD:    ${{ secrets.ANDROID_KEY_PASSWORD }}
+#          STORE_PASSWORD:  ${{ secrets.ANDROID_STORE_PASSWORD }}
+#        run: |
+#          echo "$KEYSTORE_BASE64" | base64 --decode > keystore.jks
+#          ./gradlew assembleRelease \
+#            -Pandroid.injected.signing.store.file=$PWD/keystore.jks \
+#            -Pandroid.injected.signing.store.password=$STORE_PASSWORD \
+#            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
+#            -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
+#            --no-daemon
+#
+#      - name: Subir APK release
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: youthink-release-${{ github.run_number }}
+#          path: app/android/app/build/outputs/apk/release/app-release.apk
+#          retention-days: 30

@@ -445,19 +445,23 @@ export default function Buscar() {
     setMediaUri(null);
     setError(null);
     setAudioTimeout(false);
+    // Resetear ambos flags de carga nativa para que no queden pegados de la canción anterior
+    setNativeBuffering(false);
+    setNativeResolving(false);
     if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
     setModo(audio ? 'audio' : 'video');
     setReproduciendo(autoPlay);
     if (idx >= 0) setQIdx(idx);
     cargarLyrics(item);
-    // Timeout para mostrar botón reintentar si se queda colgado
+    // Timeout de 12s: si en ese tiempo no llegó ningún evento del reproductor nativo,
+    // mostramos botón de reintento en lugar del spinner infinito.
     if (audio) {
       audioTimeoutRef.current = setTimeout(() => {
         setAudioTimeout((prev) => {
           if (!prev) return true;
           return prev;
         });
-      }, 35000);
+      }, 12000);
     }
     try {
       if (audio && NATIVE_AUDIO) {
@@ -696,7 +700,7 @@ Canal/Artista: "${item.channel}"
 Contá algo interesante: curiosidades del artista, contexto del álbum, hito histórico, influencias, récords, o anécdota memorable. Sé específico y entretenido. Sin markdown, solo texto corrido.`;
 
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

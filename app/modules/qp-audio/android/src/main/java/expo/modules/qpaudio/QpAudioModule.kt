@@ -4,27 +4,40 @@ import android.content.Intent
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlinx.coroutines.delay
 
 class QpAudioModule : Module() {
 
   private val reactContext
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
-  // Arranca el servicio si hace falta y espera a que esté listo (crea el player).
-  private fun ensureService(): QpPlayerService? {
+  // Arranca el servicio si hace falta y espera a que esté listo.
+  // Usa delay() (suspend) en vez de Thread.sleep() para no bloquear el hilo.
+  private suspend fun ensureService(): QpPlayerService {
     if (QpBridge.service == null) {
       try {
         reactContext.startService(Intent(reactContext, QpPlayerService::class.java))
-      } catch (_: Exception) {
-      }
+      } catch (_: Exception) {}
       val deadline = System.currentTimeMillis() + 6000
       while (System.currentTimeMillis() < deadline) {
         QpBridge.service?.let { return it }
-        Thread.sleep(40)
+        delay(40)
       }
     }
     return QpBridge.service
+      ?: run {
+        QpEvents.push(
+          mapOf(
+            "resolving" to false,
+            "buffering" to false,
+            "isPlaying" to false,
+            "error" to "Servicio de audio no disponible. Cerrá y abrí la app."
+          )
+        )
+        throw Exception("servicio de audio no disponible")
+      }
   }
+
 
   override fun definition() = ModuleDefinition {
     Name("QpAudio")
@@ -53,7 +66,7 @@ class QpAudioModule : Module() {
 
     // Reproduce un video por su id (resuelve la URL y suena en segundo plano).
     AsyncFunction<Boolean, String, String>("play") { videoId, title ->
-      val svc = ensureService() ?: throw Exception("servicio de audio no disponible")
+      val svc = ensureService()
       svc.applyEq(QpBridge.pendingGains)
       svc.playVideo(videoId, title)
       true
