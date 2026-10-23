@@ -43,7 +43,19 @@ jobs:
       - name: Instalar Expo CLI
         run: npm install -g expo-cli@latest
 
-      # ── 6. Generar proyecto nativo Android (expo prebuild) ───────────────────
+      # ── 6. Quitar expo-dev-client (causa la pantalla de dev server en debug) ──
+      - name: Quitar expo-dev-client de dependencias
+        working-directory: app
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+            delete pkg.dependencies['expo-dev-client'];
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          "
+          npm install --prefer-offline || true
+
+      # ── 7. Generar proyecto nativo Android (expo prebuild) ───────────────────
       - name: expo prebuild (genera carpeta android/)
         working-directory: app
         env:
@@ -54,7 +66,7 @@ jobs:
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
         run: npx expo prebuild --platform android --no-install --clean
 
-      # ── 7. Cache de Gradle ───────────────────────────────────────────────────
+      # ── 8. Cache de Gradle ───────────────────────────────────────────────────
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -64,14 +76,30 @@ jobs:
           key: gradle-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      # ── 8. Permisos de ejecución para gradlew ────────────────────────────────
+      # ── 9. Permisos de ejecución para gradlew ────────────────────────────────
       - name: Permisos gradlew
         working-directory: app/android
         run: chmod +x gradlew
 
-      # ── 9. Compilar APK Standalone (con bundle JS offline embebido) ──────────
-      # Usamos el signingConfig debug para que firme el release automáticamente sin pedir keystore externo
-      - name: Configurar firma debug para release y compilar APK
+      # ── 10. Parchear build.gradle: deshabilitar R8 y usar firma debug ─────────
+      # R8 (minify) rompe NewPipe Extractor que usa reflexión intensamente.
+      # Sin minificación el APK funciona correctamente.
+      - name: Parchear build.gradle (deshabilitar minify + firma debug)
+        working-directory: app/android
+        run: |
+          # Firma: usar debug keystore para no necesitar keystore de producción
+          sed -i 's/signingConfig signingConfigs\.release/signingConfig signingConfigs.debug/g' app/build.gradle || true
+          # Deshabilitar minificación R8 (rompe NewPipe/reflexión)
+          sed -i 's/minifyEnabled enableProguardInReleaseBuilds/minifyEnabled false/g' app/build.gradle || true
+          sed -i 's/minifyEnabled true/minifyEnabled false/g' app/build.gradle || true
+          # Deshabilitar shrinkResources (requiere minify activo)
+          sed -i 's/shrinkResources (minifyEnabled)/shrinkResources false/g' app/build.gradle || true
+          sed -i 's/shrinkResources true/shrinkResources false/g' app/build.gradle || true
+          echo "--- build.gradle release block ---"
+          grep -A 10 'release {' app/build.gradle || true
+
+      # ── 11. Compilar APK Release standalone ──────────────────────────────────
+      - name: Compilar APK
         working-directory: app/android
         env:
           EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL || 'https://youthink-1.onrender.com' }}
@@ -79,11 +107,9 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
-        run: |
-          sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' app/build.gradle || true
-          ./gradlew assembleRelease --no-daemon --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 10. Subir APK como artifact ──────────────────────────────────────────
+      # ── 12. Subir APK como artifact ──────────────────────────────────────────
       - name: Subir APK
         uses: actions/upload-artifact@v4
         with:
