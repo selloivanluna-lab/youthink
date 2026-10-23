@@ -44,11 +44,13 @@ jobs:
         run: npm install -g expo-cli@latest
 
       # ── 6. Generar proyecto nativo Android (expo prebuild) ───────────────────
-      #    --no-install evita reinstalar; --platform android es más rápido.
       - name: expo prebuild (genera carpeta android/)
         working-directory: app
         env:
-          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL || 'https://youthink-1.onrender.com' }}
+          EXPO_PUBLIC_QP_TOKEN: ${{ secrets.EXPO_PUBLIC_QP_TOKEN }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
         run: npx expo prebuild --platform android --no-install --clean
 
@@ -67,18 +69,26 @@ jobs:
         working-directory: app/android
         run: chmod +x gradlew
 
-      # ── 9. Build debug (sin keystore — funciona sin configurar secretos) ──────
-      #    Para release firmado ver el step comentado abajo.
-      - name: Build APK debug
+      # ── 9. Compilar APK Standalone (con bundle JS offline embebido) ──────────
+      # Usamos el signingConfig debug para que firme el release automáticamente sin pedir keystore externo
+      - name: Configurar firma debug para release y compilar APK
         working-directory: app/android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL || 'https://youthink-1.onrender.com' }}
+          EXPO_PUBLIC_QP_TOKEN: ${{ secrets.EXPO_PUBLIC_QP_TOKEN }}
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
+        run: |
+          sed -i 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/g' app/build.gradle || true
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       # ── 10. Subir APK como artifact ──────────────────────────────────────────
       - name: Subir APK
         uses: actions/upload-artifact@v4
         with:
-          name: youthink-debug-${{ github.run_number }}
-          path: app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: youthink-app-${{ github.run_number }}
+          path: app/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 14
 
 # ─────────────────────────────────────────────────────────────────────────────
