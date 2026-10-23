@@ -15,9 +15,14 @@ object QpEvents {
     set(value) {
       field = value
       if (value != null) {
-        // Vaciamos la cola de eventos pendientes al conectar el listener.
         val snap = synchronized(pending) { pending.toList().also { pending.clear() } }
-        snap.forEach { evt -> main.post { value.invoke(evt) } }
+        snap.forEach { evt ->
+          main.post {
+            try {
+              value.invoke(evt)
+            } catch (_: Exception) {}
+          }
+        }
       }
     }
 
@@ -25,10 +30,13 @@ object QpEvents {
     main.post {
       val l = listener
       if (l != null) {
-        l.invoke(data)
+        try {
+          l.invoke(data)
+        } catch (_: Exception) {}
       } else {
-        // Sin listener activo: guardamos el evento para no perderlo.
-        synchronized(pending) { pending.add(data) }
+        synchronized(pending) {
+          if (pending.size < 50) pending.add(data)
+        }
       }
     }
   }

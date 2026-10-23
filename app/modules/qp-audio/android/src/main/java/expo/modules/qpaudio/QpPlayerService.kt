@@ -55,7 +55,13 @@ class QpPlayerService : MediaSessionService() {
       .setOngoing(true)
       .setPriority(NotificationCompat.PRIORITY_LOW)
       .build()
-    try { startForeground(1001, notif) } catch (_: Exception) {}
+    try {
+      if (Build.VERSION.SDK_INT >= 34) {
+        startForeground(1001, notif, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+      } else {
+        startForeground(1001, notif)
+      }
+    } catch (_: Throwable) {}
 
     val http = DefaultHttpDataSource.Factory()
       .setUserAgent(QpDownloader.USER_AGENT)

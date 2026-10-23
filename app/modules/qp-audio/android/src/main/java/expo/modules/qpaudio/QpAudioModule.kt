@@ -15,8 +15,13 @@ class QpAudioModule : Module() {
   private fun ensureService(): QpPlayerService {
     if (QpBridge.service == null) {
       try {
-        reactContext.startService(Intent(reactContext, QpPlayerService::class.java))
-      } catch (_: Exception) {}
+        val intent = Intent(reactContext, QpPlayerService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+          reactContext.startForegroundService(intent)
+        } else {
+          reactContext.startService(intent)
+        }
+      } catch (_: Throwable) {}
       val deadline = System.currentTimeMillis() + 6000
       while (System.currentTimeMillis() < deadline) {
         QpBridge.service?.let { return it }
@@ -45,7 +50,11 @@ class QpAudioModule : Module() {
     Events("onPlaybackState")
 
     OnStartObserving {
-      QpEvents.listener = { state -> this@QpAudioModule.sendEvent("onPlaybackState", state) }
+      QpEvents.listener = { state ->
+        try {
+          this@QpAudioModule.sendEvent("onPlaybackState", state)
+        } catch (_: Exception) {}
+      }
     }
 
     OnStopObserving {
