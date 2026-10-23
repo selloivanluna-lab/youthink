@@ -20,7 +20,7 @@ object QpEvents {
           main.post {
             try {
               value.invoke(evt)
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
           }
         }
       }
@@ -32,7 +32,7 @@ object QpEvents {
       if (l != null) {
         try {
           l.invoke(data)
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
       } else {
         synchronized(pending) {
           if (pending.size < 50) pending.add(data)

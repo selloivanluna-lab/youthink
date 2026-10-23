@@ -92,16 +92,16 @@ class QpPlayerService : MediaSessionService() {
     })
 
     player = exo
-    session = MediaSession.Builder(this, exo)
-      .setSessionActivity(launchIntent())
-      .build()
+    val sessionBuilder = MediaSession.Builder(this, exo)
+    launchIntent()?.let { sessionBuilder.setSessionActivity(it) }
+    session = sessionBuilder.build()
 
     QpBridge.service = this
     applyEq(QpBridge.pendingGains)
   }
 
-  private fun launchIntent(): PendingIntent {
-    val i = packageManager.getLaunchIntentForPackage(packageName) ?: Intent()
+  private fun launchIntent(): PendingIntent? {
+    val i = packageManager.getLaunchIntentForPackage(packageName) ?: return null
     return PendingIntent.getActivity(
       this,
       0,

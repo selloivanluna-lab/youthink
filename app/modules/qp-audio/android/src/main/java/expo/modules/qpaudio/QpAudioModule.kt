@@ -53,7 +53,7 @@ class QpAudioModule : Module() {
       QpEvents.listener = { state ->
         try {
           this@QpAudioModule.sendEvent("onPlaybackState", state)
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
       }
     }
 
