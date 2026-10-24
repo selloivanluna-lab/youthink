@@ -55,10 +55,14 @@ export async function getPlaylists(): Promise<Playlist[]> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
+      console.log('[Playlists] Usuario logueado:', user.id, user.email);
       const { data, error } = await supabase
         .from('youthink_playlists')
         .select('id, nombre, user_id, created_at')
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
+
+      console.log('[Playlists] Resultado Supabase:', { data, error });
 
       if (!error && Array.isArray(data)) {
         // Fusionar remotas con locales para no perder ninguna
@@ -67,8 +71,15 @@ export async function getPlaylists(): Promise<Playlist[]> {
         saveLocalPlaylists(merged).catch(() => {});
         return merged;
       }
+      // Si hay error, lo propagamos para que la UI lo muestre
+      if (error) throw new Error('Supabase: ' + (error.message || JSON.stringify(error)));
+    } else {
+      console.log('[Playlists] Sin sesión activa, usando local');
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[Playlists] Error al cargar de Supabase:', e);
+    throw e; // re-lanzar para que cargarMisListas lo capture
+  }
 
   // Retornar almacenamiento local persistente
   return localList;

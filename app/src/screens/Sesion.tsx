@@ -26,6 +26,7 @@ export default function Sesion() {
 
   const [nuevaLista, setNuevaLista] = useState('');
   const [creandoLista, setCreandoLista] = useState(false);
+  const [errorListas, setErrorListas] = useState('');
 
   const handleCrearLista = async () => {
     const nom = nuevaLista.trim();
@@ -41,10 +42,13 @@ export default function Sesion() {
 
   const cargarMisListas = async () => {
     setCargandoPlaylists(true);
+    setErrorListas('');
     try {
       const data = await getPlaylists();
       setPlaylists(data);
-    } catch {}
+    } catch (e: any) {
+      setErrorListas(e?.message || 'Error al cargar listas');
+    }
     setCargandoPlaylists(false);
   };
 
@@ -270,6 +274,8 @@ export default function Sesion() {
 
         {cargandoPlaylists ? (
           <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 16 }} />
+        ) : errorListas ? (
+          <Text style={[s.err, { marginBottom: 8 }]}>⚠️ {errorListas}</Text>
         ) : playlists.length === 0 ? (
           <Text style={s.hint}>Todavía no tenés listas. Escribí un nombre arriba y tocá "➕ Crear" para armar tu primera lista.</Text>
         ) : (
