@@ -109,7 +109,26 @@ jobs:
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 12. Subir APK como artifact ──────────────────────────────────────────
+      # ── 12. Diagnóstico del APK generado ────────────────────────────────────
+      - name: Verificar APK generado (tamaño y presencia del bundle JS)
+        working-directory: app/android
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No se encontró ningún APK en la carpeta release"
+            exit 1
+          fi
+          SIZE=$(du -sh "$APK_PATH" | cut -f1)
+          echo "APK: $APK_PATH — Tamaño: $SIZE"
+          # Si el APK pesa < 5 MB el bundle JS no fue embebido (app crasheará al iniciar)
+          SIZE_BYTES=$(stat -c%s "$APK_PATH")
+          if [ "$SIZE_BYTES" -lt 5000000 ]; then
+            echo "ADVERTENCIA: APK demasiado pequeño (${SIZE}). El bundle JS probablemente no está embebido."
+          else
+            echo "OK: APK tiene tamaño razonable (${SIZE}). Bundle JS parece embebido."
+          fi
+
+      # ── 13. Subir APK como artifact ──────────────────────────────────────────
       - name: Subir APK
         uses: actions/upload-artifact@v4
         with:

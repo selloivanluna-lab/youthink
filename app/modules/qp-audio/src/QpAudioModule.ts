@@ -1,4 +1,4 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import { NativeModule, requireOptionalNativeModule } from 'expo';
 import type { QpAudioEvents, ResolvedAudio } from './QpAudio.types';
 
 declare class QpAudioModule extends NativeModule<QpAudioEvents> {
@@ -12,4 +12,6 @@ declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   setEq(preset: string): Promise<boolean>;
 }
 
-export default requireNativeModule<QpAudioModule>('QpAudio');
+// requireOptionalNativeModule devuelve null si el módulo nativo no está disponible,
+// en lugar de lanzar una excepción que mata la app antes de renderizar.
+export default requireOptionalNativeModule<QpAudioModule>('QpAudio');
