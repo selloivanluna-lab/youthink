@@ -1,8 +1,9 @@
 import { NativeModule, requireOptionalNativeModule } from 'expo';
-import type { QpAudioEvents, ResolvedAudio } from './QpAudio.types';
+import type { QpAudioEvents, ResolvedAudio, ResolvedVideo } from './QpAudio.types';
 
 declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   resolveAudio(videoId: string): Promise<ResolvedAudio>;
+  resolveVideo(videoId: string): Promise<ResolvedVideo>;
   play(videoId: string, title: string): Promise<boolean>;
   togglePlay(): Promise<boolean>;
   pause(): Promise<boolean>;

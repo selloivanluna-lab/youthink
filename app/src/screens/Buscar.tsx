@@ -532,8 +532,15 @@ export default function Buscar() {
         await api.previewAudio(item.id); 
         setMediaUri(api.audioClipUrl(item.id));
         if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+      } else if (NATIVE_AUDIO && QpAudio) {
+        // En Android: resolvemos el video directamente con NewPipe desde el celular (IP del usuario, sin bloqueo de bot ni demoras de servidor)
+        const v = await QpAudio.resolveVideo(item.id);
+        if (!v || !v.url) throw new Error('No se pudo extraer el video desde YouTube');
+        setMediaUri(v.url);
+      } else {
+        await api.preview(item.id);
+        setMediaUri(api.clipUrl(item.id));
       }
-      else { await api.preview(item.id); setMediaUri(api.clipUrl(item.id)); }
     } catch (e: any) { 
       setError(e?.message || 'No se pudo cargar el medio');
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }

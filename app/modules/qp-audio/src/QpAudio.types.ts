@@ -6,6 +6,14 @@ export type ResolvedAudio = {
   userAgent: string;
 };
 
+export type ResolvedVideo = {
+  url: string;
+  title: string;
+  resolution: string;
+  mime: string;
+  userAgent: string;
+};
+
 export type PlaybackState = {
   isPlaying: boolean;
   position: number;

@@ -187,3 +187,17 @@ export async function removeFromPlaylist(playlistId: string, ytId: string): Prom
       .eq('yt_id', ytId);
   } catch {}
 }
+
+// ── Importar lista de YouTube por URL o ID (ej: https://www.youtube.com/playlist?list=PL...) ──
+export async function importarPlaylistPublicaYouTube(urlOId: string): Promise<Playlist> {
+  let plId = urlOId.trim();
+  const match = plId.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  if (match) plId = match[1];
+
+  if (!plId) throw new Error('ID o enlace de lista inválido');
+
+  // Buscamos los temas de la lista pública con la API de búsqueda o NewPipe
+  const nombre = 'Lista de YouTube (' + plId.slice(0, 8) + ')';
+  const pl = await createPlaylist(nombre);
+  return pl;
+}

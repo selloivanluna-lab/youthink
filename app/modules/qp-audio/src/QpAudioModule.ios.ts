@@ -1,4 +1,4 @@
-import type { ResolvedAudio } from './QpAudio.types';
+import type { ResolvedAudio, ResolvedVideo } from './QpAudio.types';
 
 // El extractor de NewPipe y el reproductor nativo existen solo en Android.
 // En iOS el audio usa el camino del servidor (NATIVE_AUDIO === false).
@@ -6,6 +6,9 @@ const sinSoporte = async () => false;
 
 const QpAudioModule = {
   async resolveAudio(_videoId: string): Promise<ResolvedAudio> {
+    throw new Error('QpAudio solo está disponible en Android');
+  },
+  async resolveVideo(_videoId: string): Promise<ResolvedVideo> {
     throw new Error('QpAudio solo está disponible en Android');
   },
   play: sinSoporte,

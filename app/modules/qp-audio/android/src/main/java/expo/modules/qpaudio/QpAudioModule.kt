@@ -73,6 +73,18 @@ class QpAudioModule : Module() {
       )
     }
 
+    // Devuelve la mejor URL de video de un video de YouTube, extraída desde el celular (sin bots ni servidores cloud).
+    AsyncFunction<Map<String, Any?>, String>("resolveVideo") { videoId ->
+      val r = QpResolver.resolveVideo(videoId)
+      mapOf(
+        "url" to r.url,
+        "title" to r.title,
+        "resolution" to r.resolution,
+        "mime" to r.mime,
+        "userAgent" to QpDownloader.USER_AGENT
+      )
+    }
+
     // Reproduce un video por su id (resuelve la URL y suena en segundo plano).
     AsyncFunction<Boolean, String, String>("play") { videoId, title ->
       val svc = ensureService()

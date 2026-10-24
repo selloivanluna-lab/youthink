@@ -1,10 +1,13 @@
 import { registerWebModule, NativeModule } from 'expo';
-import type { QpAudioEvents, ResolvedAudio } from './QpAudio.types';
+import type { QpAudioEvents, ResolvedAudio, ResolvedVideo } from './QpAudio.types';
 
 // El extractor de NewPipe y el reproductor nativo existen solo en Android.
 // En web este módulo no hace nada.
 class QpAudioModule extends NativeModule<QpAudioEvents> {
   async resolveAudio(_videoId: string): Promise<ResolvedAudio> {
+    throw new Error('QpAudio solo está disponible en Android');
+  }
+  async resolveVideo(_videoId: string): Promise<ResolvedVideo> {
     throw new Error('QpAudio solo está disponible en Android');
   }
   async play(_videoId: string, _title: string): Promise<boolean> {

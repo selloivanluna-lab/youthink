@@ -18,6 +18,13 @@ object QpResolver {
     val mime: String,
   )
 
+  class VideoResult(
+    val url: String,
+    val title: String,
+    val resolution: String,
+    val mime: String,
+  )
+
   @Synchronized
   private fun ensureInit() {
     if (initialized) return
@@ -45,6 +52,41 @@ object QpResolver {
       title = extractor.name,
       bitrate = best.averageBitrate,
       mime = best.format?.mimeType ?: "audio/mp4",
+    )
+  }
+
+  fun resolveVideo(videoId: String): VideoResult {
+    ensureInit()
+    val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+    extractor.fetchPage()
+
+    // Buscamos streams de video con audio integrado (muxed videoStreams, p.ej. 360p / 720p mp4)
+    val best = extractor.videoStreams
+      .filter { it.content.isNotEmpty() }
+      .sortedByDescending { it.resolution }
+      .firstOrNull()
+
+    if (best != null) {
+      return VideoResult(
+        url = best.content,
+        title = extractor.name,
+        resolution = best.resolution ?: "360p",
+        mime = best.format?.mimeType ?: "video/mp4",
+      )
+    }
+
+    // Si no hay muxed, buscar en videoOnlyStreams
+    val videoOnly = extractor.videoOnlyStreams
+      .filter { it.content.isNotEmpty() }
+      .sortedByDescending { it.resolution }
+      .firstOrNull()
+      ?: throw IllegalStateException("sin streams de video para $videoId")
+
+    return VideoResult(
+      url = videoOnly.content,
+      title = extractor.name,
+      resolution = videoOnly.resolution ?: "360p",
+      mime = videoOnly.format?.mimeType ?: "video/mp4",
     )
   }
 }
