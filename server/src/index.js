@@ -110,10 +110,8 @@ function cookieArgs() {
 // Clientes de YouTube a probar EN ORDEN hasta que uno funcione. YouTube cambia
 // cuál cliente esquiva el PO token ("Sign in to confirm you're not a bot") y el
 // "The page needs to be reloaded" cada pocas semanas. Override con YT_PLAYER_CLIENT
-// (sets separados por "|"). OJO: cookies de cuenta personal desde una IP datacenter
-// pueden cerrar/banear la sesión -> usar sólo con cuenta desechable; se activan
-// por defecto cuando hay cookies.txt y se desactivan con YT_COOKIES=0.
-const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'default,-tv_downgraded,web_embedded|web_embedded|mweb|tv,web_safari').split('|');
+// (sets separados por "|"). 'android' e 'ios' tienen menores restricciones de bot.
+const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'android|ios|mweb|web_embedded|default,-tv_downgraded,web_embedded|tv,web_safari').split('|');
 function ytExtractorArgs(set) { return ['--extractor-args', 'youtube:player_client=' + set]; }
 function ytExtraArgs() { return ytExtractorArgs(YT_CLIENT_SETS[0]); }
 // Proxy opcional (p.ej. residencial) si Google bloquea la IP del datacenter. Env: YT_PROXY=http://user:pass@host:port
@@ -198,7 +196,7 @@ function runYtClip(id, cb) {
     args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
     args.push(...ytProxyArgs());
     if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
-    args.push('-f', 'bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b',
+    args.push('-f', '18/bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b/best',
       '--merge-output-format', 'mp4',
       '--download-sections', '*0-' + CLIP_SECONDS,
       '-o', out,

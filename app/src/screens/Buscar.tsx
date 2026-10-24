@@ -753,7 +753,7 @@ export default function Buscar() {
     setInfoError('');
     setInfoLoading(true);
     try {
-      // Usamos la Gemini API directamente desde el cliente (clave pública desde .env)
+      // Usamos la Gemini API con fallback de modelos disponibles
       const apiKey = GEMINI_KEY;
       if (!apiKey) throw new Error('Sin clave Gemini (EXPO_PUBLIC_GEMINI_KEY). Configurala en .env');
       const prompt = `Eres un musicólogo y crítico de cultura. Dame UN párrafo corto (máximo 120 palabras) en español rioplatense sobre:
@@ -762,25 +762,41 @@ Canal/Artista: "${item.channel}"
 
 Contá algo interesante: curiosidades del artista, contexto del álbum, hito histórico, influencias, récords, o anécdota memorable. Sé específico y entretenido. Sin markdown, solo texto corrido.`;
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 200, temperature: 0.7 },
-          }),
+      const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+      let lastErr: any = null;
+      let text = '';
+
+      for (const m of models) {
+        try {
+          const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { maxOutputTokens: 200, temperature: 0.7 },
+              }),
+            }
+          );
+          if (res.ok) {
+            const json = await res.json();
+            text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (text.trim()) {
+              text = text.trim();
+              break;
+            }
+          } else {
+            const errBody = await res.json().catch(() => null);
+            lastErr = new Error(errBody?.error?.message || 'HTTP ' + res.status);
+          }
+        } catch (e: any) {
+          lastErr = e;
         }
-      );
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => null);
-        throw new Error(errBody?.error?.message || 'HTTP ' + res.status);
       }
-      const json = await res.json();
-      const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      if (!text) throw new Error('Sin respuesta de la IA');
-      setInfoData(text.trim());
+
+      if (!text) throw lastErr || new Error('Sin respuesta de la IA');
+      setInfoData(text);
     } catch (e: any) {
       setInfoError(e?.message || 'No se pudo obtener info');
     }

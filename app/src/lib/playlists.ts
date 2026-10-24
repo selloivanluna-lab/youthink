@@ -49,7 +49,9 @@ async function saveLocalItems(playlistId: string, items: PlaylistItem[]): Promis
 // ── Listas de reproducción ──
 
 export async function getPlaylists(): Promise<Playlist[]> {
-  // 1. Intentar con Supabase si hay sesión
+  const localList = await getLocalPlaylists();
+
+  // Intentar con Supabase si hay sesión activa
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
@@ -57,20 +59,28 @@ export async function getPlaylists(): Promise<Playlist[]> {
         .from('youthink_playlists')
         .select('id, nombre, user_id, created_at')
         .order('created_at', { ascending: false });
+
       if (!error && Array.isArray(data)) {
-        // Guardar copia local de respaldo
-        saveLocalPlaylists(data).catch(() => {});
-        return data;
+        // Fusionar remotas con locales para no perder ninguna
+        const remoteIds = new Set(data.map((p) => p.id));
+        const merged = [...data, ...localList.filter((p) => !remoteIds.has(p.id))];
+        saveLocalPlaylists(merged).catch(() => {});
+        return merged;
       }
     }
   } catch {}
 
-  // 2. Fallback a almacenamiento local persistente
-  return getLocalPlaylists();
+  // Retornar almacenamiento local persistente
+  return localList;
 }
 
 export async function createPlaylist(nombre: string): Promise<Playlist> {
-  const { data: { user } } = await supabase.auth.getUser();
+  let user: any = null;
+  try {
+    const res = await supabase.auth.getUser();
+    user = res.data?.user;
+  } catch {}
+
   const newPl: Playlist = {
     id: 'pl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
     nombre,
@@ -78,10 +88,10 @@ export async function createPlaylist(nombre: string): Promise<Playlist> {
     created_at: new Date().toISOString(),
   };
 
-  // Guardar en local primero (respuesta instantánea y garantizada)
+  // Guardar en local primero (respuesta instantánea y garantizada siempre)
   const locals = await getLocalPlaylists();
-  locals.unshift(newPl);
-  await saveLocalPlaylists(locals);
+  const actualizadas = [newPl, ...locals.filter((p) => p.id !== newPl.id)];
+  await saveLocalPlaylists(actualizadas);
 
   // Intentar sincronizar en Supabase si está logueado
   if (user) {

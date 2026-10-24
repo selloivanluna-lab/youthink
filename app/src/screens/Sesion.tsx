@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View,
+  ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { theme } from '../theme';
-import { getPlaylists, getPlaylistItems, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { getPlaylists, getPlaylistItems, createPlaylist, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
 
 type UserInfo = {
   id: string;
@@ -23,6 +23,21 @@ export default function Sesion() {
   const [listaSeleccionada, setListaSeleccionada] = useState<Playlist | null>(null);
   const [itemsLista, setItemsLista] = useState<PlaylistItem[]>([]);
   const [cargandoItems, setCargandoItems] = useState(false);
+
+  const [nuevaLista, setNuevaLista] = useState('');
+  const [creandoLista, setCreandoLista] = useState(false);
+
+  const handleCrearLista = async () => {
+    const nom = nuevaLista.trim();
+    if (!nom) return;
+    setCreandoLista(true);
+    try {
+      const pl = await createPlaylist(nom);
+      setPlaylists((prev) => [pl, ...prev.filter((p) => p.id !== pl.id)]);
+      setNuevaLista('');
+    } catch {}
+    setCreandoLista(false);
+  };
 
   const cargarMisListas = async () => {
     setCargandoPlaylists(true);
@@ -209,10 +224,50 @@ export default function Sesion() {
           </Pressable>
         </View>
 
+        {/* Creador de nueva lista */}
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+          <TextInput
+            style={{
+              flex: 1,
+              backgroundColor: theme.colors.surface2,
+              color: theme.colors.text,
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              fontSize: 14,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+            }}
+            placeholder="Nombre de nueva lista…"
+            placeholderTextColor={theme.colors.textDim}
+            value={nuevaLista}
+            onChangeText={setNuevaLista}
+            autoCorrect={false}
+          />
+          <Pressable
+            style={{
+              backgroundColor: theme.colors.gold,
+              borderRadius: 8,
+              paddingHorizontal: 14,
+              justifyContent: 'center',
+              alignItems: 'center',
+              opacity: !nuevaLista.trim() || creandoLista ? 0.4 : 1,
+            }}
+            onPress={handleCrearLista}
+            disabled={!nuevaLista.trim() || creandoLista}
+          >
+            {creandoLista ? (
+              <ActivityIndicator color="#111" size="small" />
+            ) : (
+              <Text style={{ color: '#111', fontWeight: '800', fontSize: 13 }}>➕ Crear</Text>
+            )}
+          </Pressable>
+        </View>
+
         {cargandoPlaylists ? (
           <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 16 }} />
         ) : playlists.length === 0 ? (
-          <Text style={s.hint}>Todavía no tenés listas. Podés crearlas o añadir canciones desde la pestaña Buscar con el botón ➕ Añadir a lista.</Text>
+          <Text style={s.hint}>Todavía no tenés listas. Escribí un nombre arriba y tocá "➕ Crear" para armar tu primera lista.</Text>
         ) : (
           <View style={{ gap: 8 }}>
             {playlists.map((p) => {

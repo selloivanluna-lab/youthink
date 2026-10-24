@@ -152,10 +152,10 @@ export function detectarLangPair(textSample: string): string {
   return 'en|es';
 }
 
-// Traduce los versos al español usando Gemini 3.5 Flash (alta fidelidad y contexto musical) con fallback a MyMemory
+// Traduce los versos al español usando Gemini Flash (alta fidelidad y contexto musical) con fallback a MyMemory
 export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promise<LyricLine[]> {
-  // Usamos _v2 para invalidar traducciones erróneas previas guardadas en el storage
-  const cacheKey = `qp_lyrics_tr_v2_${videoId}`;
+  // Usamos _v3 para invalidar traducciones erróneas previas guardadas en el storage
+  const cacheKey = `qp_lyrics_tr_v3_${videoId}`;
   try {
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
@@ -179,41 +179,53 @@ Devuelve EXACTAMENTE un array JSON de strings con las traducciones en el mismo o
 Versos:
 ${JSON.stringify(originalLines)}`;
 
-        const r = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.3,
-                maxOutputTokens: 2048,
-                responseMimeType: 'application/json',
-              },
-            }),
-          }
-        );
+        // Modelos disponibles en orden de prioridad y resiliencia ante alta demanda
+        const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+        let success = false;
 
-        if (r.ok) {
-          const json = await r.json();
-          const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-          const cleanJson = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(cleanJson);
-          if (Array.isArray(parsed) && parsed.length === originalLines.length) {
-            parsed.forEach((trStr, offset) => {
-              const idx = i + offset;
-              const val = String(trStr || slice[offset].text).trim();
-              trMap[idx] = val;
-              translatedLines[idx].translation = val;
-            });
-            continue;
-          }
+        for (const model of models) {
+          try {
+            const r = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: {
+                    temperature: 0.3,
+                    maxOutputTokens: 2048,
+                    responseMimeType: 'application/json',
+                  },
+                }),
+              }
+            );
+
+            if (r.ok) {
+              const json = await r.json();
+              const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+              const cleanJson = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+              const parsed = JSON.parse(cleanJson);
+              if (Array.isArray(parsed) && parsed.length === originalLines.length) {
+                parsed.forEach((trStr, offset) => {
+                  const idx = i + offset;
+                  const val = String(trStr || slice[offset].text).trim();
+                  trMap[idx] = val;
+                  translatedLines[idx].translation = val;
+                });
+                success = true;
+                break;
+              }
+            }
+          } catch {}
         }
-        // Si falló este bloque con Gemini, rellenamos con original para fallback
-        slice.forEach((sLine, offset) => {
-          trMap[i + offset] = sLine.text;
-        });
+
+        if (!success) {
+          // Si falló con Gemini para este bloque, rellenamos con original
+          slice.forEach((sLine, offset) => {
+            trMap[i + offset] = sLine.text;
+          });
+        }
       }
 
       const tieneTraducciones = Object.values(trMap).some((v, idx) => v && v !== lines[idx]?.text);
@@ -222,11 +234,11 @@ ${JSON.stringify(originalLines)}`;
         return translatedLines;
       }
     } catch (e) {
-      console.warn('Fallback a MyMemory por error en Gemini:', e);
+      console.warn('Error en traducción con Gemini:', e);
     }
   }
 
-  // Fallback secundario: MyMemory
+  // Fallback secundario: MyMemory con descarte de malas traducciones conocidas de corpus
   const muestra = lines.slice(0, 10).map((l) => l.text).join(' ');
   const langpair = detectarLangPair(muestra);
   const chunkSize = 5;
@@ -251,7 +263,11 @@ ${JSON.stringify(originalLines)}`;
             const status = data?.responseStatus;
             const trans = data?.responseData?.translatedText;
             if (status === 200 && trans && typeof trans === 'string') {
-              const esError = trans.includes('INVALID SOURCE LANGUAGE') || trans.includes('MYMEMORY WARNING');
+              const esError =
+                trans.includes('INVALID SOURCE LANGUAGE') ||
+                trans.includes('MYMEMORY WARNING') ||
+                // Filtro contra entradas de canciones corrompidas en corpus públicos (ej. "LO QUE HE HECHO")
+                /lo que he hecho/i.test(trans);
               if (!esError) {
                 const cleanTrans = trans
                   .replace(/<[^>]*>/g, '')
