@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GEMINI_KEY } from '../config';
 
 export type LyricLine = {
   time: number; // segundos
@@ -146,7 +147,7 @@ export function detectarLangPair(textSample: string): string {
   return 'en|es';
 }
 
-// Traduce los versos al español (con cache en AsyncStorage)
+// Traduce los versos al español usando Gemini 3.5 Flash (alta fidelidad y contexto musical) con fallback a MyMemory
 export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promise<LyricLine[]> {
   const cacheKey = `qp_lyrics_tr_${videoId}`;
   try {
@@ -157,11 +158,67 @@ export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promi
     }
   } catch {}
 
-  // Detectar idioma de origen válido para MyMemory a partir de una muestra de la letra
+  // Intento primario con Gemini (traducción poética, musical y coherente en bloque)
+  if (GEMINI_KEY && lines.length > 0) {
+    try {
+      const batchSize = 35;
+      const trMap: Record<number, string> = {};
+      const translatedLines: LyricLine[] = [...lines];
+
+      for (let i = 0; i < lines.length; i += batchSize) {
+        const slice = lines.slice(i, i + batchSize);
+        const originalLines = slice.map((l) => l.text);
+        const prompt = `Eres un traductor experto en lírica musical y poesía. Traduce esta lista de versos de una canción al español rioplatense/latino de manera poética, emocional y fluida, manteniendo el sentido musical verso por verso.
+Devuelve EXACTAMENTE un array JSON de strings con las traducciones en el mismo orden y con la misma cantidad de elementos (${originalLines.length}). Sin explicaciones ni etiquetas markdown.
+Versos:
+${JSON.stringify(originalLines)}`;
+
+        const r = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 1500 },
+            }),
+          }
+        );
+
+        if (r.ok) {
+          const json = await r.json();
+          const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          const cleanJson = rawText.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(cleanJson);
+          if (Array.isArray(parsed) && parsed.length === originalLines.length) {
+            parsed.forEach((trStr, offset) => {
+              const idx = i + offset;
+              const val = String(trStr || slice[offset].text).trim();
+              trMap[idx] = val;
+              translatedLines[idx].translation = val;
+            });
+            continue;
+          }
+        }
+        // Si falló este bloque con Gemini, rellenamos con original para fallback
+        slice.forEach((sLine, offset) => {
+          trMap[i + offset] = sLine.text;
+        });
+      }
+
+      const tieneTraducciones = Object.values(trMap).some((v, idx) => v && v !== lines[idx]?.text);
+      if (tieneTraducciones) {
+        AsyncStorage.setItem(cacheKey, JSON.stringify(trMap)).catch(() => {});
+        return translatedLines;
+      }
+    } catch (e) {
+      console.warn('Fallback a MyMemory por error en Gemini:', e);
+    }
+  }
+
+  // Fallback secundario: MyMemory
   const muestra = lines.slice(0, 10).map((l) => l.text).join(' ');
   const langpair = detectarLangPair(muestra);
-
-  // Para traducir versos sin saturar la red, hacemos traducción por lotes pequeños (chunks)
   const chunkSize = 5;
   const translatedLines: LyricLine[] = [...lines];
   const trMap: Record<number, string> = {};
@@ -184,7 +241,6 @@ export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promi
             const status = data?.responseStatus;
             const trans = data?.responseData?.translatedText;
             if (status === 200 && trans && typeof trans === 'string') {
-              // Descartar si MyMemory devolvió una advertencia o error en texto
               const esError = trans.includes('INVALID SOURCE LANGUAGE') || trans.includes('MYMEMORY WARNING');
               if (!esError) {
                 const cleanTrans = trans

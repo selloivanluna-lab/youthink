@@ -47,18 +47,43 @@ export default function Sesion() {
         setUser(null);
       }
     });
-    return () => sub.subscription.unsubscribe();
+    // Escucha de Deep Links cuando el navegador externo vuelve a la app (youthink://auth/callback)
+    const handleUrl = (event: { url: string }) => {
+      const url = event.url;
+      if (url && url.includes('auth/callback')) {
+        const hashIdx = url.indexOf('#');
+        const queryIdx = url.indexOf('?');
+        const paramsStr = hashIdx !== -1 ? url.substring(hashIdx + 1) : queryIdx !== -1 ? url.substring(queryIdx + 1) : '';
+        const params = new URLSearchParams(paramsStr);
+        const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          supabase.auth.setSession({ access_token, refresh_token }).then(() => {
+            setSigning(false);
+          }).catch(() => setSigning(false));
+        } else {
+          setSigning(false);
+        }
+      }
+    };
+    const linkingSub = Linking.addEventListener('url', handleUrl);
+    Linking.getInitialURL().then((url) => { if (url) handleUrl({ url }); });
+
+    return () => {
+      sub.subscription.unsubscribe();
+      linkingSub.remove();
+    };
   }, []);
 
   const loginGoogle = async () => {
     setSigning(true);
     setError('');
     try {
-      // redirectTo debe ser la URL exacta de esta app (registrada en Supabase → Auth → Redirect URLs).
+      // Scheme oficial en app.json es "youthink"
       const redirectTo =
         Platform.OS === 'web' && typeof window !== 'undefined'
-          ? window.location.href           // e.g. http://localhost:8081
-          : 'quepensabasbajar://auth/callback';
+          ? window.location.href
+          : 'youthink://auth/callback';
 
       const { data, error: e } = await supabase.auth.signInWithOAuth({
         provider: 'google',

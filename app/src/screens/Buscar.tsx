@@ -708,7 +708,7 @@ Canal/Artista: "${item.channel}"
 Contá algo interesante: curiosidades del artista, contexto del álbum, hito histórico, influencias, récords, o anécdota memorable. Sé específico y entretenido. Sin markdown, solo texto corrido.`;
 
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -966,7 +966,21 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   <Pressable style={s.navBtn} onPress={siguiente}><Text style={s.navText}>Siguiente ⏭</Text></Pressable>
                 </View>
               ) : null}
-              {!mediaUri ? <CargaAnim texto="Generando vista previa…" /> : null}
+              {!mediaUri ? (
+                error ? (
+                  <View style={{ alignItems: 'center', gap: 10, marginVertical: 20 }}>
+                    <Text style={s.audioErr}>{error}</Text>
+                    {actual ? (
+                      <Pressable
+                        style={[s.updateBtn, { paddingHorizontal: 16 }]}
+                        onPress={() => { setError(null); setMediaUri(null); aplicar(actual, false, idxRef.current, true); }}
+                      >
+                        <Text style={s.updateBtnText}>🔄 Reintentar video</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : <CargaAnim texto="Generando vista previa…" />
+              ) : null}
             </>
           )}
 
