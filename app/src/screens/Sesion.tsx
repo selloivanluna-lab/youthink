@@ -27,6 +27,34 @@ export default function Sesion() {
   const [nuevaLista, setNuevaLista] = useState('');
   const [creandoLista, setCreandoLista] = useState(false);
   const [errorListas, setErrorListas] = useState('');
+  const [ytToken, setYtToken] = useState<string | null>(null);
+  const [listasYT, setListasYT] = useState<Playlist[]>([]);
+
+  // Carga las listas de YouTube del usuario con el provider_token de Google
+  const cargarListasYouTube = async (token: string) => {
+    try {
+      let allItems: Playlist[] = [];
+      let pageToken = '';
+      do {
+        const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=50${pageToken ? '&pageToken=' + pageToken : ''}`;
+        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+        const json = await res.json();
+        if (json.error) { console.warn('[YT Playlists]', json.error); break; }
+        const items: Playlist[] = (json.items || []).map((it: any) => ({
+          id: 'yt_' + it.id,
+          nombre: '▶️ ' + it.snippet.title,
+          user_id: 'youtube',
+          created_at: it.snippet.publishedAt,
+          items_count: it.contentDetails?.itemCount,
+        }));
+        allItems = [...allItems, ...items];
+        pageToken = json.nextPageToken || '';
+      } while (pageToken);
+      setListasYT(allItems);
+    } catch (e) {
+      console.warn('[YT Playlists] Error:', e);
+    }
+  };
 
   const handleCrearLista = async () => {
     const nom = nuevaLista.trim();
@@ -104,8 +132,16 @@ export default function Sesion() {
         });
         // Al completar el login OAuth, recargar listas con el usuario ya autenticado
         cargarMisListas();
+        // Capturar provider_token (access token de Google/YouTube)
+        const tok = session.provider_token;
+        if (tok) {
+          setYtToken(tok);
+          cargarListasYouTube(tok);
+        }
       } else {
         setUser(null);
+        setYtToken(null);
+        setListasYT([]);
       }
     });
     // Escucha de Deep Links cuando el navegador externo vuelve a la app (youthink://auth/callback)
@@ -118,8 +154,13 @@ export default function Sesion() {
         const params = new URLSearchParams(paramsStr);
         const access_token = params.get('access_token');
         const refresh_token = params.get('refresh_token');
+        // provider_token puede venir en la URL del callback
+        const provider_token = params.get('provider_token');
         if (access_token && refresh_token) {
-          supabase.auth.setSession({ access_token, refresh_token }).then(() => {
+          supabase.auth.setSession({ access_token, refresh_token }).then((res) => {
+            // Si no vino en la URL, intentar desde la sesión
+            const tok = provider_token || res.data?.session?.provider_token;
+            if (tok) { setYtToken(tok); cargarListasYouTube(tok); }
             setSigning(false);
           }).catch(() => setSigning(false));
         } else {
@@ -150,8 +191,10 @@ export default function Sesion() {
         provider: 'google',
         options: {
           redirectTo,
-          // En web, abre en la misma pestaña para que Supabase pueda leer el hash de vuelta.
           skipBrowserRedirect: false,
+          // Pedimos acceso de lectura a YouTube para ver las listas del usuario
+          scopes: 'openid email profile https://www.googleapis.com/auth/youtube.readonly',
+          queryParams: { access_type: 'offline', prompt: 'consent' },
         },
       });
       if (e) throw e;
@@ -326,6 +369,40 @@ export default function Sesion() {
           </View>
         )}
       </View>
+
+      {/* ── LISTAS DE YOUTUBE ── */}
+      {user && (
+        <View style={s.card}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <Text style={s.cardTitle}>▶️ Mis listas de YouTube</Text>
+            {ytToken && (
+              <Pressable onPress={() => cargarListasYouTube(ytToken)} style={{ padding: 4 }}>
+                <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>🔄</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {!ytToken ? (
+            <Text style={s.hint}>
+              Para ver tus listas de YouTube, cerrá sesión y volvé a iniciar con Google.{'\n'}
+              (Esta sesión no tiene permiso de YouTube aún.)
+            </Text>
+          ) : listasYT.length === 0 ? (
+            <Text style={s.hint}>Cargando tus listas de YouTube…</Text>
+          ) : (
+            <View style={{ gap: 8 }}>
+              {listasYT.map((p) => (
+                <View key={p.id} style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, backgroundColor: theme.colors.surface2 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>{p.nombre}</Text>
+                  {p.items_count !== undefined && (
+                    <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>{p.items_count} canciones</Text>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
 
       {!user && (
         /* ── SIN SESIÓN ── */
