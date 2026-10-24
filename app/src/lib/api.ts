@@ -84,9 +84,9 @@ export const api = {
   search: (q: string, n = 15) =>
     withRetry(() => getJson<{ ok: boolean; results: YtResult[] }>(`/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}`, 25000)),
 
-  // preview necesita yt-dlp + ffmpeg — hasta 20s en cold start
+  // preview necesita yt-dlp + ffmpeg — puede demorar hasta 60s en servidor cloud
   preview: (id: string) =>
-    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 30000)),
+    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 75000), 2, 2000),
 
   // URL absoluta para expo-video. El token va en la URL (los reproductores no mandan headers).
   clipUrl: (id: string) => `${API_URL}/api/clip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,

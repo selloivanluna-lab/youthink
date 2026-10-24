@@ -149,7 +149,8 @@ export function detectarLangPair(textSample: string): string {
 
 // Traduce los versos al español usando Gemini 3.5 Flash (alta fidelidad y contexto musical) con fallback a MyMemory
 export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promise<LyricLine[]> {
-  const cacheKey = `qp_lyrics_tr_${videoId}`;
+  // Usamos _v2 para invalidar traducciones erróneas previas guardadas en el storage
+  const cacheKey = `qp_lyrics_tr_v2_${videoId}`;
   try {
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
@@ -180,7 +181,11 @@ ${JSON.stringify(originalLines)}`;
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 1500 },
+              generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 2048,
+                responseMimeType: 'application/json',
+              },
             }),
           }
         );
