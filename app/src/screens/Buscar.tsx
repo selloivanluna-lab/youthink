@@ -286,13 +286,17 @@ export default function Buscar() {
 
   // Polling robusto de posición/duración (en web a veces no llega timeUpdate).
   // También sincroniza el botón play/pausa con el estado real del DOM.
+  // IMPORTANTE: en Android nativo (modo === 'audio'), la posición la reporta QpAudio por eventos;
+  // consultar `player.currentTime` (expo-video vacío) pisaba el tiempo a 0:00 cada 400ms alternando.
   useEffect(() => {
     const t = setInterval(() => {
       try {
-        const ct = player.currentTime;
-        if (ct != null && isFinite(ct)) setPos(ct);
-        const d = player.duration;
-        if (d != null && isFinite(d) && d > 0) setDur(d);
+        if (!usarNativoRef.current) {
+          const ct = player.currentTime;
+          if (ct != null && isFinite(ct)) setPos(ct);
+          const d = player.duration;
+          if (d != null && isFinite(d) && d > 0) setDur(d);
+        }
         if (Platform.OS === 'web') {
           const el = (globalThis as any).document?.querySelector('video') as any;
           if (el) {
