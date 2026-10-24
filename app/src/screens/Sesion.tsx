@@ -72,8 +72,8 @@ export default function Sesion() {
 
   // Carga la sesión actual al montar.
   useEffect(() => {
-    cargarMisListas();
-    supabase.auth.getUser().then(({ data, error: e }: any) => {
+    // Primero resolvemos la sesión, luego cargamos las listas (evita race condition)
+    supabase.auth.getUser().then(({ data }: any) => {
       if (data?.user) {
         const m = data.user.user_metadata || {};
         setUser({
@@ -84,6 +84,8 @@ export default function Sesion() {
         });
       }
       setLoading(false);
+      // Cargar listas DESPUÉS de conocer el estado de sesión
+      cargarMisListas();
     });
 
     // Escucha cambios de sesión (por ejemplo, después del redirect OAuth).
@@ -96,6 +98,8 @@ export default function Sesion() {
           full_name: m.full_name || m.name || '',
           avatar_url: m.avatar_url || m.picture || '',
         });
+        // Al completar el login OAuth, recargar listas con el usuario ya autenticado
+        cargarMisListas();
       } else {
         setUser(null);
       }
