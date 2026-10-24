@@ -136,6 +136,55 @@ export default function Buscar() {
   const eqGraph = useRef<any>(null);
   const mediaUriRef = useRef<string | null>(null);
 
+  // Control de modal de reproductor (minimizar para buscar canciones sin cortar audio)
+  const [playerVisible, setPlayerVisible] = useState(false);
+
+  // Reordenar canciones en la cola (mover arriba / mover abajo)
+  function moverEnCola(fromIndex: number, toIndex: number) {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex >= cola.length || toIndex >= cola.length) return;
+    const nueva = [...cola];
+    const [removido] = nueva.splice(fromIndex, 1);
+    nueva.splice(toIndex, 0, removido);
+    setCola(nueva);
+    colaRef.current = nueva;
+    if (qIdx === fromIndex) {
+      setQIdx(toIndex);
+      idxRef.current = toIndex;
+    } else if (fromIndex < qIdx && toIndex >= qIdx) {
+      setQIdx(qIdx - 1);
+      idxRef.current = qIdx - 1;
+    } else if (fromIndex > qIdx && toIndex <= qIdx) {
+      setQIdx(qIdx + 1);
+      idxRef.current = qIdx + 1;
+    }
+  }
+
+  // Quitar cancion de la cola
+  function quitarDeCola(index: number) {
+    if (index < 0 || index >= cola.length) return;
+    const nueva = cola.filter((_, i) => i !== index);
+    setCola(nueva);
+    colaRef.current = nueva;
+    if (index < qIdx) {
+      setQIdx(qIdx - 1);
+      idxRef.current = qIdx - 1;
+    } else if (index === qIdx) {
+      if (nueva.length > 0) {
+        const nextIdx = Math.min(index, nueva.length - 1);
+        aplicar(nueva[nextIdx], audioRef.current, nextIdx, true);
+      } else {
+        cerrar();
+      }
+    }
+  }
+
+  // Agregar cancion al final de la cola sin cortar la reproducción
+  function encolarCancion(item: YtResult) {
+    const nueva = [...cola, item];
+    setCola(nueva);
+    colaRef.current = nueva;
+  }
+
   // Letras (Lyrics) sincronizadas y traducción
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [lyricsData, setLyricsData] = useState<LyricsData | null>(null);
@@ -450,6 +499,7 @@ export default function Buscar() {
   async function aplicar(item: YtResult, audio: boolean, idx: number, autoPlay = false) {
     autoPlayRef.current = autoPlay;
     setActual(item);
+    setPlayerVisible(true);
     setMediaUri(null);
     setError(null);
     setAudioTimeout(false);
@@ -604,10 +654,15 @@ export default function Buscar() {
       setReproduciendo(true);
     }
   }
+  function minimizar() {
+    setPlayerVisible(false);
+  }
+
   function cerrar() {
     if (usarNativoRef.current) native.stop();
     player.pause();
     setActual(null);
+    setPlayerVisible(false);
     setMediaUri(null);
     setQIdx(-1);
     setCola([]);
@@ -779,29 +834,72 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {error ? <Text style={s.error}>{error}</Text> : null}
       {loading ? <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 24 }} /> : null}
 
-      <FlatList data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: 24 }}
+      <FlatList data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
         renderItem={({ item, index }) => (
-          <Pressable style={[s.row, qIdx === index ? s.rowActiva : null]} onPress={() => reproducir(results, index, soloAudio)}>
-            <Image source={{ uri: item.thumb }} style={s.thumb} />
-            <View style={{ flex: 1 }}>
-              <Text style={s.title} numberOfLines={2}>{item.title}</Text>
-              <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}</Text>
+          <View style={[s.row, qIdx === index && cola[qIdx]?.id === item.id ? s.rowActiva : null]}>
+            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, soloAudio)}>
+              <Image source={{ uri: item.thumb }} style={s.thumb} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.title} numberOfLines={2}>{item.title}</Text>
+                <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}</Text>
+              </View>
+            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+              {actual ? (
+                <Pressable
+                  style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
+                  onPress={() => encolarCancion(item)}
+                >
+                  <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => reproducir(results, index, soloAudio)} style={{ padding: 6 }}>
+                <Text style={s.play}>{qIdx === index && cola[qIdx]?.id === item.id ? '🔊' : soloAudio ? '🔊' : '▶'}</Text>
+              </Pressable>
             </View>
-            <Text style={s.play}>{qIdx === index ? '🔊' : soloAudio ? '🔊' : '▶'}</Text>
-          </Pressable>
+          </View>
         )}
         ListEmptyComponent={!loading ? <Text style={s.empty}>Buscá un video para empezar.</Text> : null}
       />
 
-      <Modal visible={!!actual} animationType="slide" onRequestClose={cerrar} statusBarTranslucent>
+      {/* Mini-reproductor flotante si el modal está minimizado */}
+      {actual && !playerVisible ? (
+        <Pressable
+          style={{
+            position: 'absolute', bottom: 12, left: 16, right: 16,
+            backgroundColor: theme.colors.surface, borderRadius: 12,
+            borderWidth: 1, borderColor: theme.colors.gold,
+            flexDirection: 'row', alignItems: 'center', padding: 10, gap: 10,
+            shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
+          }}
+          onPress={() => setPlayerVisible(true)}
+        >
+          <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
+            <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
+          </View>
+          <Pressable onPress={togglePlay} style={{ padding: 8 }}>
+            <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
+          </Pressable>
+          <Pressable onPress={cerrar} style={{ padding: 8 }}>
+            <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
         <View style={s.modal}>
-          {/* ── Fondo con portada a baja opacidad: usa background-image en web para no tapar botones ── */}
+          {/* ── Fondo con portada desenfocada cinematográfica ── */}
           {actual?.thumb ? (
             Platform.OS === 'web' ? (
               <View
                 pointerEvents="none"
                 style={[s.modalBg, {
-                  opacity: estaSonando ? 0.18 : 0.07,
+                  opacity: 0.35,
+                  filter: 'blur(32px)',
+                  transform: [{ scale: 1.15 }],
                   ...(typeof document !== 'undefined' ? {
                     backgroundImage: `url(${actual.thumb})`,
                     backgroundSize: 'cover',
@@ -813,8 +911,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <Image
                   source={{ uri: actual.thumb }}
-                  style={[s.modalBg, { opacity: estaSonando ? 0.18 : 0.07 }]}
-                  blurRadius={18}
+                  style={[s.modalBg, { opacity: 0.35, transform: [{ scale: 1.15 }] }]}
+                  blurRadius={24}
                   resizeMode="cover"
                 />
               </View>
@@ -823,6 +921,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
           <View style={s.modalContent}>
           <View style={s.modalHead}>
+            <Pressable onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
+              <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
+            </Pressable>
             <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
             <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
           </View>
@@ -938,21 +1039,56 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 </View>
               }
               renderItem={({ item }) => {
-                const realIdx = listaActiva.indexOf(item);
+                const realIdx = cola.length > 0 ? cola.indexOf(item) : results.indexOf(item);
+                const isUpcoming = cola.length > 0 && realIdx > qIdx;
+                const canMoveUp = isUpcoming && realIdx > qIdx + 1;
+                const canMoveDown = isUpcoming && realIdx < cola.length - 1;
+
                 return (
-                  <Pressable style={s.qRow} onPress={() => aplicar(item, true, realIdx, true)}>
-                    <Image source={{ uri: item.thumb }} style={s.qThumb} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
-                      <Text style={s.qSub} numberOfLines={1}>
-                        {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
-                      </Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', marginLeft: 8 }}>
-                      {item.duration ? <Text style={s.qDurText}>{fmtTiempo(item.duration)}</Text> : null}
-                      <Text style={s.play}>▶</Text>
-                    </View>
-                  </Pressable>
+                  <View style={s.qRow}>
+                    <Pressable
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}
+                      onPress={() => aplicar(item, true, realIdx, true)}
+                    >
+                      <Image source={{ uri: item.thumb }} style={s.qThumb} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
+                        <Text style={s.qSub} numberOfLines={1}>
+                          {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+                        </Text>
+                      </View>
+                    </Pressable>
+
+                    {/* Controles de orden de cola si está en la cola activa y es un tema próximo */}
+                    {isUpcoming ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }}>
+                        <Pressable
+                          style={[s.qActionBtn, !canMoveUp && { opacity: 0.25 }]}
+                          disabled={!canMoveUp}
+                          onPress={() => moverEnCola(realIdx, realIdx - 1)}
+                        >
+                          <Text style={s.qActionText}>▲</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[s.qActionBtn, !canMoveDown && { opacity: 0.25 }]}
+                          disabled={!canMoveDown}
+                          onPress={() => moverEnCola(realIdx, realIdx + 1)}
+                        >
+                          <Text style={s.qActionText}>▼</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[s.qActionBtn, { backgroundColor: 'rgba(255, 60, 60, 0.15)' }]}
+                          onPress={() => quitarDeCola(realIdx)}
+                        >
+                          <Text style={[s.qActionText, { color: '#ff5555' }]}>✕</Text>
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <Pressable onPress={() => aplicar(item, true, realIdx, true)} style={{ padding: 6 }}>
+                        <Text style={s.play}>▶</Text>
+                      </Pressable>
+                    )}
+                  </View>
                 );
               }}
               ListEmptyComponent={<Text style={s.empty}>{enCola ? 'Es el último de la cola.' : 'Sin cola. Usá "Reproducir todo".'}</Text>}
@@ -1475,4 +1611,20 @@ const s = StyleSheet.create({
   iosBannerTitle: { color: theme.colors.gold, fontSize: 14, fontWeight: '700' },
   iosBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
   iosBannerBtn: { color: theme.colors.gold, fontSize: 13, fontWeight: '800' },
+
+  // Botones de cola (mover arriba, mover abajo, quitar)
+  qActionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: theme.colors.surface2,
+    marginHorizontal: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qActionText: {
+    color: theme.colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
 });

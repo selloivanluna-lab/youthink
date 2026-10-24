@@ -58,7 +58,7 @@ export default function Sesion() {
   // Carga la sesión actual al montar.
   useEffect(() => {
     cargarMisListas();
-    supabase.auth.getUser().then(({ data, error: e }) => {
+    supabase.auth.getUser().then(({ data, error: e }: any) => {
       if (data?.user) {
         const m = data.user.user_metadata || {};
         setUser({
@@ -72,7 +72,7 @@ export default function Sesion() {
     });
 
     // Escucha cambios de sesión (por ejemplo, después del redirect OAuth).
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       if (session?.user) {
         const m = session.user.user_metadata || {};
         setUser({
@@ -262,7 +262,7 @@ export default function Sesion() {
         )}
       </View>
 
-      {!user ? (
+      {!user && (
         /* ── SIN SESIÓN ── */
         <View style={s.card}>
           <Text style={s.cardTitle}>Iniciá sesión</Text>

@@ -5,6 +5,7 @@ import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 
 export async function gateNewPipe(videoId = '69RdQFDuYPI'): Promise<string> {
   if (Platform.OS !== 'android') return 'Gate: solo Android';
+  if (!QpAudio) return 'Gate: modulo nativo no disponible';
   const r = await QpAudio.resolveAudio(videoId);
   const res = await fetch(r.url, {
     headers: { Range: 'bytes=0-1023', 'User-Agent': r.userAgent },
