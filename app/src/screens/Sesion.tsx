@@ -46,9 +46,9 @@ export default function Sesion() {
 
   const conectarYouTubeDirecto = async () => {
     try {
-      const redirectUri = 'youthink://oauth2redirect';
+      const redirectUri = 'https://youthink-1.onrender.com/oauth/callback';
       const scope = encodeURIComponent('https://www.googleapis.com/auth/youtube.readonly');
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${scope}`;
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${scope}&prompt=consent`;
       await Linking.openURL(authUrl);
     } catch (e: any) {
       setError(e?.message || 'Error al conectar con YouTube');

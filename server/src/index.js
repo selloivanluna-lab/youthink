@@ -343,6 +343,38 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Puente OAuth para YouThink (redirecciona el hash/token de Google al esquema nativo youthink://)
+  if (p === '/oauth/callback') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Conectando YouThink...</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background: #0a0a0a; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    h2 { color: #d4af37; margin-bottom: 12px; }
+    p { color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>🎵 YouThink</h2>
+  <p>Conectando con YouTube...</p>
+  <script>
+    const hash = window.location.hash || '';
+    const query = window.location.search || '';
+    const target = 'youthink://oauth2redirect' + (hash || query);
+    window.location.href = target;
+    setTimeout(() => {
+      document.body.innerHTML += '<p style="color:#d4af37;margin-top:20px;">Si la app no se abrió automáticamente, <a href="' + target + '" style="color:#fff;text-decoration:underline;">tocá acá</a>.</p>';
+    }, 1200);
+  </script>
+</body>
+</html>`);
+    return;
+  }
+
   if (!p.startsWith('/api/')) { respond(res, 404, { error: '404 ' + p }); return; }
 
   const auth = await requireAuthMedia(req, url, p);
