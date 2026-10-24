@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { theme } from '../theme';
+import { getPlaylists, getPlaylistItems, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
 
 type UserInfo = {
   id: string;
@@ -17,9 +18,46 @@ export default function Sesion() {
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [cargandoPlaylists, setCargandoPlaylists] = useState(false);
+  const [listaSeleccionada, setListaSeleccionada] = useState<Playlist | null>(null);
+  const [itemsLista, setItemsLista] = useState<PlaylistItem[]>([]);
+  const [cargandoItems, setCargandoItems] = useState(false);
+
+  const cargarMisListas = async () => {
+    setCargandoPlaylists(true);
+    try {
+      const data = await getPlaylists();
+      setPlaylists(data);
+    } catch {}
+    setCargandoPlaylists(false);
+  };
+
+  const verItems = async (p: Playlist) => {
+    setListaSeleccionada(p);
+    setCargandoItems(true);
+    try {
+      const items = await getPlaylistItems(p.id);
+      setItemsLista(items);
+    } catch {}
+    setCargandoItems(false);
+  };
+
+  const borrarItem = async (ytId: string) => {
+    if (!listaSeleccionada) return;
+    await removeFromPlaylist(listaSeleccionada.id, ytId);
+    setItemsLista((prev) => prev.filter((it) => it.yt_id !== ytId));
+  };
+
+  const borrarLista = async (pId: string) => {
+    await deletePlaylist(pId);
+    setPlaylists((prev) => prev.filter((p) => p.id !== pId));
+    if (listaSeleccionada?.id === pId) setListaSeleccionada(null);
+  };
 
   // Carga la sesión actual al montar.
   useEffect(() => {
+    cargarMisListas();
     supabase.auth.getUser().then(({ data, error: e }) => {
       if (data?.user) {
         const m = data.user.user_metadata || {};
@@ -160,7 +198,71 @@ export default function Sesion() {
             </Text>
           </Pressable>
         </View>
-      ) : (
+      ) : null}
+
+      {/* ── SECCIÓN DE LISTAS DE REPRODUCCIÓN ── */}
+      <View style={s.card}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <Text style={s.cardTitle}>📋 Mis listas de reproducción</Text>
+          <Pressable onPress={cargarMisListas} style={{ padding: 4 }}>
+            <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>🔄 Actualizar</Text>
+          </Pressable>
+        </View>
+
+        {cargandoPlaylists ? (
+          <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 16 }} />
+        ) : playlists.length === 0 ? (
+          <Text style={s.hint}>Todavía no tenés listas. Podés crearlas o añadir canciones desde la pestaña Buscar con el botón ➕ Añadir a lista.</Text>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {playlists.map((p) => {
+              const estaAbierta = listaSeleccionada?.id === p.id;
+              return (
+                <View key={p.id} style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, backgroundColor: theme.colors.surface2 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Pressable style={{ flex: 1 }} onPress={() => estaAbierta ? setListaSeleccionada(null) : verItems(p)}>
+                      <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>🎵 {p.nombre}</Text>
+                      <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>
+                        {estaAbierta ? 'Tocar para cerrar' : 'Tocar para ver canciones'}
+                      </Text>
+                    </Pressable>
+                    <Pressable onPress={() => borrarLista(p.id)} style={{ padding: 6 }}>
+                      <Text style={{ color: theme.colors.danger, fontSize: 14 }}>🗑️</Text>
+                    </Pressable>
+                  </View>
+
+                  {estaAbierta ? (
+                    <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 }}>
+                      {cargandoItems ? (
+                        <ActivityIndicator color={theme.colors.gold} size="small" style={{ marginVertical: 8 }} />
+                      ) : itemsLista.length === 0 ? (
+                        <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Esta lista está vacía.</Text>
+                      ) : (
+                        <View style={{ gap: 8 }}>
+                          {itemsLista.map((it) => (
+                            <View key={it.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}>
+                              <Image source={{ uri: it.thumb }} style={{ width: 44, height: 26, borderRadius: 4, backgroundColor: '#000' }} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{it.title}</Text>
+                                <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{it.channel}</Text>
+                              </View>
+                              <Pressable onPress={() => borrarItem(it.yt_id)} style={{ padding: 4 }}>
+                                <Text style={{ color: theme.colors.textDim, fontSize: 13 }}>✕</Text>
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      {!user ? (
         /* ── SIN SESIÓN ── */
         <View style={s.card}>
           <Text style={s.cardTitle}>Iniciá sesión</Text>

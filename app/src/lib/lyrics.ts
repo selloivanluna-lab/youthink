@@ -59,7 +59,7 @@ export function parseLrc(lrcText: string): LyricLine[] {
 
 // Busca letra en LRCLIB (servicio gratuito y público de letras LRC)
 export async function buscarLyrics(videoId: string, videoTitle: string, channel = '', durationSec?: number): Promise<LyricsData | null> {
-  const cacheKey = `qp_lyrics_${videoId}`;
+  const cacheKey = `qp_lyrics_v2_${videoId}`;
   try {
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
@@ -95,8 +95,13 @@ export async function buscarLyrics(videoId: string, videoTitle: string, channel 
       if (r.ok) {
         const list = await r.json();
         if (Array.isArray(list) && list.length > 0) {
-          // Preferir uno que tenga letra sincronizada
-          result = list.find((it: any) => it.syncedLyrics) || list[0];
+          // Filtrar para que pertenezca al artista o contenga palabras clave del título
+          const match = list.find((it: any) => {
+            const tMatch = it.trackName && cleanTitle.toLowerCase().includes(it.trackName.toLowerCase());
+            const aMatch = artist && it.artistName && it.artistName.toLowerCase().includes(artist.toLowerCase());
+            return (tMatch || aMatch) && it.syncedLyrics;
+          }) || list.find((it: any) => it.syncedLyrics) || list[0];
+          result = match;
         }
       }
     }
