@@ -191,18 +191,22 @@ export default function Buscar() {
 
   // Estado del reproductor nativo: llega por eventos (se actualiza fuera del render).
   useEffect(() => {
-    if (!NATIVE_AUDIO) return;
-    const sub = QpAudio.addListener('onPlaybackState', (st) => {
-      if (modoRef.current !== 'audio') return;
-      if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
-      if (isFinite(st.position) && st.position >= 0) setPos(st.position);
-      if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
-      setNativeBuffering(Boolean(st.buffering));
-      setNativeResolving(Boolean(st.resolving));
-      if (st.error) setError(st.error);
-      if (st.ended) siguienteRef.current(true);
-    });
-    return () => sub.remove();
+    if (!NATIVE_AUDIO || !QpAudio || typeof (QpAudio as any).addListener !== 'function') return;
+    try {
+      const sub = (QpAudio as any).addListener('onPlaybackState', (st: any) => {
+        if (modoRef.current !== 'audio') return;
+        if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
+        if (isFinite(st.position) && st.position >= 0) setPos(st.position);
+        if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
+        setNativeBuffering(Boolean(st.buffering));
+        setNativeResolving(Boolean(st.resolving));
+        if (st.error) setError(st.error);
+        if (st.ended) siguienteRef.current(true);
+      });
+      return () => {
+        try { sub?.remove?.(); } catch (_) {}
+      };
+    } catch (_) {}
   }, []);
 
   useEffect(() => { mediaUriRef.current = mediaUri; }, [mediaUri]);
