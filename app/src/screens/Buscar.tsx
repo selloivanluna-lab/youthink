@@ -132,6 +132,9 @@ export default function Buscar() {
   const shuffleRef = useRef(false);
   const [repeat, setRepeat] = useState<Repeat>('off');
   const repeatRef = useRef<Repeat>('off');
+  const [crossover, setCrossover] = useState(false);
+  const crossoverRef = useRef(false);
+  const crossoverTriggeredRef = useRef(false);
   const [eq, setEq] = useState('flat');
   const [eqOpen, setEqOpen] = useState(false);
   const eqGraph = useRef<any>(null);
@@ -246,12 +249,25 @@ export default function Buscar() {
       const sub = (QpAudio as any).addListener('onPlaybackState', (st: any) => {
         if (modoRef.current !== 'audio') return;
         if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
-        if (isFinite(st.position) && st.position >= 0) setPos(st.position);
+        if (isFinite(st.position) && st.position >= 0) {
+          setPos(st.position);
+          // Crossover / Crossfade: cuando falten 4 segundos o menos para el final, pasar suave a la siguiente
+          if (
+            crossoverRef.current &&
+            !crossoverTriggeredRef.current &&
+            isFinite(st.duration) &&
+            st.duration > 15 &&
+            st.position >= st.duration - 4
+          ) {
+            crossoverTriggeredRef.current = true;
+            siguienteRef.current(true);
+          }
+        }
         if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
         setNativeBuffering(Boolean(st.buffering));
         setNativeResolving(Boolean(st.resolving));
         if (st.error) setError(st.error);
-        if (st.ended) siguienteRef.current(true);
+        if (st.ended && !crossoverTriggeredRef.current) siguienteRef.current(true);
       });
       return () => {
         try { sub?.remove?.(); } catch (_) {}
@@ -267,16 +283,18 @@ export default function Buscar() {
   useEffect(() => { autoRef.current = autoSiguiente; }, [autoSiguiente]);
   useEffect(() => { shuffleRef.current = shuffle; }, [shuffle]);
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
+  useEffect(() => { crossoverRef.current = crossover; }, [crossover]);
   useEffect(() => { try { player.loop = repeat === 'one'; } catch (e) {} }, [repeat, player]);
 
   useEffect(() => {
-    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq']).then((rows) => {
+    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover']).then((rows) => {
       const m: any = {}; rows.forEach(([k, v]) => (m[k] = v));
       if (m.qp_soloAudio != null) setSoloAudio(m.qp_soloAudio === '1');
       if (m.qp_autoSig != null) setAutoSiguiente(m.qp_autoSig === '1');
       if (m.qp_shuffle != null) setShuffle(m.qp_shuffle === '1');
       if (m.qp_repeat) setRepeat(m.qp_repeat);
       if (m.qp_eq) setEq(m.qp_eq);
+      if (m.qp_crossover != null) setCrossover(m.qp_crossover === '1');
     }).catch(() => {});
   }, []);
 
@@ -507,6 +525,7 @@ export default function Buscar() {
     // Resetear ambos flags de carga nativa para que no queden pegados de la canción anterior
     setNativeBuffering(false);
     setNativeResolving(false);
+    crossoverTriggeredRef.current = false;
     if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
     setModo(audio ? 'audio' : 'video');
     setReproduciendo(autoPlay);
@@ -604,22 +623,35 @@ export default function Buscar() {
     if (i - 1 >= 0) aplicar(c[i - 1], audioRef.current, i - 1, false);
   }
 
-  // Reproducir automáticamente cuando viene de la pantalla Sesion (tocar tema de YouTube)
+  // Reproducir automáticamente cuando viene de la pantalla Sesion (tocar tema de YouTube o de YouThink)
   useEffect(() => {
     const pId = route.params?.autoPlayId;
     const pTitle = route.params?.autoPlayTitle || '';
+    const pQueue: YtResult[] = route.params?.autoPlayQueue;
+    const pIndex: number = typeof route.params?.autoPlayIndex === 'number' ? route.params?.autoPlayIndex : 0;
+
     if (pId) {
-      const item: YtResult = {
-        id: pId,
-        title: pTitle,
-        channel: '',
-        duration: 0,
-        thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
-      };
       setPlayerVisible(true);
-      reproducir([item], 0, soloAudio);
+      if (Array.isArray(pQueue) && pQueue.length > 0) {
+        // Cargar toda la lista de canciones en la cola y arrancar desde la canción tocada
+        reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), soloAudio);
+      } else {
+        const item: YtResult = {
+          id: pId,
+          title: pTitle,
+          channel: '',
+          duration: 0,
+          thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
+        };
+        reproducir([item], 0, soloAudio);
+      }
       // Limpiar params para no re-ejecutar en re-render
-      navigation.setParams({ autoPlayId: undefined, autoPlayTitle: undefined });
+      navigation.setParams({
+        autoPlayId: undefined,
+        autoPlayTitle: undefined,
+        autoPlayQueue: undefined,
+        autoPlayIndex: undefined,
+      });
     }
   }, [route.params?.autoPlayId]);
   function saltar(t: number) {
@@ -986,6 +1018,17 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </Pressable>
             <Pressable style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
               <Text style={[s.toolText, eq !== 'flat' && s.toolTextOn]}>🎚️ EQ</Text>
+            </Pressable>
+            <Pressable
+              style={[s.tool, crossover && s.toolOn]}
+              onPress={() => {
+                const nuevo = !crossover;
+                setCrossover(nuevo);
+                crossoverRef.current = nuevo;
+                AsyncStorage.setItem('qp_crossover', nuevo ? '1' : '0').catch(() => {});
+              }}
+            >
+              <Text style={[s.toolText, crossover && s.toolTextOn]}>⚡ Crossover</Text>
             </Pressable>
             <Pressable
               style={[s.tool, lyricsOpen && s.toolOn]}

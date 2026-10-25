@@ -31,6 +31,7 @@ export default function Sesion() {
   const [creandoLista, setCreandoLista] = useState(false);
   const [errorListas, setErrorListas] = useState('');
   const [ytToken, setYtToken] = useState<string | null>(null);
+  const [ytTokenExpirado, setYtTokenExpirado] = useState(false);
   const [listasYT, setListasYT] = useState<Playlist[]>([]);
   const [cargandoYT, setCargandoYT] = useState(false);
   const [ytListaSeleccionada, setYtListaSeleccionada] = useState<Playlist | null>(null);
@@ -109,6 +110,7 @@ export default function Sesion() {
   // Carga las listas de YouTube del usuario con el access_token directo
   const cargarListasYouTube = async (token: string) => {
     setCargandoYT(true);
+    setYtTokenExpirado(false);
     try {
       let allItems: Playlist[] = [];
       let pageToken = '';
@@ -118,9 +120,8 @@ export default function Sesion() {
         const json = await res.json();
         if (json.error) {
           if (json.error.code === 401) {
-            // Token vencido
-            await AsyncStorage.removeItem('qp_yt_access_token');
-            setYtToken(null);
+            // El token caducó después de 1 hora de Google: marcar expirado sin borrar listas previas
+            setYtTokenExpirado(true);
           }
           console.warn('[YT Playlists]', json.error);
           break;
@@ -135,7 +136,9 @@ export default function Sesion() {
         allItems = [...allItems, ...items];
         pageToken = json.nextPageToken || '';
       } while (pageToken);
-      setListasYT(allItems);
+      if (allItems.length > 0) {
+        setListasYT(allItems);
+      }
     } catch (e) {
       console.warn('[YT Playlists] Error:', e);
     }
@@ -453,17 +456,36 @@ export default function Sesion() {
                         <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Esta lista está vacía.</Text>
                       ) : (
                         <View style={{ gap: 8 }}>
-                          {itemsLista.map((it) => (
-                            <View key={it.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}>
+                          {itemsLista.map((it, idx) => (
+                            <Pressable
+                              key={it.id}
+                              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}
+                              onPress={() => {
+                                const queue = itemsLista.map((song) => ({
+                                  id: song.yt_id,
+                                  title: song.title,
+                                  channel: song.channel,
+                                  thumb: song.thumb,
+                                  duration: song.duration || 0,
+                                }));
+                                navigation.navigate('Buscar' as never, {
+                                  autoPlayId: it.yt_id,
+                                  autoPlayTitle: it.title,
+                                  autoPlayQueue: queue,
+                                  autoPlayIndex: idx,
+                                } as never);
+                              }}
+                            >
                               <Image source={{ uri: it.thumb }} style={{ width: 44, height: 26, borderRadius: 4, backgroundColor: '#000' }} />
                               <View style={{ flex: 1 }}>
                                 <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{it.title}</Text>
                                 <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{it.channel}</Text>
                               </View>
-                              <Pressable onPress={() => borrarItem(it.yt_id)} style={{ padding: 4 }}>
+                              <Text style={{ color: theme.colors.gold, fontSize: 16 }}>▶</Text>
+                              <Pressable onPress={(e) => { e.stopPropagation?.(); borrarItem(it.yt_id); }} style={{ padding: 4 }}>
                                 <Text style={{ color: theme.colors.textDim, fontSize: 13 }}>✕</Text>
                               </Pressable>
-                            </View>
+                            </Pressable>
                           ))}
                         </View>
                       )}
@@ -491,6 +513,21 @@ export default function Sesion() {
             </View>
           )}
         </View>
+
+        {ytTokenExpirado && (
+          <View style={{ backgroundColor: 'rgba(212, 175, 55, 0.15)', borderWidth: 1, borderColor: theme.colors.gold, borderRadius: 8, padding: 10, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={{ color: theme.colors.gold, fontWeight: '700', fontSize: 13 }}>⚠️ Sesión de YouTube caducada</Text>
+              <Text style={{ color: theme.colors.textDim, fontSize: 11, marginTop: 2 }}>Renovala en un toque para actualizar tus listas.</Text>
+            </View>
+            <Pressable
+              style={{ backgroundColor: theme.colors.gold, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 }}
+              onPress={conectarYouTubeDirecto}
+            >
+              <Text style={{ color: '#111', fontWeight: '800', fontSize: 12 }}>Renovar</Text>
+            </Pressable>
+          </View>
+        )}
 
         {!ytToken ? (
           <View>
@@ -537,13 +574,24 @@ export default function Sesion() {
                         <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Lista vacía.</Text>
                       ) : (
                         <View style={{ gap: 8 }}>
-                          {ytItems.map((it) => (
+                          {ytItems.map((it, idx) => (
                             <Pressable
                               key={it.id}
                               style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
                               onPress={() => {
-                                // Navegar a Buscar y reproducir el video directamente
-                                navigation.navigate('Buscar' as never, { autoPlayId: it.id, autoPlayTitle: it.title } as never);
+                                const queue = ytItems.map((song) => ({
+                                  id: song.id,
+                                  title: song.title,
+                                  channel: song.channel,
+                                  thumb: song.thumb,
+                                  duration: song.duration || 0,
+                                }));
+                                navigation.navigate('Buscar' as never, {
+                                  autoPlayId: it.id,
+                                  autoPlayTitle: it.title,
+                                  autoPlayQueue: queue,
+                                  autoPlayIndex: idx,
+                                } as never);
                               }}
                             >
                               {it.thumb ? (
