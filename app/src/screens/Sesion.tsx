@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { theme } from '../theme';
 import { getPlaylists, getPlaylistItems, createPlaylist, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { useNavigation } from '@react-navigation/native';
 
 type UserInfo = {
   id: string;
@@ -15,6 +16,7 @@ type UserInfo = {
 };
 
 export default function Sesion() {
+  const navigation = useNavigation();
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
@@ -31,6 +33,9 @@ export default function Sesion() {
   const [ytToken, setYtToken] = useState<string | null>(null);
   const [listasYT, setListasYT] = useState<Playlist[]>([]);
   const [cargandoYT, setCargandoYT] = useState(false);
+  const [ytListaSeleccionada, setYtListaSeleccionada] = useState<Playlist | null>(null);
+  const [ytItems, setYtItems] = useState<any[]>([]);
+  const [cargandoYTItems, setCargandoYTItems] = useState(false);
 
   // Cargar token guardado de YouTube al iniciar
   useEffect(() => {
@@ -59,6 +64,46 @@ export default function Sesion() {
     await AsyncStorage.removeItem('qp_yt_access_token');
     setYtToken(null);
     setListasYT([]);
+    setYtListaSeleccionada(null);
+    setYtItems([]);
+  };
+
+  const verItemsYT = async (lista: Playlist) => {
+    // Toggle: si ya estaba abierta, cerrar
+    if (ytListaSeleccionada?.id === lista.id) {
+      setYtListaSeleccionada(null);
+      setYtItems([]);
+      return;
+    }
+    setYtListaSeleccionada(lista);
+    setYtItems([]);
+    if (!ytToken) return;
+    setCargandoYTItems(true);
+    try {
+      // El id real de la playlist YT viene sin el prefijo 'yt_'
+      const playlistId = lista.id.replace(/^yt_/, '');
+      let all: any[] = [];
+      let pageToken = '';
+      do {
+        const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${pageToken ? '&pageToken=' + pageToken : ''}`;
+        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + ytToken } });
+        const json = await res.json();
+        if (json.error) break;
+        const items = (json.items || []).map((it: any) => ({
+          id: it.snippet.resourceId?.videoId || it.id,
+          title: it.snippet.title,
+          channel: it.snippet.videoOwnerChannelTitle || '',
+          thumb: it.snippet.thumbnails?.medium?.url || it.snippet.thumbnails?.default?.url || '',
+          duration: 0,
+        }));
+        all = [...all, ...items];
+        pageToken = json.nextPageToken || '';
+      } while (pageToken);
+      setYtItems(all);
+    } catch (e) {
+      console.warn('[YT Items]', e);
+    }
+    setCargandoYTItems(false);
   };
 
   // Carga las listas de YouTube del usuario con el access_token directo
@@ -466,14 +511,60 @@ export default function Sesion() {
           <Text style={s.hint}>No se encontraron listas en tu cuenta de YouTube.</Text>
         ) : (
           <View style={{ gap: 8 }}>
-            {listasYT.map((p) => (
-              <View key={p.id} style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, backgroundColor: theme.colors.surface2 }}>
-                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>🎵 {p.nombre}</Text>
-                {p.items_count !== undefined && (
-                  <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>{p.items_count} canciones</Text>
-                )}
-              </View>
-            ))}
+            {listasYT.map((p) => {
+              const abierta = ytListaSeleccionada?.id === p.id;
+              return (
+                <View key={p.id} style={{ borderWidth: 1, borderColor: abierta ? theme.colors.gold : theme.colors.border, borderRadius: 10, padding: 12, backgroundColor: theme.colors.surface2 }}>
+                  <Pressable onPress={() => verItemsYT(p)}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>🎵 {p.nombre}</Text>
+                        {p.items_count !== undefined && (
+                          <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>
+                            {p.items_count} canciones · {abierta ? 'Tocar para cerrar' : 'Tocar para ver'}
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{abierta ? '▲' : '▼'}</Text>
+                    </View>
+                  </Pressable>
+
+                  {abierta && (
+                    <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 }}>
+                      {cargandoYTItems ? (
+                        <ActivityIndicator color={theme.colors.gold} size="small" />
+                      ) : ytItems.length === 0 ? (
+                        <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Lista vacía.</Text>
+                      ) : (
+                        <View style={{ gap: 8 }}>
+                          {ytItems.map((it) => (
+                            <Pressable
+                              key={it.id}
+                              style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                              onPress={() => {
+                                // Navegar a Buscar y reproducir el video directamente
+                                navigation.navigate('Buscar' as never, { autoPlayId: it.id, autoPlayTitle: it.title } as never);
+                              }}
+                            >
+                              {it.thumb ? (
+                                <Image source={{ uri: it.thumb }} style={{ width: 56, height: 32, borderRadius: 4, backgroundColor: '#000' }} />
+                              ) : (
+                                <View style={{ width: 56, height: 32, borderRadius: 4, backgroundColor: theme.colors.surface }} />
+                              )}
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{it.title}</Text>
+                                {it.channel ? <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{it.channel}</Text> : null}
+                              </View>
+                              <Text style={{ color: theme.colors.gold, fontSize: 18 }}>▶</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
         )}
       </View>

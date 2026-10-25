@@ -25,7 +25,7 @@ import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/pl
 import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 
 function CargaAnim({ texto = 'Cargando…' }: { texto?: string }) {
   const bars = useRef([0, 1, 2, 3, 4].map(() => new Animated.Value(0.2))).current;
@@ -105,6 +105,7 @@ function Barra({ pos, dur, onSeek }: { pos: number; dur: number; onSeek: (t: num
 
 export default function Buscar() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<YtResult[]>([]);
@@ -602,6 +603,25 @@ export default function Buscar() {
     const c = colaRef.current; const i = idxRef.current;
     if (i - 1 >= 0) aplicar(c[i - 1], audioRef.current, i - 1, false);
   }
+
+  // Reproducir automáticamente cuando viene de la pantalla Sesion (tocar tema de YouTube)
+  useEffect(() => {
+    const pId = route.params?.autoPlayId;
+    const pTitle = route.params?.autoPlayTitle || '';
+    if (pId) {
+      const item: YtResult = {
+        id: pId,
+        title: pTitle,
+        channel: '',
+        duration: 0,
+        thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
+      };
+      setPlayerVisible(true);
+      reproducir([item], 0, soloAudio);
+      // Limpiar params para no re-ejecutar en re-render
+      navigation.setParams({ autoPlayId: undefined, autoPlayTitle: undefined });
+    }
+  }, [route.params?.autoPlayId]);
   function saltar(t: number) {
     const durTotal = dur > 0 ? dur : (actual?.duration || 0);
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
