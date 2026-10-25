@@ -343,6 +343,160 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Página principal de la app YouThink (requerido por Google Verification)
+  if (p === '/' || p === '/home') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>YouThink — Música y Listas de YouTube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background: #0a0a0a; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 40px 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #d4af37; font-size: 2.2rem; margin-bottom: 8px; }
+    h2 { color: #fff; margin-top: 30px; }
+    p { color: #aaa; font-size: 1.05rem; }
+    .card { background: #181818; border: 1px solid #2a2a2a; border-radius: 12px; padding: 24px; margin: 20px 0; }
+    a { color: #d4af37; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    footer { margin-top: 50px; border-top: 1px solid #2a2a2a; padding-top: 20px; color: #666; font-size: 0.9rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>🎵 YouThink</h1>
+  <p>Tu reproductor personal de música y gestor inteligente de listas de reproducción sincronizado con YouTube.</p>
+
+  <div class="card">
+    <h2>¿Qué es YouThink?</h2>
+    <p>YouThink es una aplicación móvil diseñada para explorar, organizar y escuchar tus listas de reproducción de YouTube de manera fluida, sin interrupciones y con soporte de ecualización personalizada.</p>
+  </div>
+
+  <div class="card">
+    <h2>Funcionalidades principales</h2>
+    <ul>
+      <li><strong>Sincronización con YouTube:</strong> Conectá tu cuenta de Google para acceder a todas tus listas de reproducción públicas y privadas.</li>
+      <li><strong>Listas locales y en la nube:</strong> Creá y organizá tus listas personalizadas con respaldo en Supabase.</li>
+      <li><strong>Audio nativo en segundo plano:</strong> Escuchá tus temas favoritos con controles multimedia desde la barra de notificaciones.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <p>© 2026 YouThink. Desarrollado por Iván Luna.</p>
+    <p>
+      <a href="/privacidad">Política de Privacidad</a> · 
+      <a href="/terminos">Términos del Servicio</a> · 
+      Contacto: <a href="mailto:lunaivane@gmail.com">lunaivane@gmail.com</a>
+    </p>
+  </footer>
+</body>
+</html>`);
+    return;
+  }
+
+  // Política de Privacidad detallada (requerida por Google OAuth Verification)
+  if (p === '/privacidad' || p === '/privacy') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Política de Privacidad — YouThink</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background: #0a0a0a; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 40px 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #d4af37; }
+    h2 { color: #fff; margin-top: 28px; border-bottom: 1px solid #2a2a2a; padding-bottom: 6px; }
+    p, li { color: #aaa; font-size: 1rem; }
+    a { color: #d4af37; text-decoration: none; }
+    footer { margin-top: 50px; border-top: 1px solid #2a2a2a; padding-top: 20px; color: #666; font-size: 0.9rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Política de Privacidad de YouThink</h1>
+  <p><strong>Última actualización:</strong> 25 de Octubre de 2026</p>
+
+  <p>En <strong>YouThink</strong> respetamos profundamente tu privacidad y la confidencialidad de tus datos. Esta Política de Privacidad describe qué información recopilamos a través de nuestra aplicación móvil y servicios web, cómo la utilizamos y qué medidas adoptamos para protegerla.</p>
+
+  <h2>1. Información que recopilamos</h2>
+  <p>YouThink utiliza las APIs de Google (específicamente la YouTube Data API v3) para brindarte acceso a tus listas de reproducción. Cuando vinculás tu cuenta de Google con YouThink, accedemos únicamente a los siguientes datos con tu consentimiento explícito:</p>
+  <ul>
+    <li><strong>Datos de perfil básico:</strong> Tu dirección de correo electrónico y nombre público para identificar tu sesión.</li>
+    <li><strong>Datos de YouTube (permiso de solo lectura: <code>https://www.googleapis.com/auth/youtube.readonly</code>):</strong> Títulos, miniaturas y canciones que componen tus listas de reproducción guardadas en tu canal o cuenta de YouTube.</li>
+  </ul>
+
+  <h2>2. Uso de la información</h2>
+  <p>Los datos obtenidos a través de la API de YouTube se utilizan <strong>exclusivamente</strong> para:</p>
+  <ul>
+    <li>Mostrar tus listas de reproducción personales dentro de la interfaz de la aplicación YouThink.</li>
+    <li>Permitirte seleccionar y reproducir los videos o temas de audio correspondientes.</li>
+  </ul>
+  <p><strong>No almacenamos tus credenciales de Google ni contraseñas.</strong> El token de acceso temporal se guarda de forma local y segura en el almacenamiento cifrado de tu propio dispositivo (AsyncStorage) y nunca es vendido ni transferido a terceros.</p>
+
+  <h2>3. Divulgación y transferencia de datos a terceros</h2>
+  <p>YouThink <strong>NO vende, NO alquila y NO comparte</strong> tu información personal ni los datos de tu cuenta de YouTube con empresas de publicidad, brokers de datos ni intermediarios externos. Toda la transferencia de datos entre tu dispositivo, nuestros servidores y los servicios de Google se realiza bajo protocolos cifrados TLS/HTTPS de alta seguridad.</p>
+
+  <h2>4. Uso de datos según la Política de Datos de Usuario de los Servicios de la API de Google</h2>
+  <p>El uso que hace YouThink de la información recibida a través de las APIs de Google cumple rigurosamente con la <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Política de Datos de Usuario de los Servicios de las APIs de Google</a>, incluidos los requisitos de <em>Uso Limitado (Limited Use)</em>.</p>
+
+  <h2>5. Retención y eliminación de datos</h2>
+  <p>Podés desconectar tu cuenta de YouTube en cualquier momento directamente desde la pestaña <strong>Sesión</strong> de la aplicación YouThink tocando el botón <em>"Desconectar"</em>. Al hacerlo, el token de acceso se elimina de manera instantánea y permanente de tu dispositivo.</p>
+  <p>Asimismo, podés revocar el acceso de YouThink a tu cuenta de Google en cualquier momento ingresando a la página de seguridad de tu cuenta de Google: <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">https://myaccount.google.com/permissions</a>.</p>
+
+  <h2>6. Contacto</h2>
+  <p>Si tenés consultas o inquietudes sobre esta Política de Privacidad o sobre el tratamiento de tus datos, podés comunicarte directamente con el desarrollador responsable:</p>
+  <p><strong>Iván Luna</strong><br>
+  Correo electrónico: <a href="mailto:lunaivane@gmail.com">lunaivane@gmail.com</a></p>
+
+  <footer>
+    <p>© 2026 YouThink · <a href="/">Inicio</a> · <a href="/terminos">Términos del Servicio</a></p>
+  </footer>
+</body>
+</html>`);
+    return;
+  }
+
+  // Términos del Servicio
+  if (p === '/terminos' || p === '/terms') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Términos del Servicio — YouThink</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background: #0a0a0a; color: #eee; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 40px 20px; max-width: 800px; margin: 0 auto; }
+    h1 { color: #d4af37; }
+    h2 { color: #fff; margin-top: 28px; border-bottom: 1px solid #2a2a2a; padding-bottom: 6px; }
+    p, li { color: #aaa; font-size: 1rem; }
+    a { color: #d4af37; text-decoration: none; }
+    footer { margin-top: 50px; border-top: 1px solid #2a2a2a; padding-top: 20px; color: #666; font-size: 0.9rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Términos del Servicio de YouThink</h1>
+  <p><strong>Última actualización:</strong> 25 de Octubre de 2026</p>
+
+  <p>Al utilizar la aplicación YouThink, aceptás cumplir con estos Términos del Servicio y con los Términos del Servicio de YouTube disponibles en <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">https://www.youtube.com/t/terms</a>.</p>
+
+  <h2>1. Uso de la Aplicación</h2>
+  <p>YouThink es una herramienta diseñada para la visualización y gestión personal de contenido musical y listas de reproducción a través de las APIs públicas oficiales de YouTube. No está autorizada la utilización indebida, distribución no autorizada o alteración de los flujos de contenido.</p>
+
+  <h2>2. Propiedad Intelectual</h2>
+  <p>Todos los derechos sobre canciones, videos, carátulas y metadatos pertenecen a sus respectivos autores, creadores y sellos discográficos distribuidos a través de la plataforma de YouTube.</p>
+
+  <h2>3. Modificaciones y Contacto</h2>
+  <p>Nos reservamos el derecho de actualizar estos términos en función de mejoras del servicio o requerimientos de las políticas de Google. Contacto: <a href="mailto:lunaivane@gmail.com">lunaivane@gmail.com</a>.</p>
+
+  <footer>
+    <p>© 2026 YouThink · <a href="/">Inicio</a> · <a href="/privacidad">Política de Privacidad</a></p>
+  </footer>
+</body>
+</html>`);
+    return;
+  }
+
   // Puente OAuth para YouThink (redirecciona el hash/token de Google al esquema nativo youthink://)
   if (p === '/oauth/callback') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
