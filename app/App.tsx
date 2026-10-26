@@ -5,15 +5,13 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Text } from 'react-native';
 import Buscar from './src/screens/Buscar';
+import Radio from './src/screens/Radio';
 import Placeholder from './src/screens/Placeholder';
 import Sesion from './src/screens/Sesion';
 import { theme } from './src/theme';
 
 const Tab = createBottomTabNavigator();
 
-function Radio() {
-  return <Placeholder title="Radio" emoji="📻" nota="Radio infinita (ytmusicapi) — Fase 4." />;
-}
 function Descargas() {
   return <Placeholder title="Descargas" emoji="⬇️" nota="Biblioteca offline (expo-file-system) — Fase 5." />;
 }

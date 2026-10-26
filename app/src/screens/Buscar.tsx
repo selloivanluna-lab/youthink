@@ -109,6 +109,9 @@ export default function Buscar() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<YtResult[]>([]);
+  const [recomendaciones, setRecomendaciones] = useState<YtResult[]>([]);
+  const [cargandoRecomendaciones, setCargandoRecomendaciones] = useState(false);
+  const [iniciandoRadio, setIniciandoRadio] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actual, setActual] = useState<YtResult | null>(null);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
@@ -296,7 +299,46 @@ export default function Buscar() {
       if (m.qp_eq) setEq(m.qp_eq);
       if (m.qp_crossover != null) setCrossover(m.qp_crossover === '1');
     }).catch(() => {});
+
+    // Cargar recomendaciones iniciales para el feed de inicio
+    cargarRecomendaciones();
   }, []);
+
+  async function cargarRecomendaciones() {
+    setCargandoRecomendaciones(true);
+    try {
+      const queries = ['musica argentina exitos 2026', 'musica en tendencia', 'rock nacional clasicos', 'top exitos spotify'];
+      const q = queries[Math.floor(Math.random() * queries.length)];
+      const res = await api.search(q, 20);
+      if (res.ok && res.results) {
+        setRecomendaciones(res.results);
+      }
+    } catch (_) {}
+    setCargandoRecomendaciones(false);
+  }
+
+  // Iniciar estación de radio a partir de una canción
+  async function iniciarRadioDesdeActual(track: YtResult) {
+    if (!track) return;
+    setIniciandoRadio(true);
+    try {
+      const res = await api.radio(track.id, 25);
+      if (res.ok && res.tracks && res.tracks.length > 0) {
+        // Encolar y reproducir
+        reproducir(res.tracks, 0, soloAudio);
+      } else {
+        // Fallback: búsqueda de temas del mismo artista o canal
+        const busq = await api.search(track.channel || track.title, 15);
+        if (busq.ok && busq.results && busq.results.length > 0) {
+          reproducir(busq.results, 0, soloAudio);
+        }
+      }
+    } catch (e) {
+      console.warn('[Iniciar Radio]', e);
+    } finally {
+      setIniciandoRadio(false);
+    }
+  }
 
   // Ecualizador Web Audio (solo web). Se activa al elegir un preset distinto de "Plano".
   function aplicarEQ(preset: string) {
@@ -882,6 +924,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
+      {/* ── LOGO YOUTHINK Y CABECERA ── */}
+      <View style={{ alignItems: 'center', marginBottom: 14, paddingTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 28 }}>🎵</Text>
+          <Text style={{ fontSize: 26, fontWeight: '900', color: theme.colors.gold, letterSpacing: 0.5 }}>
+            YouThink
+          </Text>
+        </View>
+        <Text style={{ color: theme.colors.textDim, fontSize: 11, fontWeight: '600', marginTop: 2, letterSpacing: 0.8 }}>
+          MÚSICA & VIDEOS SIN LÍMITES
+        </Text>
+      </View>
+
       <View style={s.searchRow}>
         <TextInput style={s.input} placeholder="Buscá en YouTube…" placeholderTextColor={theme.colors.textDim}
           value={query} onChangeText={setQuery} onSubmitEditing={buscar} returnKeyType="search" autoCorrect={false} />
@@ -934,7 +989,54 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </View>
           </View>
         )}
-        ListEmptyComponent={!loading ? <Text style={s.empty}>Buscá un video para empezar.</Text> : null}
+        ListEmptyComponent={
+          !loading ? (
+            recomendaciones.length > 0 ? (
+              <View style={{ marginTop: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
+                    🔥 Recomendados & Tendencias
+                  </Text>
+                  <Pressable onPress={cargarRecomendaciones} style={{ padding: 4 }}>
+                    <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🔄 Actualizar</Text>
+                  </Pressable>
+                </View>
+                {cargandoRecomendaciones ? (
+                  <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 20 }} />
+                ) : (
+                  recomendaciones.map((it, idx) => (
+                    <View key={'rec-' + it.id} style={[s.row, { marginBottom: 10 }]}>
+                      <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
+                        <Image source={{ uri: it.thumb }} style={s.thumb} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.title} numberOfLines={2}>{it.title}</Text>
+                          <Text style={s.sub} numberOfLines={1}>
+                            {it.channel} {it.duration ? `· ${fmtTiempo(it.duration)}` : ''}
+                          </Text>
+                        </View>
+                      </Pressable>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                        {actual ? (
+                          <Pressable
+                            style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
+                            onPress={() => encolarCancion(it)}
+                          >
+                            <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
+                          </Pressable>
+                        ) : null}
+                        <Pressable onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
+                          <Text style={s.play}>▶</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            ) : (
+              <Text style={s.empty}>Buscá un video o canción para empezar.</Text>
+            )
+          ) : null
+        }
       />
 
       {/* Mini-reproductor flotante si el modal está minimizado */}
@@ -1040,6 +1142,15 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               }}
             >
               <Text style={[s.toolText, lyricsOpen && s.toolTextOn]}>🎤 Letras</Text>
+            </Pressable>
+            <Pressable
+              style={[s.tool, iniciandoRadio && s.toolOn]}
+              onPress={() => actual && iniciarRadioDesdeActual(actual)}
+              disabled={iniciandoRadio || !actual}
+            >
+              <Text style={[s.toolText, iniciandoRadio && s.toolTextOn]}>
+                {iniciandoRadio ? '⏳ Sintonizando…' : '📻 Iniciar Radio'}
+              </Text>
             </Pressable>
             <Pressable style={s.tool} onPress={abrirModalPlaylists}>
               <Text style={s.toolText}>📋 Listas</Text>
