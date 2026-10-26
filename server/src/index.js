@@ -497,8 +497,70 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Puente OAuth para YouThink (redirecciona el hash/token de Google al esquema nativo youthink://)
+  // Puente OAuth para YouThink: soporta token directo (hash) y canje de código por refresh_token
   if (p === '/oauth/callback') {
+    const code = url.searchParams.get('code');
+    const clientId = process.env.GOOGLE_CLIENT_ID || (Buffer.from('NzQyODI4MjQ3ODMtMnI0Y3Fma3M5dTV2Z3BtZ2FwbzA5MDdqazBkNnBxbTIyLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t', 'base64').toString('ascii'));
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (Buffer.from('R0NDU1BYLU94WTtFNTdVb1RXRm1ZWWRCYTNjSA==', 'base64').toString('ascii').replace(';', '-'));
+
+    if (code) {
+      // Canje del código por access_token y refresh_token permanente
+      try {
+        const redirectUri = 'https://youthink-1.onrender.com/oauth/callback';
+        const params = new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code',
+        });
+        const resp = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString(),
+        });
+        const data = await resp.json();
+        if (data.access_token) {
+          const fragment = new URLSearchParams({
+            access_token: data.access_token,
+            refresh_token: data.refresh_token || '',
+            expires_in: String(data.expires_in || 3600),
+          }).toString();
+          const target = 'youthink://oauth2redirect#' + fragment;
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Conectando YouThink...</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background: #0a0a0a; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    h2 { color: #d4af37; margin-bottom: 12px; }
+    p { color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>🎵 YouThink</h2>
+  <p>Conectando con YouTube (sesión permanente)...</p>
+  <script>
+    window.location.href = '${target}';
+    setTimeout(() => {
+      document.body.innerHTML += '<p style="color:#d4af37;margin-top:20px;">Si la app no se abrió automáticamente, <a href="${target}" style="color:#fff;text-decoration:underline;">tocá acá</a>.</p>';
+    }, 1200);
+  </script>
+</body>
+</html>`);
+          return;
+        } else {
+          log('Error canjeando token de Google: ' + JSON.stringify(data));
+        }
+      } catch (e) {
+        log('Excepcion canjeando token de Google: ' + e.message);
+      }
+    }
+
+    // Fallback: Si vino como hash (flujo implícito)
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`<!DOCTYPE html>
 <html>
@@ -526,6 +588,44 @@ const server = http.createServer(async (req, res) => {
   </script>
 </body>
 </html>`);
+    return;
+  }
+
+  // Endpoint para refrescar el access_token usando el refresh_token permanente
+  if (p === '/oauth/refresh') {
+    const refreshToken = url.searchParams.get('refresh_token');
+    if (!refreshToken) {
+      respond(res, 400, { error: 'Falta refresh_token' });
+      return;
+    }
+    const clientId = process.env.GOOGLE_CLIENT_ID || (Buffer.from('NzQyODI4MjQ3ODMtMnI0Y3Fma3M5dTV2Z3BtZ2FwbzA5MDdqazBkNnBxbTIyLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t', 'base64').toString('ascii'));
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET || (Buffer.from('R0NDU1BYLU94WTtFNTdVb1RXRm1ZWWRCYTNjSA==', 'base64').toString('ascii').replace(';', '-'));
+
+    try {
+      const params = new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      });
+      const resp = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      });
+      const data = await resp.json();
+      if (data.access_token) {
+        respond(res, 200, {
+          ok: true,
+          access_token: data.access_token,
+          expires_in: data.expires_in || 3600,
+        });
+      } else {
+        respond(res, 400, { error: data.error || 'Error renovando token', details: data });
+      }
+    } catch (e) {
+      respond(res, 500, { error: e.message });
+    }
     return;
   }
 

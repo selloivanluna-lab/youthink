@@ -48,13 +48,33 @@ export default function Sesion() {
     });
   }, []);
 
+  // Función para refrescar el token de YouTube automáticamente en segundo plano
+  const refrescarTokenYouTube = async (): Promise<string | null> => {
+    try {
+      const refreshToken = await AsyncStorage.getItem('qp_yt_refresh_token');
+      if (!refreshToken) return null;
+      const res = await fetch(`https://youthink-1.onrender.com/oauth/refresh?refresh_token=${encodeURIComponent(refreshToken)}`);
+      const data = await res.json();
+      if (data.ok && data.access_token) {
+        await AsyncStorage.setItem('qp_yt_access_token', data.access_token);
+        setYtToken(data.access_token);
+        setYtTokenExpirado(false);
+        return data.access_token;
+      }
+    } catch (e) {
+      console.warn('[YT Refresh]', e);
+    }
+    return null;
+  };
+
   const GOOGLE_CLIENT_ID = '74282824783-2r4cqfks9u5vgpmgap09o7jk0dvpq622.apps.googleusercontent.com';
 
   const conectarYouTubeDirecto = async () => {
     try {
       const redirectUri = 'https://youthink-1.onrender.com/oauth/callback';
       const scope = encodeURIComponent('https://www.googleapis.com/auth/youtube.readonly');
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${scope}&prompt=consent`;
+      // Usamos response_type=code y access_type=offline para obtener refresh_token permanente
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`;
       await Linking.openURL(authUrl);
     } catch (e: any) {
       setError(e?.message || 'Error al conectar con YouTube');
@@ -62,8 +82,9 @@ export default function Sesion() {
   };
 
   const desconectarYouTube = async () => {
-    await AsyncStorage.removeItem('qp_yt_access_token');
+    await AsyncStorage.multiRemove(['qp_yt_access_token', 'qp_yt_refresh_token']);
     setYtToken(null);
+    setYtTokenExpirado(false);
     setListasYT([]);
     setYtListaSeleccionada(null);
     setYtItems([]);
@@ -116,15 +137,27 @@ export default function Sesion() {
       let pageToken = '';
       do {
         const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${pageToken ? '&pageToken=' + pageToken : ''}`;
-        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-        const json = await res.json();
+        let res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+        let json = await res.json();
         if (json.error) {
           if (json.error.code === 401) {
-            // El token caducó después de 1 hora de Google: marcar expirado sin borrar listas previas
-            setYtTokenExpirado(true);
+            // Token expirado: intentar renovar automáticamente con el refresh_token
+            const nuevoToken = await refrescarTokenYouTube();
+            if (nuevoToken) {
+              res = await fetch(url, { headers: { Authorization: 'Bearer ' + nuevoToken } });
+              json = await res.json();
+              if (json.error) {
+                setYtTokenExpirado(true);
+                break;
+              }
+            } else {
+              setYtTokenExpirado(true);
+              break;
+            }
+          } else {
+            console.warn('[YT Playlists]', json.error);
+            break;
           }
-          console.warn('[YT Playlists]', json.error);
-          break;
         }
         const items: Playlist[] = (json.items || []).map((it: any) => ({
           id: 'yt_' + it.id,
@@ -238,16 +271,21 @@ export default function Sesion() {
       const url = event.url;
       if (!url) return;
 
-      // Retorno de YouTube OAuth directo (youthink://oauth2redirect#access_token=...)
+      // Retorno de YouTube OAuth directo (youthink://oauth2redirect#access_token=...&refresh_token=...)
       if (url.includes('oauth2redirect')) {
         const hashIdx = url.indexOf('#');
         const queryIdx = url.indexOf('?');
         const paramsStr = hashIdx !== -1 ? url.substring(hashIdx + 1) : queryIdx !== -1 ? url.substring(queryIdx + 1) : '';
         const params = new URLSearchParams(paramsStr);
         const access_token = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
         if (access_token) {
           AsyncStorage.setItem('qp_yt_access_token', access_token).catch(() => {});
+          if (refresh_token) {
+            AsyncStorage.setItem('qp_yt_refresh_token', refresh_token).catch(() => {});
+          }
           setYtToken(access_token);
+          setYtTokenExpirado(false);
           cargarListasYouTube(access_token);
         }
         return;

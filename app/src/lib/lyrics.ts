@@ -57,9 +57,9 @@ export function parseLrc(lrcText: string): LyricLine[] {
   return lines.sort((a, b) => a.time - b.time);
 }
 
-// Busca letra en LRCLIB (servicio gratuito y público de letras LRC)
+// Busca letra en múltiples fuentes: LRCLIB (sincronizada), Lyrist/Textyl y Gemini AI como respaldo infalible
 export async function buscarLyrics(videoId: string, videoTitle: string, channel = '', durationSec?: number): Promise<LyricsData | null> {
-  const cacheKey = `qp_lyrics_v2_${videoId}`;
+  const cacheKey = `qp_lyrics_v3_${videoId}`;
   try {
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
@@ -73,66 +73,145 @@ export async function buscarLyrics(videoId: string, videoTitle: string, channel 
   try {
     let result: any = null;
 
-    // 1. Intento exacto si tenemos título y artista
+    // 1. Intento exacto en LRCLIB si tenemos título y artista
     if (cleanTitle && artist) {
-      const params = new URLSearchParams({
-        track_name: cleanTitle,
-        artist_name: artist,
-      });
-      if (durationSec && durationSec > 0) {
-        params.set('duration', Math.round(durationSec).toString());
-      }
-      const r = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
-      if (r.ok) {
-        result = await r.json();
-      }
-    }
-
-    // 2. Fallback a búsqueda general por query
-    if (!result || (!result.syncedLyrics && !result.plainLyrics)) {
-      const query = `${cleanTitle} ${artist}`.trim() || videoTitle;
-      const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
-      if (r.ok) {
-        const list = await r.json();
-        if (Array.isArray(list) && list.length > 0) {
-          // Filtrar para que pertenezca al artista o contenga palabras clave del título
-          const match = list.find((it: any) => {
-            const tMatch = it.trackName && cleanTitle.toLowerCase().includes(it.trackName.toLowerCase());
-            const aMatch = artist && it.artistName && it.artistName.toLowerCase().includes(artist.toLowerCase());
-            return (tMatch || aMatch) && it.syncedLyrics;
-          }) || list.find((it: any) => it.syncedLyrics) || list[0];
-          result = match;
+      try {
+        const params = new URLSearchParams({
+          track_name: cleanTitle,
+          artist_name: artist,
+        });
+        if (durationSec && durationSec > 0) {
+          params.set('duration', Math.round(durationSec).toString());
         }
-      }
+        const r = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
+        if (r.ok) {
+          result = await r.json();
+        }
+      } catch (_) {}
     }
 
-    if (!result) return null;
+    // 2. Fallback a búsqueda general en LRCLIB por query
+    if (!result || (!result.syncedLyrics && !result.plainLyrics)) {
+      try {
+        const query = `${cleanTitle} ${artist}`.trim() || videoTitle;
+        const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+        if (r.ok) {
+          const list = await r.json();
+          if (Array.isArray(list) && list.length > 0) {
+            const match = list.find((it: any) => {
+              const tMatch = it.trackName && cleanTitle.toLowerCase().includes(it.trackName.toLowerCase());
+              const aMatch = artist && it.artistName && it.artistName.toLowerCase().includes(artist.toLowerCase());
+              return (tMatch || aMatch) && it.syncedLyrics;
+            }) || list.find((it: any) => it.syncedLyrics) || list[0];
+            result = match;
+          }
+        }
+      } catch (_) {}
+    }
 
     let lines: LyricLine[] = [];
     let synced = false;
 
-    if (result.syncedLyrics) {
+    if (result?.syncedLyrics) {
       lines = parseLrc(result.syncedLyrics);
       synced = lines.length > 0;
     }
 
-    if (!synced && result.plainLyrics) {
+    if (!synced && result?.plainLyrics) {
       lines = result.plainLyrics
         .split(/\r?\n/)
         .map((t: string) => t.trim())
         .filter(Boolean)
-        .map((text: string, idx: number) => ({ time: idx * 5, text })); // tiempos estimados si es plano
+        .map((text: string, idx: number) => ({ time: idx * 5, text }));
+    }
+
+    // 3. Fallback a Lyrist API si LRCLIB no encontró nada
+    if (lines.length === 0) {
+      try {
+        const lyristQuery = encodeURIComponent(cleanTitle || videoTitle);
+        const lyristArtist = encodeURIComponent(artist || '');
+        const url = artist ? `https://lyrist.vercel.app/api/${lyristQuery}/${lyristArtist}` : `https://lyrist.vercel.app/api/${lyristQuery}`;
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const lyristData = await resp.json();
+          if (lyristData?.lyrics) {
+            lines = lyristData.lyrics
+              .split(/\r?\n/)
+              .map((t: string) => t.trim())
+              .filter(Boolean)
+              .map((text: string, idx: number) => ({ time: idx * 4.5, text }));
+            result = {
+              trackName: lyristData.title || cleanTitle,
+              artistName: lyristData.artist || artist,
+              plainLyrics: lyristData.lyrics,
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 4. Fallback final infalible: Gemini AI (busca la letra de la canción y la formatea)
+    if (lines.length === 0 && GEMINI_KEY) {
+      try {
+        const searchTerms = `${cleanTitle} ${artist}`.trim() || videoTitle;
+        const prompt = `Devuelve la letra COMPLETA de la canción "${searchTerms}".
+Instrucciones estrictas:
+- Devuelve ÚNICAMENTE la letra original verso por verso, sin títulos de sección (no pongas [Coro], [Verso], etc.).
+- Sin introducciones, sin explicaciones, sin markdown.
+- Si no conoces la canción, devuelve exactamente: NO_ENCONTRADA`;
+
+        const geminiModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        let geminiText = '';
+
+        for (const model of geminiModels) {
+          try {
+            const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
+            const gRes = await fetch(gUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+            });
+            if (gRes.ok) {
+              const gJson = await gRes.json();
+              const cand = gJson.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (cand && !cand.includes('NO_ENCONTRADA')) {
+                geminiText = cand.trim();
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (geminiText) {
+          const cleanLines = geminiText
+            .split(/\r?\n/)
+            .map((t) => t.trim())
+            .filter((t) => t.length > 0 && !t.startsWith('[') && !t.startsWith('('));
+
+          const dur = durationSec && durationSec > 20 ? durationSec : cleanLines.length * 4;
+          const step = cleanLines.length > 0 ? (dur * 0.85) / cleanLines.length : 4;
+
+          lines = cleanLines.map((text, idx) => ({
+            time: Math.round((idx * step + 4) * 10) / 10,
+            text,
+          }));
+          synced = true;
+          result = { trackName: cleanTitle, artistName: artist, plainLyrics: geminiText };
+        }
+      } catch (ge) {
+        console.warn('[Gemini Lyrics Fallback]', ge);
+      }
     }
 
     if (lines.length === 0) return null;
 
     const data: LyricsData = {
       id: videoId,
-      title: result.trackName || cleanTitle,
-      artist: result.artistName || artist,
+      title: result?.trackName || cleanTitle,
+      artist: result?.artistName || artist,
       synced,
       lines,
-      plain: result.plainLyrics || undefined,
+      plain: result?.plainLyrics || undefined,
     };
 
     AsyncStorage.setItem(cacheKey, JSON.stringify(data)).catch(() => {});
