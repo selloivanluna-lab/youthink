@@ -126,6 +126,24 @@ class QpPlayerService : MediaSessionService() {
   }
 
   fun playVideo(videoId: String, title: String) {
+    // Si ya es una URL directa (ej: Cloudflare R2, HTTP stream), reproducir sin pasar por NewPipe
+    if (videoId.startsWith("http://") || videoId.startsWith("https://")) {
+      main.post {
+        val p = player ?: return@post
+        val item = MediaItem.Builder()
+          .setUri(videoId)
+          .setMediaId(videoId)
+          .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+          .build()
+        p.setMediaItem(item)
+        p.prepare()
+        QpEvents.push(mapOf("resolving" to false, "buffering" to true, "isPlaying" to false, "error" to null))
+        p.play()
+        pushState()
+      }
+      return
+    }
+
     val timedOut = AtomicBoolean(false)
     QpEvents.push(mapOf("resolving" to true, "buffering" to true, "isPlaying" to false, "error" to null))
 

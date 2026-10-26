@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Text } from 'react-native';
 import Buscar from './src/screens/Buscar';
 import Radio from './src/screens/Radio';
+import LibraryCrew from './src/screens/LibraryCrew';
 import Placeholder from './src/screens/Placeholder';
 import Sesion from './src/screens/Sesion';
 import { theme } from './src/theme';
@@ -48,6 +49,11 @@ export default function App() {
             options={{ tabBarIcon: () => <Text>🔎</Text> }}
           />
           <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
+          <Tab.Screen
+            name="Library Crew"
+            component={LibraryCrew}
+            options={{ tabBarIcon: () => <Text>👥</Text> }}
+          />
           <Tab.Screen name="Descargas" component={Descargas} options={{ tabBarIcon: () => <Text>⬇️</Text> }} />
           <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
         </Tab.Navigator>

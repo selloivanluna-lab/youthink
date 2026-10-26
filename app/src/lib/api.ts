@@ -78,6 +78,20 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 3, baseMs = 1500): Pro
   throw lastErr;
 }
 
+export type CrewTrack = {
+  id: string;
+  crew_id: string;
+  uploaded_by: string;
+  title: string;
+  artist: string;
+  audio_url: string;
+  cover_url: string | null;
+  duration: number | null;
+  file_size: number | null;
+  key: string;
+  created_at: string;
+};
+
 export const api = {
   health: () => getJson<{ ok: boolean; ytdlp: boolean; ffmpeg: boolean; deno: boolean }>('/api/health', 8000),
 
@@ -115,4 +129,19 @@ export const api = {
 
   // Headers para fuentes de expo-video.
   mediaHeaders: () => ({ Authorization: 'Bearer ' + QP_TOKEN }),
+
+  // -- Crew Vault (Cloudflare R2) -------------------------------------------
+  crewGetUploadUrl: (params: { filename: string; contentType?: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string }) =>
+    postJson<{ ok: boolean; uploadUrl: string; key: string; contentType: string }>('/api/crew/upload-url', params),
+
+  crewSaveTrack: (params: { key: string; title: string; artist?: string; cover_url?: string | null; duration?: number | null; file_size?: number | null; crew_id?: string; uploaded_by?: string }) =>
+    postJson<{ ok: boolean; track: CrewTrack }>('/api/crew/track', params),
+
+  crewListTracks: (crew_id = 'main') =>
+    getJson<{ ok: boolean; tracks: CrewTrack[] }>(`/api/crew/tracks?crew_id=${encodeURIComponent(crew_id)}`),
+
+  crewDeleteTrack: (id: string) =>
+    fetch(API_URL + `/api/crew/track/${encodeURIComponent(id)}`, {
+      method: 'DELETE', headers: authHeaders(),
+    }).then(r => r.json() as Promise<{ ok: boolean }>),
 };

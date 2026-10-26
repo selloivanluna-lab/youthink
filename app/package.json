@@ -9,6 +9,7 @@
     "@supabase/supabase-js": "^2.117.3",
     "expo": "~57.0.30",
     "expo-dev-client": "~57.0.20",
+    "expo-document-picker": "^58.0.4",
     "expo-status-bar": "~57.0.1",
     "expo-video": "~57.0.5",
     "qp-audio": "file:./modules/qp-audio",

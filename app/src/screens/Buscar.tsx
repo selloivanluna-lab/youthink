@@ -740,6 +740,7 @@ export default function Buscar() {
         const item: YtResult = {
           id: pId,
           title: pTitle,
+          url: `https://www.youtube.com/watch?v=${pId}`,
           channel: '',
           duration: 0,
           thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,

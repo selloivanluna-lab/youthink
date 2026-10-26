@@ -13,6 +13,32 @@ const { requireAuth, verifyToken } = require('./auth');
 const cookies = require('./cookies');
 const ytmusic = require('./ytmusic');
 const browser = require('./browser');
+const r2 = require('./r2');
+
+// ── Supabase helper (REST directo, sin SDK) ───────────────────────────────────
+const SB_URL = process.env.SUPABASE_URL || 'https://prixtmnilittshdegrxq.supabase.co';
+const SB_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4';
+async function sbGet(table, params = '') {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}${params}`, {
+    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Accept': 'application/json' },
+  });
+  return r.json();
+}
+async function sbPost(table, body) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+async function sbDelete(table, filter) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method: 'DELETE',
+    headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
+  });
+  return r.ok;
+}
 const { WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.PORT || process.env.QP_BAJAR_PORT || 8080);
@@ -767,6 +793,67 @@ function getOAuthCreds() {
   if (p === '/api/browser/close' && req.method === 'POST') {
     try { const b = JSON.parse((await readBody(req)) || '{}'); if (b.sid) browser.closeSession(b.sid); respond(res, 200, { ok: true }); }
     catch (e) { respond(res, 400, { error: e.message }); }
+    return;
+  }
+
+  // ── Crew Vault — Cloudflare R2 + Supabase ────────────────────────────────
+
+  // 1) Genera presigned URL para subir un archivo directo a R2 desde el celular
+  if (p === '/api/crew/upload-url' && req.method === 'POST') {
+    try {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { filename, contentType = 'audio/mpeg', title, artist, crew_id = 'main', uploaded_by = '' } = body;
+      if (!filename || !title) { respond(res, 400, { error: 'falta filename o title' }); return; }
+      const ext = filename.split('.').pop() || 'mp3';
+      const key = `${crew_id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+      const uploadUrl = r2.presignedUrl({ key, method: 'PUT', expiresIn: 3600, contentType });
+      respond(res, 200, { ok: true, uploadUrl, key, contentType });
+    } catch (e) { respond(res, 500, { error: 'upload-url: ' + e.message }); }
+    return;
+  }
+
+  // 2) Guarda metadata en Supabase después de subir exitosamente a R2
+  if (p === '/api/crew/track' && req.method === 'POST') {
+    try {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const { key, title, artist = '', cover_url = null, duration = null, file_size = null, crew_id = 'main', uploaded_by = '' } = body;
+      if (!key || !title) { respond(res, 400, { error: 'falta key o title' }); return; }
+      // URL de descarga/reproducción (presignada, válida 7 días — se regenera al listar)
+      const audio_url = r2.presignedUrl({ key, method: 'GET', expiresIn: 604800 });
+      const [row] = await sbPost('youthink_crew_tracks', { key, title, artist, cover_url, duration, file_size, crew_id, uploaded_by, audio_url });
+      respond(res, 200, { ok: true, track: row });
+    } catch (e) { respond(res, 500, { error: 'save-track: ' + e.message }); }
+    return;
+  }
+
+  // 3) Lista tracks del vault (genera URLs frescas de 7 días cada vez)
+  if (p === '/api/crew/tracks' && req.method === 'GET') {
+    try {
+      const crew_id = url.searchParams.get('crew_id') || 'main';
+      const rows = await sbGet('youthink_crew_tracks', `?crew_id=eq.${encodeURIComponent(crew_id)}&order=created_at.desc`);
+      // Regenerar presigned URLs de reproducción (por si vencieron)
+      const tracks = (Array.isArray(rows) ? rows : []).map(t => ({
+        ...t,
+        audio_url: r2.presignedUrl({ key: t.key, method: 'GET', expiresIn: 604800 }),
+      }));
+      respond(res, 200, { ok: true, tracks });
+    } catch (e) { respond(res, 500, { error: 'list-tracks: ' + e.message }); }
+    return;
+  }
+
+  // 4) Elimina un track (R2 + Supabase)
+  if (p.startsWith('/api/crew/track/') && req.method === 'DELETE') {
+    try {
+      const id = p.split('/api/crew/track/')[1];
+      if (!id) { respond(res, 400, { error: 'falta id' }); return; }
+      // Obtener key del objeto en R2
+      const rows = await sbGet('youthink_crew_tracks', `?id=eq.${encodeURIComponent(id)}`);
+      if (Array.isArray(rows) && rows[0]?.key) {
+        await r2.deleteObject(rows[0].key);
+      }
+      await sbDelete('youthink_crew_tracks', `id=eq.${encodeURIComponent(id)}`);
+      respond(res, 200, { ok: true });
+    } catch (e) { respond(res, 500, { error: 'delete-track: ' + e.message }); }
     return;
   }
 
