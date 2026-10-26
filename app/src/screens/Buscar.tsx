@@ -122,6 +122,10 @@ export default function Buscar() {
   const [dur, setDur] = useState(0);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
+  const sourceRetryRef = useRef(0);
+  const sourceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const actualRetryRef = useRef<YtResult | null>(null);
 
   // Cola / modos
   const [cola, setCola] = useState<YtResult[]>([]);
@@ -269,7 +273,23 @@ export default function Buscar() {
         if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
         setNativeBuffering(Boolean(st.buffering));
         setNativeResolving(Boolean(st.resolving));
-        if (st.error) setError(st.error);
+        if (st.error) {
+          // Auto-retry hasta 3 veces en errores de source/stream (URLs de YouTube expiran rápido)
+          const isSourceError = /source|http|403|stream|failed to load/i.test(st.error);
+          if (isSourceError && sourceRetryRef.current < 3 && actualRetryRef.current) {
+            sourceRetryRef.current += 1;
+            const itemToRetry = actualRetryRef.current;
+            const retryN = sourceRetryRef.current;
+            if (sourceRetryTimerRef.current) clearTimeout(sourceRetryTimerRef.current);
+            sourceRetryTimerRef.current = setTimeout(async () => {
+              try {
+                await native.play(itemToRetry.id, itemToRetry.title);
+              } catch (_) {}
+            }, 800 * retryN); // backoff: 800ms, 1600ms, 2400ms
+          } else {
+            setError(st.error);
+          }
+        }
         if (st.ended && !crossoverTriggeredRef.current) siguienteRef.current(true);
       });
       return () => {
@@ -599,6 +619,10 @@ export default function Buscar() {
     setMediaUri(null);
     setError(null);
     setAudioTimeout(false);
+    // Resetear auto-retry counter para esta canción
+    sourceRetryRef.current = 0;
+    actualRetryRef.current = item;
+    if (sourceRetryTimerRef.current) { clearTimeout(sourceRetryTimerRef.current); sourceRetryTimerRef.current = null; }
     // Resetear ambos flags de carga nativa para que no queden pegados de la canción anterior
     setNativeBuffering(false);
     setNativeResolving(false);
@@ -990,7 +1014,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       </View>
 
       <View style={s.searchRow}>
-        <TextInput style={s.input} placeholder="Buscá en YouTube…" placeholderTextColor={theme.colors.textDim}
+        <TextInput style={s.input} placeholder="Buscar música y videos…" placeholderTextColor={theme.colors.textDim}
           value={query} onChangeText={setQuery} onSubmitEditing={buscar} returnKeyType="search" autoCorrect={false} />
         <Pressable style={s.btn} onPress={buscar}><Text style={s.btnText}>🔎</Text></Pressable>
       </View>
