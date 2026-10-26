@@ -307,9 +307,44 @@ export default function Buscar() {
   async function cargarRecomendaciones() {
     setCargandoRecomendaciones(true);
     try {
-      const queries = ['musica argentina exitos 2026', 'musica en tendencia', 'rock nacional clasicos', 'top exitos spotify'];
-      const q = queries[Math.floor(Math.random() * queries.length)];
-      const res = await api.search(q, 20);
+      // 1. Intentar obtener artistas/temas a partir del usuario logueado en YouTube
+      const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
+      let queryPersonalizada = '';
+
+      if (ytToken) {
+        try {
+          const r = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=5', {
+            headers: { Authorization: 'Bearer ' + ytToken },
+          });
+          const d = await r.json();
+          if (d.items && d.items.length > 0) {
+            const titulos = d.items.map((it: any) => it.snippet?.title).filter(Boolean);
+            if (titulos.length > 0) {
+              queryPersonalizada = titulos[Math.floor(Math.random() * titulos.length)];
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2. Si no hay token o no tiene listas, buscar por sus listas locales de Supabase/storage
+      if (!queryPersonalizada) {
+        try {
+          const misListas = await getPlaylists();
+          if (misListas && misListas.length > 0) {
+            const nom = misListas.map((l) => l.nombre).filter(Boolean);
+            if (nom.length > 0) {
+              queryPersonalizada = nom[Math.floor(Math.random() * nom.length)];
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback a tendencias generales si no hay datos del usuario aún
+      const queryFinal = queryPersonalizada
+        ? queryPersonalizada
+        : ['musica argentina tendencias 2026', 'top exitos spotify 2026', 'rock nacional clasicos'][Math.floor(Math.random() * 3)];
+
+      const res = await api.search(queryFinal, 20);
       if (res.ok && res.results) {
         setRecomendaciones(res.results);
       }
@@ -718,8 +753,13 @@ export default function Buscar() {
   }
   async function togglePlay() {
     if (usarNativoRef.current) {
-      if (reproduciendo) { await native.pause(); setReproduciendo(false); }
-      else { await native.resume(); setReproduciendo(true); }
+      if (reproduciendo) {
+        await native.pause();
+        setReproduciendo(false);
+      } else {
+        await native.resume();
+        setReproduciendo(true);
+      }
       return;
     }
     const uri = mediaUri || mediaUriRef.current;
@@ -747,13 +787,15 @@ export default function Buscar() {
         }
       }
     }
-    if (reproduciendo) {
-      player.pause();
-      setReproduciendo(false);
-    } else {
-      player.play();
-      setReproduciendo(true);
-    }
+    try {
+      if (reproduciendo) {
+        player.pause();
+        setReproduciendo(false);
+      } else {
+        player.play();
+        setReproduciendo(true);
+      }
+    } catch (_) {}
   }
   function minimizar() {
     setPlayerVisible(false);
@@ -780,7 +822,7 @@ export default function Buscar() {
   }
 
   // ── Descarga: abre la URL directa del audio/video en el navegador ──
-  function descargar() {
+  async function descargar() {
     if (!actual) return;
     setDescargando(true);
     const url = soloAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id);
@@ -795,10 +837,20 @@ export default function Buscar() {
           (globalThis as any).window?.open(url, '_blank');
         }
       } else {
-        Linking.openURL(url);
+        const supported = await Linking.canOpenURL(url);
+        if (supported) {
+          await Linking.openURL(url);
+        } else {
+          await Linking.openURL(url);
+        }
       }
-    } catch (e) {}
-    setTimeout(() => setDescargando(false), 2000);
+    } catch (e: any) {
+      console.warn('[Descarga]', e);
+      Alert.alert('Descarga', 'Abriendo enlace de descarga en el navegador...');
+      try { await Linking.openURL(url); } catch (_) {}
+    } finally {
+      setTimeout(() => setDescargando(false), 2500);
+    }
   }
 
   // ── Listas de reproducción ──
@@ -924,17 +976,17 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* ── LOGO YOUTHINK Y CABECERA ── */}
-      <View style={{ alignItems: 'center', marginBottom: 14, paddingTop: 4 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 28 }}>🎵</Text>
-          <Text style={{ fontSize: 26, fontWeight: '900', color: theme.colors.gold, letterSpacing: 0.5 }}>
+      {/* ── LOGO YOUTHINK OFICIAL ── */}
+      <View style={{ alignItems: 'center', marginBottom: 12, paddingTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Image
+            source={require('../../assets/youthink-logo.png')}
+            style={{ width: 44, height: 44, resizeMode: 'contain' }}
+          />
+          <Text style={{ fontSize: 28, fontWeight: '900', color: theme.colors.gold, letterSpacing: 0.5 }}>
             YouThink
           </Text>
         </View>
-        <Text style={{ color: theme.colors.textDim, fontSize: 11, fontWeight: '600', marginTop: 2, letterSpacing: 0.8 }}>
-          MÚSICA & VIDEOS SIN LÍMITES
-        </Text>
       </View>
 
       <View style={s.searchRow}>
@@ -1175,7 +1227,23 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               ListHeaderComponent={
                 <View>
                   <View style={s.audioBox}>
-                    <Text style={s.audioIcon}>🔊</Text>
+                    {actual?.thumb ? (
+                      <Image
+                        source={{ uri: actual.thumb }}
+                        style={{
+                          width: 220,
+                          height: 220,
+                          borderRadius: 16,
+                          marginBottom: 16,
+                          alignSelf: 'center',
+                          backgroundColor: '#111',
+                          borderWidth: 1,
+                          borderColor: theme.colors.border,
+                        }}
+                      />
+                    ) : (
+                      <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#222', alignSelf: 'center', marginBottom: 16 }} />
+                    )}
                     <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
                     <Text style={s.audioSub}>{actual?.channel}</Text>
                     {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
