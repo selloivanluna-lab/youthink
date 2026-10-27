@@ -551,6 +551,10 @@ export default function Buscar() {
           (window as any).__qp_ac.resume().catch(() => {});
         }
       }
+      // Truco de audio silencioso para desbloquear la política de Safari
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+      silentAudio.volume = 0.01;
+      silentAudio.play().then(() => { setTimeout(() => { silentAudio.pause(); try { silentAudio.remove(); } catch (_e) {} }, 100); }).catch(() => {});
     } catch (_) {}
   }
 
@@ -745,7 +749,7 @@ export default function Buscar() {
     if (Platform.OS === 'web') {
       unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0`;
+      const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
       setMediaUri(embedUrl);
       setReproduciendo(true);
       setError(null);
@@ -762,14 +766,6 @@ export default function Buscar() {
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
         }
       };
-
-      // Si el iframe ya existe en el DOM, cargar el video de inmediato sin recargar la página del frame
-      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
-      if (el?.contentWindow && mediaUriRef.current) {
-        try {
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
-        } catch (_) {}
-      }
 
       setTimeout(forzarPlay, 200);
       setTimeout(forzarPlay, 600);
@@ -1564,9 +1560,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* ── Reproductor Web persistente (sin Modal portal para no cortar el audio en segundo plano ni al minimizar) ── */}
-      {Platform.OS === 'web' ? (
-        actual ? (
+      {/* ── Reproductor Web persistente via portal (escapa stacking context de React Navigation) ── */}
+      {Platform.OS === 'web' && actual && typeof document !== 'undefined' ? (
+        (require('react-dom') as any).createPortal(
           <View
             style={[
               s.modal,
@@ -1576,15 +1572,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 left: 0,
                 right: 0,
                 bottom: 0,
-                zIndex: playerVisible ? 9999 : -1,
-                opacity: playerVisible ? 1 : 0,
+                zIndex: playerVisible ? 100000 : 1,
+                opacity: playerVisible ? 1 : 0.01,
                 pointerEvents: (playerVisible ? 'auto' : 'none') as any,
-                transform: [{ translateY: playerVisible ? 0 : 3000 }],
-                transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease',
               } as any,
             ]}
           >
-            {actual?.thumb ? (
+            {playerVisible && actual?.thumb ? (
               <View
                 pointerEvents="none"
                 style={[s.modalBg, {
@@ -1598,9 +1592,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               />
             ) : null}
             {renderPlayerContent()}
-          </View>
-        ) : null
-      ) : (
+          </View>,
+          document.body
+        )
+      ) : Platform.OS !== 'web' ? (
         <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
           <View style={s.modal}>
             {actual?.thumb ? (
@@ -1616,7 +1611,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             {renderPlayerContent()}
           </View>
         </Modal>
-      )}
+      ) : null}
 
       {/* Panel de Ecualizador */}
       <Modal visible={eqOpen} transparent animationType="fade" onRequestClose={() => setEqOpen(false)}>
