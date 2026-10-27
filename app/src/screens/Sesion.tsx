@@ -329,9 +329,12 @@ export default function Sesion() {
     setError('');
     try {
       // Scheme oficial en app.json es "youthink"
+      // En web: usamos el origen (raíz del dominio) para que Supabase redirija limpio
+      // con el hash #access_token=... que detectSessionInUrl captura automáticamente.
+      // En nativo (Android): deep link youthink://auth/callback
       const redirectTo =
         Platform.OS === 'web' && typeof window !== 'undefined'
-          ? window.location.href
+          ? window.location.origin + '/'
           : 'youthink://auth/callback';
 
       const { data, error: e } = await supabase.auth.signInWithOAuth({

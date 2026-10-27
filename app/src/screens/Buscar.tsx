@@ -799,6 +799,16 @@ export default function Buscar() {
       return;
     }
     const uri = mediaUri || mediaUriRef.current;
+    // En web con iframe de YouTube: controlar via postMessage (YouTube IFrame API)
+    if (Platform.OS === 'web' && uri?.includes('/embed/')) {
+      const iframe = (globalThis as any).document?.querySelector('iframe') as HTMLIFrameElement | null;
+      if (iframe?.contentWindow) {
+        const cmd = reproduciendo ? 'pauseVideo' : 'playVideo';
+        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: cmd, args: [] }), '*');
+        setReproduciendo(!reproduciendo);
+      }
+      return;
+    }
     if (Platform.OS === 'web') {
       const el = (globalThis as any).document?.querySelector('video') as any;
       if (el) {
