@@ -1244,14 +1244,16 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   right: 16,
                   height: 240,
                   zIndex: 99999,
+                  opacity: 1,
                 }
               : {
                   position: 'fixed' as any,
-                  bottom: -200,
-                  left: -200,
-                  width: 1,
-                  height: 1,
-                  opacity: 0.001,
+                  bottom: 16,
+                  left: 16,
+                  width: 200,
+                  height: 120,
+                  zIndex: -9999,
+                  opacity: 0.05,
                   pointerEvents: 'none' as any,
                 }
           }
@@ -1260,7 +1262,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             id: 'yt-player-iframe',
             src: mediaUri,
             style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
-            allow: 'autoplay; encrypted-media; picture-in-picture',
+            allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen',
             allowFullScreen: true,
           })}
         </View>
