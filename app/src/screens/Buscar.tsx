@@ -642,6 +642,17 @@ export default function Buscar() {
         });
       }, 12000);
     }
+    // En Web (PC / iPhone Safari): reproducir directo vía iframe de YouTube sin depender del backend en la nube
+    if (Platform.OS === 'web') {
+      if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+      setMediaUri('https://www.youtube-nocookie.com/embed/' + item.id + '?autoplay=1&enablejsapi=1&playsinline=1');
+      setReproduciendo(true);
+      setError(null);
+      setAudioTimeout(false);
+      setPos(0);
+      if (item.duration) setDur(item.duration);
+      return;
+    }
     try {
       if (audio && NATIVE_AUDIO) {
         setMediaUri('native:' + item.id);
@@ -1238,9 +1249,20 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           </View>
           {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
 
-          <VideoView player={player} style={modo === 'video' ? s.video : s.videoHidden}
-            nativeControls={modo === 'video'} fullscreenOptions={{ enable: modo === 'video' }}
-            allowsPictureInPicture={modo === 'video'} contentFit="contain" />
+          {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
+            <View style={modo === 'video' ? s.video : { width: 1, height: 1, opacity: 0.01, position: 'absolute' }}>
+              {React.createElement('iframe', {
+                src: mediaUri,
+                style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
+                allow: 'autoplay; encrypted-media; picture-in-picture',
+                allowFullScreen: true,
+              })}
+            </View>
+          ) : (
+            <VideoView player={player} style={modo === 'video' ? s.video : s.videoHidden}
+              nativeControls={modo === 'video'} fullscreenOptions={{ enable: modo === 'video' }}
+              allowsPictureInPicture={modo === 'video'} contentFit="contain" />
+          )}
 
           {modo === 'audio' ? (
             <FlatList
