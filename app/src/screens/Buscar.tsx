@@ -181,6 +181,9 @@ export default function Buscar() {
   // Control de modal de reproductor (minimizar para buscar canciones sin cortar audio)
   const [playerVisible, setPlayerVisible] = useState(false);
 
+  // Audio silencioso persistente para mantener MediaSession viva y controles en pantalla de bloqueo
+  const silentAudioRef = useRef<any>(null);
+
   // Reordenar canciones en la cola (mover arriba / mover abajo)
   function moverEnCola(fromIndex: number, toIndex: number) {
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= cola.length || toIndex >= cola.length) return;
@@ -540,6 +543,18 @@ export default function Buscar() {
     return () => clearInterval(t);
   }, []);
 
+  // ── Audio silencioso looped para mantener MediaSession activa en pantalla bloqueada / minimizada ──
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    // WAV de ~1s de silencio con loop para mantener la sesión de audio del browser activa
+    const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    const audio = new Audio(SILENT_WAV);
+    audio.loop = true;
+    audio.volume = 0.01; // Casi inaudible pero suficiente para que el browser no lo trate como silencio
+    silentAudioRef.current = audio;
+    return () => { try { audio.pause(); audio.remove(); } catch (_) {} };
+  }, []);
+
   // Desbloqueo de AudioContext para Safari WebKit en iOS y macOS
   function unlockWebAudio() {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -551,10 +566,10 @@ export default function Buscar() {
           (window as any).__qp_ac.resume().catch(() => {});
         }
       }
-      // Truco de audio silencioso para desbloquear la política de Safari
-      const silentAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
-      silentAudio.volume = 0.01;
-      silentAudio.play().then(() => { setTimeout(() => { silentAudio.pause(); try { silentAudio.remove(); } catch (_e) {} }, 100); }).catch(() => {});
+      // Arrancar el audio silencioso persistente (requiere gesto de usuario para Safari)
+      if (silentAudioRef.current && silentAudioRef.current.paused) {
+        silentAudioRef.current.play().catch(() => {});
+      }
     } catch (_) {}
   }
 
@@ -595,6 +610,20 @@ export default function Buscar() {
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
   }, []);
+
+  // ── Sincronizar posición de MediaSession para controles de lock screen ──
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      if (dur > 0 && pos >= 0) {
+        (navigator.mediaSession as any).setPositionState({
+          duration: dur,
+          position: Math.min(pos, dur),
+          playbackRate: 1,
+        });
+      }
+    } catch (_) {}
+  }, [Math.floor(pos / 5), dur]); // Actualizar cada ~5s
 
   useEffect(() => {
     if (!mediaUri) return;
@@ -781,17 +810,25 @@ export default function Buscar() {
             album: 'YouThink Music',
             artwork: item.thumb ? [{ src: item.thumb, sizes: '512x512', type: 'image/jpeg' }] : [],
           });
+          navigator.mediaSession.playbackState = 'playing';
           navigator.mediaSession.setActionHandler('play', () => {
             forzarPlay();
             setReproduciendo(true);
+            navigator.mediaSession.playbackState = 'playing';
           });
           navigator.mediaSession.setActionHandler('pause', () => {
             const iframe = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
             if (iframe?.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
             setReproduciendo(false);
+            navigator.mediaSession.playbackState = 'paused';
           });
           navigator.mediaSession.setActionHandler('previoustrack', () => anterior());
           navigator.mediaSession.setActionHandler('nexttrack', () => siguiente(true));
+          navigator.mediaSession.setActionHandler('seekto', (details: any) => {
+            if (details?.seekTime != null) saltar(details.seekTime);
+          });
+          navigator.mediaSession.setActionHandler('seekforward', () => saltar(pos + 10));
+          navigator.mediaSession.setActionHandler('seekbackward', () => saltar(pos - 10));
         } catch (e) {}
       }
       return;
@@ -1009,6 +1046,20 @@ export default function Buscar() {
   function cerrar() {
     if (usarNativoRef.current) native.stop();
     player.pause();
+    // En web, pausar el iframe de YouTube antes de limpiar
+    if (Platform.OS === 'web') {
+      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+      if (el?.contentWindow) {
+        try { el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*'); } catch (_) {}
+      }
+      // Pausar el audio silencioso de MediaSession
+      if (silentAudioRef.current) {
+        try { silentAudioRef.current.pause(); } catch (_) {}
+      }
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'none';
+      }
+    }
     setActual(null);
     setPlayerVisible(false);
     setMediaUri(null);
@@ -1561,7 +1612,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       ) : null}
 
       {/* ── Reproductor Web persistente via portal (escapa stacking context de React Navigation) ── */}
-      {Platform.OS === 'web' && actual && typeof document !== 'undefined' ? (
+      {Platform.OS === 'web' && (actual || mediaUri?.includes('/embed/')) && typeof document !== 'undefined' ? (
         (require('react-dom') as any).createPortal(
           <View
             style={[
@@ -1572,9 +1623,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 left: 0,
                 right: 0,
                 bottom: 0,
-                zIndex: playerVisible ? 100000 : 1,
-                opacity: playerVisible ? 1 : 0.01,
-                pointerEvents: (playerVisible ? 'auto' : 'none') as any,
+                zIndex: playerVisible && actual ? 100000 : 1,
+                opacity: playerVisible && actual ? 1 : 0.01,
+                pointerEvents: (playerVisible && actual ? 'auto' : 'none') as any,
               } as any,
             ]}
           >
@@ -1591,7 +1642,16 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 } as any]}
               />
             ) : null}
-            {renderPlayerContent()}
+            {actual ? renderPlayerContent() : (
+              <View style={{ width: 1, height: 1, overflow: 'hidden' as any }}>
+                {mediaUri?.includes('/embed/') ? React.createElement('iframe', {
+                  id: 'yt-player-iframe',
+                  src: mediaUri,
+                  style: { width: 1, height: 1, border: 'none', opacity: 0.01 },
+                  allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                }) : null}
+              </View>
+            )}
           </View>,
           document.body
         )
