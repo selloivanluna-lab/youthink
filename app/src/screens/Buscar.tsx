@@ -77,29 +77,56 @@ const EQ_BANDS = [60, 170, 350, 1000, 3500, 10000];
 
 function Barra({ pos, dur, onSeek }: { pos: number; dur: number; onSeek: (t: number) => void }) {
   const [w, setW] = useState(0);
-  const pct = dur > 0 ? Math.min(1, Math.max(0, pos / dur)) : 0;
+  const [seekingPos, setSeekingPos] = useState<number | null>(null);
+
+  const currentPos = seekingPos != null ? seekingPos : pos;
+  const pct = dur > 0 ? Math.min(1, Math.max(0, currentPos / dur)) : 0;
+
+  const handleTouch = (e: any, isRelease = false) => {
+    if (w <= 0 || dur <= 0) return;
+    const ne = e?.nativeEvent || e;
+    let clientX: number | undefined = ne.clientX;
+    if (clientX == null && ne.touches && ne.touches[0]) {
+      clientX = ne.touches[0].clientX;
+    }
+    if (clientX == null && ne.changedTouches && ne.changedTouches[0]) {
+      clientX = ne.changedTouches[0].clientX;
+    }
+
+    let x = ne.locationX ?? 0;
+    if (Platform.OS === 'web' && clientX != null && e.currentTarget?.getBoundingClientRect) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      x = clientX - rect.left;
+    }
+
+    const ratio = Math.max(0, Math.min(1, x / w));
+    const target = ratio * dur;
+
+    if (isRelease) {
+      setSeekingPos(null);
+      onSeek(target);
+    } else {
+      setSeekingPos(target);
+    }
+  };
+
   return (
-    <Pressable
+    <View
       style={s.barWrap}
-      hitSlop={{ top: 14, bottom: 14, left: 10, right: 10 }}
+      hitSlop={{ top: 20, bottom: 20, left: 10, right: 10 }}
       onLayout={(e) => setW(e.nativeEvent.layout.width)}
-      onPress={(e: any) => {
-        let clickX = e?.nativeEvent?.locationX ?? 0;
-        if (Platform.OS === 'web' && e?.nativeEvent?.clientX && e?.currentTarget?.getBoundingClientRect) {
-          const rect = e.currentTarget.getBoundingClientRect();
-          clickX = e.nativeEvent.clientX - rect.left;
-        }
-        if (w > 0 && dur > 0) {
-          const ratio = Math.max(0, Math.min(1, clickX / w));
-          onSeek(ratio * dur);
-        }
-      }}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={(e) => handleTouch(e, false)}
+      onResponderMove={(e) => handleTouch(e, false)}
+      onResponderRelease={(e) => handleTouch(e, true)}
+      onResponderTerminate={() => setSeekingPos(null)}
     >
-      <View style={s.barTrack}>
+      <View style={s.barTrack} pointerEvents="none">
         <View style={[s.barFill, { width: `${pct * 100}%` }]} pointerEvents="none" />
         <View style={[s.barKnob, { left: `${pct * 100}%` }]} pointerEvents="none" />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -665,12 +692,25 @@ export default function Buscar() {
     // En Web (PC / iPhone Safari): reproducir directo vía iframe de YouTube sin depender del backend en la nube
     if (Platform.OS === 'web') {
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      setMediaUri('https://www.youtube-nocookie.com/embed/' + item.id + '?autoplay=1&enablejsapi=1&playsinline=1');
+      const originParam = typeof window !== 'undefined' && window.location.origin ? '&origin=' + encodeURIComponent(window.location.origin) : '';
+      setMediaUri('https://www.youtube-nocookie.com/embed/' + item.id + '?autoplay=1&enablejsapi=1&playsinline=1' + originParam);
       setReproduciendo(true);
       setError(null);
       setAudioTimeout(false);
       setPos(0);
       if (item.duration) setDur(item.duration);
+
+      // Registrar MediaSession para controles en pantalla de bloqueo de iPhone
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.metadata = new (window as any).MediaMetadata({
+            title: item.title,
+            artist: item.channel || 'YouThink',
+            album: 'YouThink Music',
+            artwork: item.thumb ? [{ src: item.thumb, sizes: '512x512', type: 'image/jpeg' }] : [],
+          });
+        } catch (e) {}
+      }
       return;
     }
     try {
@@ -793,9 +833,9 @@ export default function Buscar() {
     if (usarNativoRef.current) { native.seek(target); setPos(target); return; }
     if (Platform.OS === 'web') {
       if ((mediaUri || mediaUriRef.current)?.includes('/embed/')) {
-        const iframe = (globalThis as any).document?.querySelector('iframe') as HTMLIFrameElement | null;
+        const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
         if (iframe?.contentWindow) {
-          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] }), '*');
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [Math.round(target), true] }), '*');
         }
         setPos(target);
         return;
@@ -829,7 +869,7 @@ export default function Buscar() {
     const uri = mediaUri || mediaUriRef.current;
     // En web con iframe de YouTube: controlar via postMessage (YouTube IFrame API)
     if (Platform.OS === 'web' && uri?.includes('/embed/')) {
-      const iframe = (globalThis as any).document?.querySelector('iframe') as HTMLIFrameElement | null;
+      const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
       if (iframe?.contentWindow) {
         const cmd = reproduciendo ? 'pauseVideo' : 'playVideo';
         iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: cmd, args: [] }), '*');
@@ -1217,6 +1257,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           }
         >
           {React.createElement('iframe', {
+            id: 'yt-player-iframe',
             src: mediaUri,
             style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
             allow: 'autoplay; encrypted-media; picture-in-picture',
