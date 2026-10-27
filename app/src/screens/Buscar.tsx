@@ -181,6 +181,53 @@ export default function Buscar() {
   // Control de modal de reproductor (minimizar para buscar canciones sin cortar audio)
   const [playerVisible, setPlayerVisible] = useState(false);
 
+  // Control de velocidad de reproducción (playback speed / tempo)
+  const [velocidad, setVelocidad] = useState<number>(1);
+  const velocidadRef = useRef<number>(1);
+  const [velocidadOpen, setVelocidadOpen] = useState(false);
+
+  // Cargar velocidad guardada al iniciar
+  useEffect(() => {
+    AsyncStorage.getItem('qp_playback_speed').then((val) => {
+      if (val) {
+        const rate = parseFloat(val);
+        if (rate > 0 && !isNaN(rate)) {
+          setVelocidad(rate);
+          velocidadRef.current = rate;
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  function aplicarVelocidad(rate: number) {
+    const r = Math.max(0.25, Math.min(2.0, Math.round(rate * 100) / 100));
+    setVelocidad(r);
+    velocidadRef.current = r;
+    AsyncStorage.setItem('qp_playback_speed', r.toString()).catch(() => {});
+
+    if (Platform.OS === 'web') {
+      const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
+      if (iframe?.contentWindow) {
+        try {
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r] }), '*');
+        } catch (_) {}
+      }
+      const el = (globalThis as any).document?.querySelector('video') as any;
+      if (el) el.playbackRate = r;
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        try {
+          (navigator.mediaSession as any).setPositionState({
+            duration: dur || 1,
+            position: Math.min(pos, dur || 1),
+            playbackRate: r,
+          });
+        } catch (_) {}
+      }
+    } else {
+      try { player.playbackRate = r; } catch (_) {}
+    }
+  }
+
   // Audio silencioso persistente para mantener MediaSession viva y controles en pantalla de bloqueo
   const silentAudioRef = useRef<any>(null);
 
@@ -635,6 +682,9 @@ export default function Buscar() {
           if (el?.contentWindow) {
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+            if (velocidadRef.current !== 1) {
+              el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+            }
             if (reproduciendoRef.current) {
               el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
             }
@@ -654,7 +704,7 @@ export default function Buscar() {
         (navigator.mediaSession as any).setPositionState({
           duration: dur,
           position: Math.min(pos, dur),
-          playbackRate: 1,
+          playbackRate: velocidadRef.current || 1,
         });
       }
     } catch (_) {}
@@ -828,6 +878,9 @@ export default function Buscar() {
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          if (velocidadRef.current !== 1) {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+          }
         }
       };
 
@@ -982,7 +1035,13 @@ export default function Buscar() {
         autoPlayIndex: undefined,
       });
     }
-  }, [route.params?.autoPlayId]);
+
+    const pSpeed = route.params?.autoSetSpeed;
+    if (typeof pSpeed === 'number' && pSpeed > 0) {
+      aplicarVelocidad(pSpeed);
+      navigation.setParams({ autoSetSpeed: undefined });
+    }
+  }, [route.params?.autoPlayId, route.params?.autoSetSpeed]);
   function saltar(t: number) {
     const durTotal = dur > 0 ? dur : (actual?.duration || 0);
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
@@ -1433,10 +1492,15 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
       </View>
 
-      {/* Herramientas: Solo audio · Aleatorio · Repetir · Ecualizador · Listas · Info */}
+      {/* Herramientas: Solo audio · Velocidad · Aleatorio · Repetir · Ecualizador · Listas · Info */}
       <View style={s.toolsRow}>
         <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
           <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Audio' : 'Video'}</Text>
+        </Pressable>
+        <Pressable style={[s.tool, velocidad !== 1 && s.toolOn]} onPress={() => setVelocidadOpen(true)}>
+          <Text style={[s.toolText, velocidad !== 1 && s.toolTextOn]}>
+            ⏱️ {velocidad !== 1 ? `${velocidad}x` : 'Velocidad'}
+          </Text>
         </Pressable>
         <Pressable style={[s.tool, shuffle && s.toolOn]} onPress={toggleShuffle}>
           <Text style={[s.toolText, shuffle && s.toolTextOn]}>🔀 Aleatorio</Text>
@@ -1782,6 +1846,84 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   ? 'Se aplica en vivo al reproductor nativo.'
                   : 'Ajuste guardado.'}
             </Text>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Panel de Modificador de Velocidad / Tempo */}
+      <Modal visible={velocidadOpen} transparent animationType="fade" onRequestClose={() => setVelocidadOpen(false)}>
+        <Pressable style={s.eqBackdrop} onPress={() => setVelocidadOpen(false)}>
+          <Pressable style={s.eqPanel} onPress={() => {}}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={s.eqTitle}>⏱️ Velocidad de Reproducción</Text>
+              <Text style={{ color: theme.colors.gold, fontSize: 22, fontWeight: '900' }}>{velocidad}x</Text>
+            </View>
+
+            {/* Presets de velocidad */}
+            <View style={s.eqGrid}>
+              {[0.5, 0.75, 0.85, 0.9, 1.0, 1.1, 1.15, 1.25, 1.5, 1.75, 2.0].map((rate) => {
+                const activo = velocidad === rate;
+                return (
+                  <Pressable
+                    key={rate}
+                    style={[s.eqItem, activo && s.eqItemOn]}
+                    onPress={() => aplicarVelocidad(rate)}
+                  >
+                    <Text style={[s.eqItemText, activo && s.toolTextOn]}>
+                      {rate === 1.0 ? '1.0x Normal' : `${rate}x`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Ajuste fino (+ / -) */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 14 }}>
+              <Pressable
+                style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
+                onPress={() => aplicarVelocidad(velocidad - 0.05)}
+              >
+                <Text style={s.eqItemText}>-0.05x</Text>
+              </Pressable>
+              <Pressable
+                style={[s.eqItem, { flex: 1, paddingVertical: 10, backgroundColor: theme.colors.surface2 }]}
+                onPress={() => aplicarVelocidad(1.0)}
+              >
+                <Text style={[s.eqItemText, { color: theme.colors.gold }]}>Restablecer (1x)</Text>
+              </Pressable>
+              <Pressable
+                style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
+                onPress={() => aplicarVelocidad(velocidad + 0.05)}
+              >
+                <Text style={s.eqItemText}>+0.05x</Text>
+              </Pressable>
+            </View>
+
+            {/* Atajo hacia Tap Tempo */}
+            <Pressable
+              style={{
+                marginTop: 16,
+                backgroundColor: 'rgba(229, 178, 31, 0.15)',
+                borderWidth: 1,
+                borderColor: theme.colors.gold,
+                borderRadius: 10,
+                paddingVertical: 12,
+                alignItems: 'center',
+                flexDirection: 'row',
+                justifyContent: 'center',
+                gap: 8,
+              }}
+              onPress={() => {
+                setVelocidadOpen(false);
+                minimizar();
+                navigation.navigate('Tap Tempo');
+              }}
+            >
+              <Text style={{ fontSize: 16 }}>🥁</Text>
+              <Text style={{ color: theme.colors.gold, fontWeight: '800', fontSize: 13 }}>
+                Abrir Tap Tempo & Sincronizador
+              </Text>
+            </Pressable>
           </Pressable>
         </Pressable>
       </Modal>
