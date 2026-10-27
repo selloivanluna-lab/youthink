@@ -102,38 +102,16 @@ export default function LibraryCrew() {
     setUploading(true);
     setUploadProgress(0);
     try {
-      // 1. Obtener presigned URL del server
-      const { uploadUrl, key } = await api.crewGetUploadUrl({
+      // Upload proxeado por el server (evita CORS de R2 en web/iPhone)
+      await api.crewUpload({
+        fileUri: uFile.uri,
         filename: uFile.name,
         contentType,
         title: uTitle.trim(),
         artist: uArtist.trim(),
         crew_id: 'main',
         uploaded_by: userEmail,
-      });
-
-      // 2. Subir directamente a R2 con PUT (el celular sube directo a Cloudflare)
-      setUploadProgress(10);
-      const fileResp = await fetch(uFile.uri);
-      const blob = await fileResp.blob();
-      setUploadProgress(30);
-
-      const r2Resp = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': contentType },
-        body: blob,
-      });
-      if (!r2Resp.ok) throw new Error(`R2 upload falló: HTTP ${r2Resp.status}`);
-      setUploadProgress(80);
-
-      // 3. Guardar metadata en Supabase vía server
-      await api.crewSaveTrack({
-        key,
-        title: uTitle.trim(),
-        artist: uArtist.trim() || undefined,
-        file_size: uFile.size,
-        crew_id: 'main',
-        uploaded_by: userEmail,
+        onProgress: (pct) => setUploadProgress(pct),
       });
       setUploadProgress(100);
 

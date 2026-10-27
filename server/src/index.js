@@ -806,6 +806,85 @@ function getOAuthCreds() {
 
   // ── Crew Vault — Cloudflare R2 + Supabase ────────────────────────────────
 
+  // 0) Upload completo proxeado por el server (evita CORS de R2 en web/iPhone)
+  //    POST /api/crew/upload  multipart/form-data: file, title, artist, crew_id, uploaded_by
+  if (p === '/api/crew/upload' && req.method === 'POST') {
+    try {
+      const ct = req.headers['content-type'] || '';
+      // Leemos el body completo (limitado a 120 MB)
+      const rawBuf = await new Promise((resolve, reject) => {
+        const chunks = [];
+        let total = 0;
+        req.on('data', c => { total += c.length; if (total > 120 * 1024 * 1024) { req.destroy(); reject(new Error('archivo demasiado grande (máx 120 MB)')); return; } chunks.push(c); });
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+      });
+
+      // Parseo manual de multipart/form-data
+      const boundary = (ct.match(/boundary=([^\s;]+)/) || [])[1];
+      if (!boundary) { respond(res, 400, { error: 'falta boundary en multipart' }); return; }
+
+      const fields = {};
+      let fileBuffer = null, fileContentType = 'audio/mpeg', fileFilename = 'audio.mp3';
+
+      const sep = Buffer.from('\r\n--' + boundary);
+      const parts = [];
+      let start = rawBuf.indexOf('--' + boundary);
+      while (start !== -1) {
+        const end = rawBuf.indexOf(sep, start + boundary.length + 2);
+        const part = end !== -1 ? rawBuf.slice(start + boundary.length + 4, end) : rawBuf.slice(start + boundary.length + 4);
+        parts.push(part);
+        start = end !== -1 ? end + 2 : -1;
+      }
+
+      for (const part of parts) {
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd === -1) continue;
+        const headerStr = part.slice(0, headerEnd).toString('utf8');
+        const body = part.slice(headerEnd + 4);
+        // Quitar \r\n final del body
+        const bodyClean = body[body.length - 2] === 13 && body[body.length - 1] === 10 ? body.slice(0, -2) : body;
+        const dispMatch = headerStr.match(/Content-Disposition:.*?name="([^"]+)"/i);
+        const nameAttr = dispMatch ? dispMatch[1] : null;
+        const fnMatch = headerStr.match(/filename="([^"]+)"/i);
+        const ctMatch = headerStr.match(/Content-Type:\s*([^\r\n]+)/i);
+        if (nameAttr === 'file') {
+          fileBuffer = bodyClean;
+          if (fnMatch) fileFilename = fnMatch[1];
+          if (ctMatch) fileContentType = ctMatch[1].trim();
+        } else if (nameAttr) {
+          fields[nameAttr] = bodyClean.toString('utf8');
+        }
+      }
+
+      if (!fileBuffer || !fileBuffer.length) { respond(res, 400, { error: 'no se recibió el archivo' }); return; }
+      const title = (fields.title || '').trim();
+      if (!title) { respond(res, 400, { error: 'falta title' }); return; }
+
+      const ext = fileFilename.split('.').pop()?.toLowerCase() || 'mp3';
+      const crew_id = (fields.crew_id || 'main').trim();
+      const key = `${crew_id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+      // Subir a R2 server-side (sin CORS)
+      await r2.putObject(key, fileBuffer, fileContentType);
+
+      // Guardar metadata en Supabase
+      const audio_url = r2.presignedUrl({ key, method: 'GET', expiresIn: 604800 });
+      const [row] = await sbPost('youthink_crew_tracks', {
+        key, title,
+        artist: (fields.artist || '').trim(),
+        cover_url: null,
+        duration: null,
+        file_size: fileBuffer.length,
+        crew_id,
+        uploaded_by: (fields.uploaded_by || '').trim(),
+        audio_url,
+      });
+      respond(res, 200, { ok: true, track: row });
+    } catch (e) { respond(res, 500, { error: 'upload: ' + e.message }); }
+    return;
+  }
+
   // 1) Genera presigned URL para subir un archivo directo a R2 desde el celular
   if (p === '/api/crew/upload-url' && req.method === 'POST') {
     try {

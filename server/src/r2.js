@@ -131,4 +131,57 @@ async function deleteObject(key) {
   return resp.ok || resp.status === 204;
 }
 
-module.exports = { presignedUrl, publicUrl, deleteObject, getR2Creds };
+/** Sube un Buffer directamente a R2 via PUT firmado (sin CORS, server-side) */
+async function putObject(key, buffer, contentType) {
+  const { accessKey, secretKey, bucket } = getR2Creds();
+  const host      = r2Host();
+  const now       = new Date();
+  const amzDate   = now.toISOString().replace(/[-:]|\\.\\d{3}/g, '').slice(0, 15) + 'Z';
+  const dateStamp = amzDate.slice(0, 8);
+  const credScope = `${dateStamp}/${R2_REGION}/${R2_SERVICE}/aws4_request`;
+  const objPath   = `/${bucket}/${key}`;
+  const payloadHash = sha256hex(buffer);
+
+  const canonicalReq = [
+    'PUT',
+    objPath,
+    '',
+    `content-type:${contentType}\nhost:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`,
+    'content-type;host;x-amz-content-sha256;x-amz-date',
+    payloadHash,
+  ].join('\n');
+
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    credScope,
+    sha256hex(canonicalReq),
+  ].join('\n');
+
+  const signingKey = ['aws4', dateStamp, R2_REGION, R2_SERVICE, 'aws4_request']
+    .reduce((k, data) => hmac(k, data), Buffer.from(`AWS4${secretKey}`));
+
+  const signature = hmac(signingKey, stringToSign, 'hex');
+  const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope},SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,Signature=${signature}`;
+
+  const url = `https://${host}${objPath}`;
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Host': host,
+      'Content-Type': contentType,
+      'X-Amz-Date': amzDate,
+      'X-Amz-Content-Sha256': payloadHash,
+      'Authorization': authHeader,
+      'Content-Length': String(buffer.length),
+    },
+    body: buffer,
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`R2 PUT ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  return true;
+}
+
+module.exports = { presignedUrl, publicUrl, deleteObject, putObject, getR2Creds };

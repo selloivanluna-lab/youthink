@@ -131,6 +131,38 @@ export const api = {
   mediaHeaders: () => ({ Authorization: 'Bearer ' + QP_TOKEN }),
 
   // -- Crew Vault (Cloudflare R2) -------------------------------------------
+
+  // Upload completo proxeado por el server (sin CORS issues en web/iPhone)
+  crewUpload: (params: { fileUri: string; filename: string; contentType: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string; onProgress?: (pct: number) => void }) =>
+    withRetry(async () => {
+      const { fileUri, filename, contentType, title, artist = '', crew_id = 'main', uploaded_by = '', onProgress } = params;
+      const form = new FormData();
+      // En web, fileUri es un blob URL o data URL — fetch lo resuelve a Blob
+      const fileResp = await fetch(fileUri);
+      const blob = await fileResp.blob();
+      onProgress?.(20);
+      form.append('file', blob, filename);
+      form.append('title', title);
+      form.append('artist', artist);
+      form.append('crew_id', crew_id);
+      form.append('uploaded_by', uploaded_by);
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 180000); // 3 min para archivos grandes
+      try {
+        const r = await fetch(API_URL + '/api/crew/upload', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + QP_TOKEN }, // sin Content-Type: fetch pone el boundary solo
+          body: form,
+          signal: ctrl.signal,
+        });
+        onProgress?.(95);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
+        onProgress?.(100);
+        return data as { ok: boolean; track: CrewTrack };
+      } finally { clearTimeout(t); }
+    }, 2, 2000),
+
   crewGetUploadUrl: (params: { filename: string; contentType?: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string }) =>
     withRetry(() => postJson<{ ok: boolean; uploadUrl: string; key: string; contentType: string }>('/api/crew/upload-url', params)),
 
