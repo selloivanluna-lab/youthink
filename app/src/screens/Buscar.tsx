@@ -1192,6 +1192,39 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
+      {/* Reproductor iframe Web PERMANENTE (fuera del Modal para que NO se pause al minimizar) */}
+      {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
+        <View
+          style={
+            playerVisible && modo === 'video'
+              ? {
+                  position: 'fixed' as any,
+                  top: 96,
+                  left: 16,
+                  right: 16,
+                  height: 240,
+                  zIndex: 99999,
+                }
+              : {
+                  position: 'fixed' as any,
+                  bottom: -200,
+                  left: -200,
+                  width: 1,
+                  height: 1,
+                  opacity: 0.001,
+                  pointerEvents: 'none' as any,
+                }
+          }
+        >
+          {React.createElement('iframe', {
+            src: mediaUri,
+            style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
+            allow: 'autoplay; encrypted-media; picture-in-picture',
+            allowFullScreen: true,
+          })}
+        </View>
+      ) : null}
+
       <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
         <View style={s.modal}>
           {/* ── Fondo con portada desenfocada cinematográfica ── */}
@@ -1288,14 +1321,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
 
           {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
-            <View style={modo === 'video' ? s.video : { width: 1, height: 1, opacity: 0.01, position: 'absolute' }}>
-              {React.createElement('iframe', {
-                src: mediaUri,
-                style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
-                allow: 'autoplay; encrypted-media; picture-in-picture',
-                allowFullScreen: true,
-              })}
-            </View>
+            modo === 'video' ? <View style={{ width: '100%', height: 240 }} /> : null
           ) : (
             <VideoView player={player} style={modo === 'video' ? s.video : s.videoHidden}
               nativeControls={modo === 'video'} fullscreenOptions={{ enable: modo === 'video' }}
