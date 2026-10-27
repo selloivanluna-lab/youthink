@@ -32,7 +32,7 @@ const navTheme = {
 };
 
 export default function App() {
-  const [initialTab, setInitialTab] = useState<string>('Buscar');
+  const [initialTab, setInitialTab] = useState<string>('Play');
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -75,9 +75,9 @@ export default function App() {
           }}
         >
           <Tab.Screen
-            name="Buscar"
+            name="Play"
             component={Buscar}
-            options={{ tabBarIcon: () => <Text>🔎</Text> }}
+            options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>🧠</Text> }}
           />
           <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
           <Tab.Screen

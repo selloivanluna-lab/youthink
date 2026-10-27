@@ -57,7 +57,7 @@ export default function Radio() {
   const reproducirRadioCompleta = (startIndex = 0) => {
     if (!tracks.length) return;
     const track = tracks[startIndex];
-    navigation.navigate('Buscar' as never, {
+    navigation.navigate('Play' as never, {
       autoPlayId: track.id,
       autoPlayTitle: track.title,
       autoPlayQueue: tracks,

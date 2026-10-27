@@ -9,6 +9,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -138,6 +139,9 @@ export default function Buscar() {
   const [results, setResults] = useState<YtResult[]>([]);
   const [recomendaciones, setRecomendaciones] = useState<YtResult[]>([]);
   const [cargandoRecomendaciones, setCargandoRecomendaciones] = useState(false);
+  const [historial, setHistorial] = useState<YtResult[]>([]);
+  const historialRef = useRef<YtResult[]>([]);
+  useEffect(() => { historialRef.current = historial; }, [historial]);
   const [iniciandoRadio, setIniciandoRadio] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actual, setActual] = useState<YtResult | null>(null);
@@ -390,8 +394,30 @@ export default function Buscar() {
   useEffect(() => { crossoverRef.current = crossover; }, [crossover]);
   useEffect(() => { try { player.loop = repeat === 'one'; } catch (e) {} }, [repeat, player]);
 
+  // ── Historial de reproducción ──
+  async function guardarEnHistorial(item: YtResult) {
+    if (!item || !item.id) return;
+    try {
+      const prev = historialRef.current || [];
+      const filtrado = prev.filter((it) => it.id !== item.id);
+      const nuevo = [item, ...filtrado].slice(0, 30);
+      setHistorial(nuevo);
+      historialRef.current = nuevo;
+      await AsyncStorage.setItem('qp_historial', JSON.stringify(nuevo));
+    } catch (_) {}
+  }
+
+  async function limpiarHistorial() {
+    setHistorial([]);
+    historialRef.current = [];
+    try {
+      await AsyncStorage.removeItem('qp_historial');
+    } catch (_) {}
+    cargarRecomendaciones([]);
+  }
+
   useEffect(() => {
-    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover']).then((rows) => {
+    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover', 'qp_historial']).then((rows) => {
       const m: any = {}; rows.forEach(([k, v]) => (m[k] = v));
       if (m.qp_soloAudio != null) setSoloAudio(m.qp_soloAudio === '1');
       if (m.qp_autoSig != null) setAutoSiguiente(m.qp_autoSig === '1');
@@ -399,35 +425,62 @@ export default function Buscar() {
       if (m.qp_repeat) setRepeat(m.qp_repeat);
       if (m.qp_eq) setEq(m.qp_eq);
       if (m.qp_crossover != null) setCrossover(m.qp_crossover === '1');
-    }).catch(() => {});
-
-    // Cargar recomendaciones iniciales para el feed de inicio
-    cargarRecomendaciones();
-  }, []);
-
-  async function cargarRecomendaciones() {
-    setCargandoRecomendaciones(true);
-    try {
-      // 1. Intentar obtener artistas/temas a partir del usuario logueado en YouTube
-      const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
-      let queryPersonalizada = '';
-
-      if (ytToken) {
+      let hist: YtResult[] = [];
+      if (m.qp_historial) {
         try {
-          const r = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=5', {
-            headers: { Authorization: 'Bearer ' + ytToken },
-          });
-          const d = await r.json();
-          if (d.items && d.items.length > 0) {
-            const titulos = d.items.map((it: any) => it.snippet?.title).filter(Boolean);
-            if (titulos.length > 0) {
-              queryPersonalizada = titulos[Math.floor(Math.random() * titulos.length)];
-            }
+          hist = JSON.parse(m.qp_historial);
+          if (Array.isArray(hist)) {
+            setHistorial(hist);
+            historialRef.current = hist;
           }
         } catch (_) {}
       }
 
-      // 2. Si no hay token o no tiene listas, buscar por sus listas locales de Supabase/storage
+      // Cargar recomendaciones iniciales basadas en el historial del usuario
+      cargarRecomendaciones(hist);
+    }).catch(() => {});
+  }, []);
+
+  async function cargarRecomendaciones(historialParaUsar?: YtResult[]) {
+    setCargandoRecomendaciones(true);
+    try {
+      const h = (historialParaUsar && historialParaUsar.length > 0) ? historialParaUsar : historialRef.current;
+      let queryPersonalizada = '';
+
+      // 1. Prioridad: derivar inteligentemente a partir del Historial de reproducción
+      if (h && h.length > 0) {
+        const muestra = h.slice(0, 5);
+        const elegido = muestra[Math.floor(Math.random() * muestra.length)];
+        if (elegido?.channel && !elegido.channel.toLowerCase().includes('topic')) {
+          queryPersonalizada = elegido.channel + ' exitos';
+        } else if (elegido?.title) {
+          const clean = elegido.title
+            .replace(/\[.*?\]|\(.*?\)|official|video|audio|remix|lyric|en vivo|videoclip/gi, '')
+            .trim();
+          if (clean) queryPersonalizada = clean + ' mix';
+        }
+      }
+
+      // 2. Si no hay historial, intentar por playlists de YouTube del usuario logueado
+      if (!queryPersonalizada) {
+        const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
+        if (ytToken) {
+          try {
+            const r = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet&mine=true&maxResults=5', {
+              headers: { Authorization: 'Bearer ' + ytToken },
+            });
+            const d = await r.json();
+            if (d.items && d.items.length > 0) {
+              const titulos = d.items.map((it: any) => it.snippet?.title).filter(Boolean);
+              if (titulos.length > 0) {
+                queryPersonalizada = titulos[Math.floor(Math.random() * titulos.length)];
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 3. Si no hay token o no tiene listas, buscar por sus listas locales de Supabase/storage
       if (!queryPersonalizada) {
         try {
           const misListas = await getPlaylists();
@@ -440,7 +493,7 @@ export default function Buscar() {
         } catch (_) {}
       }
 
-      // 3. Fallback a tendencias generales si no hay datos del usuario aún
+      // 4. Fallback a tendencias generales si no hay datos del usuario aún
       const queryFinal = queryPersonalizada
         ? queryPersonalizada
         : ['musica argentina tendencias 2026', 'top exitos spotify 2026', 'rock nacional clasicos'][Math.floor(Math.random() * 3)];
@@ -832,6 +885,7 @@ export default function Buscar() {
   async function aplicar(item: YtResult, audio: boolean, idx: number, autoPlay = true) {
     autoPlayRef.current = autoPlay;
     setActual(item);
+    guardarEnHistorial(item);
     setPlayerVisible(true);
     setMediaUri(null);
     setError(null);
@@ -1202,35 +1256,52 @@ export default function Buscar() {
     } catch (e) {}
   }
 
-  // ── Descarga: abre la URL directa del audio/video en el navegador ──
+  // ── Descarga: genera y descarga el archivo de audio o video ──
   async function descargar() {
     if (!actual) return;
     setDescargando(true);
-    const url = soloAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id);
+    const cleanTitle = (actual.title || actual.id).replace(/[/\\:*?"<>|]/g, '_').slice(0, 80);
+    const ext = soloAudio ? '.m4a' : '.mp4';
+    const filename = cleanTitle + ext;
+    const url = (soloAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)) + `&dl=1&nombre=${encodeURIComponent(filename)}`;
+
     try {
+      // 1. Asegurar que el backend haya generado el clip en disco (evita error de archivo inexistente)
+      if (soloAudio) {
+        await api.previewAudio(actual.id);
+      } else {
+        await api.preview(actual.id);
+      }
+
+      // 2. Disparar descarga directa
       if (Platform.OS === 'web') {
         const a = (globalThis as any).document?.createElement('a');
         if (a) {
           a.href = url;
-          a.download = (actual.title || actual.id) + (soloAudio ? '.m4a' : '.mp4');
+          a.download = filename;
+          (globalThis as any).document.body?.appendChild(a);
           a.click();
+          setTimeout(() => a.remove(), 1000);
         } else {
           (globalThis as any).window?.open(url, '_blank');
         }
       } else {
-        const supported = await Linking.canOpenURL(url);
-        if (supported) {
-          await Linking.openURL(url);
+        await Linking.openURL(url);
+      }
+    } catch (e: any) {
+      console.warn('[Descarga] Advertencia en pre-generación:', e);
+      // Intento directo vía enlace URL (el servidor ahora también autogenera en /api/aclip y /api/clip)
+      try {
+        if (Platform.OS === 'web') {
+          (globalThis as any).window?.open(url, '_blank');
         } else {
           await Linking.openURL(url);
         }
+      } catch (_) {
+        Alert.alert('Descarga', 'El servidor está procesando el archivo. Por favor reintentá en unos segundos.');
       }
-    } catch (e: any) {
-      console.warn('[Descarga]', e);
-      Alert.alert('Descarga', 'Abriendo enlace de descarga en el navegador...');
-      try { await Linking.openURL(url); } catch (_) {}
     } finally {
-      setTimeout(() => setDescargando(false), 2500);
+      setTimeout(() => setDescargando(false), 2000);
     }
   }
 
@@ -1367,28 +1438,28 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             />
           ) : null}
 
-          {/* Portada en modo audio */}
-          {modo === 'audio' ? (
-            actual?.thumb ? (
-              <Image
-                source={{ uri: actual.thumb }}
-                style={{
-                  width: 220,
-                  height: 220,
-                  borderRadius: 16,
-                  marginBottom: 16,
-                  alignSelf: 'center',
-                  backgroundColor: '#111',
-                  borderWidth: 1,
-                  borderColor: theme.colors.border,
-                }}
-              />
-            ) : (
-              <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#222', alignSelf: 'center', marginBottom: 16 }} />
-            )
-          ) : null}
-
           <View style={s.audioBox}>
+            {/* Portada en modo audio dentro del recuadro principal */}
+            {modo === 'audio' ? (
+              actual?.thumb ? (
+                <Image
+                  source={{ uri: actual.thumb }}
+                  style={{
+                    width: 220,
+                    height: 220,
+                    borderRadius: 16,
+                    marginBottom: 14,
+                    alignSelf: 'center',
+                    backgroundColor: '#0a0a0a',
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                />
+              ) : (
+                <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#222', alignSelf: 'center', marginBottom: 14 }} />
+              )
+            ) : null}
+
             <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
             <Text style={s.audioSub}>{actual?.channel}</Text>
             {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
@@ -1665,46 +1736,96 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         )}
         ListEmptyComponent={
           !loading ? (
-            recomendaciones.length > 0 ? (
+            historial.length > 0 || recomendaciones.length > 0 ? (
               <View style={{ marginTop: 8 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
-                    🔥 Recomendados & Tendencias
-                  </Text>
-                  <Pressable onPress={cargarRecomendaciones} style={{ padding: 4 }}>
-                    <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🔄 Actualizar</Text>
-                  </Pressable>
-                </View>
-                {cargandoRecomendaciones ? (
-                  <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 20 }} />
-                ) : (
-                  recomendaciones.map((it, idx) => (
-                    <View key={'rec-' + it.id} style={[s.row, { marginBottom: 10 }]}>
-                      <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
-                        <Image source={{ uri: it.thumb }} style={s.thumb} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={s.title} numberOfLines={2}>{it.title}</Text>
-                          <Text style={s.sub} numberOfLines={1}>
-                            {it.channel} {it.duration ? `· ${fmtTiempo(it.duration)}` : ''}
-                          </Text>
-                        </View>
+                {/* ── 1. Historial de Reproducción ── */}
+                {historial.length > 0 ? (
+                  <View style={{ marginBottom: 20 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingHorizontal: 4 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
+                        🕒 Escuchados recientemente
+                      </Text>
+                      <Pressable onPress={limpiarHistorial} style={{ padding: 4 }}>
+                        <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🗑️ Borrar</Text>
                       </Pressable>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
-                        {actual ? (
-                          <Pressable
-                            style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
-                            onPress={() => encolarCancion(it)}
-                          >
-                            <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
-                          </Pressable>
-                        ) : null}
-                        <Pressable onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
-                          <Text style={s.play}>▶</Text>
-                        </Pressable>
-                      </View>
                     </View>
-                  ))
-                )}
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
+                      {historial.map((item, index) => (
+                        <Pressable
+                          key={'hist-' + item.id}
+                          style={{
+                            width: 130,
+                            backgroundColor: theme.colors.surface,
+                            borderRadius: 12,
+                            padding: 8,
+                            borderWidth: 1,
+                            borderColor: actual?.id === item.id ? theme.colors.gold : theme.colors.border,
+                          }}
+                          onPress={() => reproducir(historial, index, soloAudio)}
+                        >
+                          <View style={{ position: 'relative' }}>
+                            <Image source={{ uri: item.thumb }} style={{ width: '100%', height: 76, borderRadius: 8, backgroundColor: '#111' }} />
+                            <View style={{ position: 'absolute', right: 4, bottom: 4, backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ color: theme.colors.gold, fontSize: 11, fontWeight: '700' }}>
+                                {actual?.id === item.id && reproduciendo ? '🔊' : '▶'}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={{ color: theme.colors.text, fontSize: 12, fontWeight: '700', marginTop: 6 }} numberOfLines={2}>
+                            {item.title}
+                          </Text>
+                          <Text style={{ color: theme.colors.textDim, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
+                            {item.channel}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                ) : null}
+
+                {/* ── 2. Recomendados y Tendencias (derivados del historial) ── */}
+                {recomendaciones.length > 0 ? (
+                  <View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 }}>
+                      <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
+                        {historial.length > 0 ? '🔥 Recomendados para vos' : '🔥 Tendencias & Recomendados'}
+                      </Text>
+                      <Pressable onPress={() => cargarRecomendaciones()} style={{ padding: 4 }}>
+                        <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🔄 Actualizar</Text>
+                      </Pressable>
+                    </View>
+                    {cargandoRecomendaciones ? (
+                      <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 20 }} />
+                    ) : (
+                      recomendaciones.map((it, idx) => (
+                        <View key={'rec-' + it.id} style={[s.row, { marginBottom: 10 }]}>
+                          <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
+                            <Image source={{ uri: it.thumb }} style={s.thumb} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={s.title} numberOfLines={2}>{it.title}</Text>
+                              <Text style={s.sub} numberOfLines={1}>
+                                {it.channel} {it.duration ? `· ${fmtTiempo(it.duration)}` : ''}
+                              </Text>
+                            </View>
+                          </Pressable>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                            {actual ? (
+                              <Pressable
+                                style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
+                                onPress={() => encolarCancion(it)}
+                              >
+                                <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
+                              </Pressable>
+                            ) : null}
+                            <Pressable onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
+                              <Text style={s.play}>▶</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ) : null}
               </View>
             ) : (
               <Text style={s.empty}>Buscá un video o canción para empezar.</Text>

@@ -589,7 +589,7 @@ export default function Sesion() {
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
                                 }));
-                                (navigation.navigate as any)('Buscar', {
+                                (navigation.navigate as any)('Play', {
                                   autoPlayId: it.yt_id,
                                   autoPlayTitle: it.title,
                                   autoPlayQueue: queue,
@@ -707,7 +707,7 @@ export default function Sesion() {
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
                                 }));
-                                (navigation.navigate as any)('Buscar', {
+                                (navigation.navigate as any)('Play', {
                                   autoPlayId: it.id,
                                   autoPlayTitle: it.title,
                                   autoPlayQueue: queue,

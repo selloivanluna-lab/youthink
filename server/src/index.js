@@ -308,11 +308,14 @@ function runYtAudio(id, cb) {
 }
 
 // ── streaming de archivo local con Range ─────────────────────────────
-function streamLocalFile(req, res, file, type) {
+function streamLocalFile(req, res, file, type, downloadFilename) {
   let stat;
   try { stat = fs.statSync(file); } catch (e) { respond(res, 404, { error: 'archivo inexistente' }); return; }
   const range = req.headers['range'];
   const base = { 'Content-Type': type || 'video/mp4', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' };
+  if (downloadFilename) {
+    base['Content-Disposition'] = `attachment; filename="${encodeURIComponent(downloadFilename)}"`;
+  }
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
     let start = (m && m[1]) ? parseInt(m[1], 10) : 0;
@@ -716,7 +719,18 @@ function getOAuthCreds() {
   if (p === '/api/clip') {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{6,20}$/.test(id)) { respond(res, 400, { error: 'falta ?id= válido' }); return; }
-    streamLocalFile(req, res, path.join(CLIP_DIR, id + '.mp4'), 'video/mp4');
+    const file = path.join(CLIP_DIR, id + '.mp4');
+    const dl = url.searchParams.get('dl') === '1';
+    const nombre = (url.searchParams.get('nombre') || (id + '.mp4')).replace(/[\/\\:*?"<>|]/g, '_');
+    if (fs.existsSync(file)) {
+      streamLocalFile(req, res, file, 'video/mp4', dl ? nombre : null);
+      return;
+    }
+    await ensureCookiesFile();
+    runYtPreview(id, (err) => {
+      if (err) { respond(res, 502, { error: 'clip: ' + err.message }); return; }
+      streamLocalFile(req, res, file, 'video/mp4', dl ? nombre : null);
+    });
     return;
   }
 
@@ -734,7 +748,18 @@ function getOAuthCreds() {
   if (p === '/api/aclip') {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{6,20}$/.test(id)) { respond(res, 400, { error: 'falta ?id= válido' }); return; }
-    streamLocalFile(req, res, path.join(AUDIO_DIR, id + '.m4a'), 'audio/mp4');
+    const file = path.join(AUDIO_DIR, id + '.m4a');
+    const dl = url.searchParams.get('dl') === '1';
+    const nombre = (url.searchParams.get('nombre') || (id + '.m4a')).replace(/[\/\\:*?"<>|]/g, '_');
+    if (fs.existsSync(file)) {
+      streamLocalFile(req, res, file, 'audio/mp4', dl ? nombre : null);
+      return;
+    }
+    await ensureCookiesFile();
+    runYtAudio(id, (err) => {
+      if (err) { respond(res, 502, { error: 'audio: ' + err.message }); return; }
+      streamLocalFile(req, res, file, 'audio/mp4', dl ? nombre : null);
+    });
     return;
   }
 

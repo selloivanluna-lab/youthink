@@ -262,7 +262,7 @@ export default function TapTempo() {
       Alert.alert(
         'Velocidad actualizada',
         `Se configuró la velocidad en ${sVal}x en el reproductor.`,
-        [{ text: 'Ir a Reproducción', onPress: () => navigation.navigate('Buscar', { autoSetSpeed: sVal }) }, { text: 'Quedarme aquí' }]
+        [{ text: 'Ir a Reproducción', onPress: () => navigation.navigate('Play' as never, { autoSetSpeed: sVal } as never) }, { text: 'Quedarme aquí' }]
       );
     } catch (_) {}
   }
