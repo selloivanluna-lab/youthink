@@ -556,13 +556,13 @@ function getOAuthCreds() {
         const data = await resp.json();
         if (data.access_token) {
           if (isWeb) {
-            // En web (iPhone Safari): redirigir a yt.quepensabas.mov con tokens en el hash
+            // En web (iPhone Safari): redirigir a youthink.quepensabas.mov con tokens en el hash
             // La app web los lee al montar y los guarda en AsyncStorage
             const fragment = new URLSearchParams({
               yt_token: data.access_token,
               yt_refresh: data.refresh_token || '',
             }).toString();
-            const target = 'https://yt.quepensabas.mov/#' + fragment;
+            const target = 'https://youthink.quepensabas.mov/#' + fragment;
             res.writeHead(302, { 'Location': target });
             res.end();
           } else {
