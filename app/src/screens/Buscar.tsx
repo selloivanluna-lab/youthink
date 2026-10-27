@@ -829,7 +829,7 @@ export default function Buscar() {
     }
   }
 
-  async function aplicar(item: YtResult, audio: boolean, idx: number, autoPlay = false) {
+  async function aplicar(item: YtResult, audio: boolean, idx: number, autoPlay = true) {
     autoPlayRef.current = autoPlay;
     setActual(item);
     setPlayerVisible(true);
@@ -847,7 +847,10 @@ export default function Buscar() {
     if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
     setModo(audio ? 'audio' : 'video');
     setReproduciendo(autoPlay);
-    if (idx >= 0) setQIdx(idx);
+    if (idx >= 0) {
+      setQIdx(idx);
+      idxRef.current = idx;
+    }
     cargarLyrics(item);
     // Timeout de 12s: si en ese tiempo no llegó ningún evento del reproductor nativo,
     // mostramos botón de reintento en lugar del spinner infinito.
@@ -871,15 +874,29 @@ export default function Buscar() {
       setPos(0);
       if (item.duration) setDur(item.duration);
 
-      // Despertar y forzar reproducción inmediata para Safari iOS / Chrome / PC
-      const forzarPlay = () => {
-        const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
-        if (el?.contentWindow) {
+      // Si el iframe ya existe en el DOM, forzar cambio directo de video con la API de YouTube
+      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+      if (el?.contentWindow) {
+        try {
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           if (velocidadRef.current !== 1) {
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+          }
+        } catch (_) {}
+      }
+
+      // Despertar y forzar reproducción inmediata para Safari iOS / Chrome / PC
+      const forzarPlay = () => {
+        const iframe = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+        if (iframe?.contentWindow) {
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          if (velocidadRef.current !== 1) {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
           }
         }
       };
@@ -987,21 +1004,27 @@ export default function Buscar() {
     setCola(arr); colaRef.current = arr; aplicar(arr[start], audio, start, true);
   }
 
-  function siguiente(auto?: boolean | any) {
-    const isAuto = auto === true;
-    autoPlayRef.current = isAuto;
-    const c = colaRef.current; const i = idxRef.current;
-    if (i + 1 < c.length) aplicar(c[i + 1], audioRef.current, i + 1, isAuto);
-    else if (repeatRef.current === 'all' && c.length) aplicar(c[0], audioRef.current, 0, isAuto);
-    else {
-      if (usarNativoRef.current) native.pause(); else player.pause();
+  function siguiente(_?: any) {
+    autoPlayRef.current = true;
+    const c = colaRef.current;
+    const i = idxRef.current;
+    if (i + 1 < c.length) {
+      aplicar(c[i + 1], audioRef.current, i + 1, true);
+    } else if (repeatRef.current === 'all' && c.length) {
+      aplicar(c[0], audioRef.current, 0, true);
+    } else {
+      if (usarNativoRef.current) native.pause();
+      else player.pause();
       setReproduciendo(false);
     }
   }
   function anterior(_?: any) {
-    autoPlayRef.current = false;
-    const c = colaRef.current; const i = idxRef.current;
-    if (i - 1 >= 0) aplicar(c[i - 1], audioRef.current, i - 1, false);
+    autoPlayRef.current = true;
+    const c = colaRef.current;
+    const i = idxRef.current;
+    if (i - 1 >= 0) {
+      aplicar(c[i - 1], audioRef.current, i - 1, true);
+    }
   }
 
   // Reproducir automáticamente cuando viene de la pantalla Sesion (tocar tema de YouTube o de YouThink)
