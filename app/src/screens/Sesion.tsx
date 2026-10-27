@@ -38,21 +38,55 @@ export default function Sesion() {
   const [ytItems, setYtItems] = useState<any[]>([]);
   const [cargandoYTItems, setCargandoYTItems] = useState(false);
 
-  // Cargar token guardado de YouTube al iniciar
+  const cargarPerfilGoogle = async (tok: string) => {
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: 'Bearer ' + tok },
+      });
+      const info = await res.json();
+      if (info && (info.email || info.name)) {
+        setUser((prev) => ({
+          id: info.sub || prev?.id || 'google_yt',
+          email: info.email || prev?.email || '',
+          full_name: info.name || prev?.full_name || '',
+          avatar_url: info.picture || prev?.avatar_url || '',
+        }));
+        AsyncStorage.setItem('qp_user_profile', JSON.stringify(info)).catch(() => {});
+        if (info.email) AsyncStorage.setItem('qp_user_email', info.email).catch(() => {});
+      }
+    } catch (e) {}
+  };
+
+  // Cargar token guardado de YouTube y perfil al iniciar
   useEffect(() => {
+    AsyncStorage.getItem('qp_user_profile').then((raw) => {
+      if (raw) {
+        try {
+          const info = JSON.parse(raw);
+          setUser((prev) => prev || {
+            id: info.sub || 'google_yt',
+            email: info.email,
+            full_name: info.name,
+            avatar_url: info.picture,
+          });
+        } catch (e) {}
+      }
+    });
+
     AsyncStorage.getItem('qp_yt_access_token').then((token) => {
       if (token) {
         setYtToken(token);
         cargarListasYouTube(token);
+        cargarPerfilGoogle(token);
       }
     });
 
     // En web (iPhone Safari): capturar tokens de YouTube que vienen en el hash de la URL
-    // después del redirect OAuth (yt.quepensabas.mov/#yt_token=...&yt_refresh=...)
+    // después del redirect OAuth (youthink.quepensabas.mov/#yt_token=...&yt_refresh=...)
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const hash = window.location.hash;
       if (hash && hash.includes('yt_token=')) {
-        const params = new URLSearchParams(hash.slice(1));
+        const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
         const yt_token = params.get('yt_token');
         const yt_refresh = params.get('yt_refresh');
         if (yt_token) {
@@ -61,7 +95,7 @@ export default function Sesion() {
           setYtToken(yt_token);
           setYtTokenExpirado(false);
           cargarListasYouTube(yt_token);
-          // Limpiar el hash de la URL sin recargar
+          cargarPerfilGoogle(yt_token);
           window.history.replaceState(null, '', window.location.pathname);
         }
       }
@@ -154,6 +188,8 @@ export default function Sesion() {
   const cargarListasYouTube = async (token: string) => {
     setCargandoYT(true);
     setYtTokenExpirado(false);
+    setErrorListas('');
+    cargarPerfilGoogle(token);
     try {
       let allItems: Playlist[] = [];
       let pageToken = '';
@@ -170,14 +206,17 @@ export default function Sesion() {
               json = await res.json();
               if (json.error) {
                 setYtTokenExpirado(true);
+                setErrorListas(json.error.message || 'Error de autorización');
                 break;
               }
             } else {
               setYtTokenExpirado(true);
+              setErrorListas('Token de YouTube caducado');
               break;
             }
           } else {
             console.warn('[YT Playlists]', json.error);
+            setErrorListas(json.error.message || 'No se pudieron obtener las listas de YouTube');
             break;
           }
         }
@@ -191,11 +230,10 @@ export default function Sesion() {
         allItems = [...allItems, ...items];
         pageToken = json.nextPageToken || '';
       } while (pageToken);
-      if (allItems.length > 0) {
-        setListasYT(allItems);
-      }
-    } catch (e) {
+      setListasYT(allItems);
+    } catch (e: any) {
       console.warn('[YT Playlists] Error:', e);
+      setErrorListas(e?.message || 'Error de conexión');
     }
     setCargandoYT(false);
   };
@@ -281,11 +319,31 @@ export default function Sesion() {
         if (tok) {
           setYtToken(tok);
           cargarListasYouTube(tok);
+          cargarPerfilGoogle(tok);
         }
       } else {
-        setUser(null);
-        setYtToken(null);
-        setListasYT([]);
+        // Si no hay sesión de Supabase, verificar si hay perfil o token de YouTube guardado localmente
+        AsyncStorage.getItem('qp_user_profile').then((raw) => {
+          if (raw) {
+            try {
+              const info = JSON.parse(raw);
+              setUser({
+                id: info.sub || 'google_yt',
+                email: info.email,
+                full_name: info.name,
+                avatar_url: info.picture,
+              });
+            } catch (e) {}
+          } else {
+            setUser(null);
+          }
+        });
+        AsyncStorage.getItem('qp_yt_access_token').then((tok) => {
+          if (tok) {
+            setYtToken(tok);
+            cargarListasYouTube(tok);
+          }
+        });
       }
     });
     // Escucha de Deep Links cuando el navegador externo vuelve a la app

@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Text } from 'react-native';
+import { Platform, Text } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Buscar from './src/screens/Buscar';
 import Radio from './src/screens/Radio';
 import LibraryCrew from './src/screens/LibraryCrew';
@@ -30,11 +31,40 @@ const navTheme = {
 };
 
 export default function App() {
+  const [initialTab, setInitialTab] = useState<string>('Buscar');
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const hash = window.location.hash || '';
+      if (hash.includes('yt_token=') || hash.includes('access_token=')) {
+        const clean = hash.startsWith('#') ? hash.slice(1) : hash;
+        const p = new URLSearchParams(clean);
+        const yt_token = p.get('yt_token');
+        const yt_refresh = p.get('yt_refresh');
+        if (yt_token) {
+          AsyncStorage.setItem('qp_yt_access_token', yt_token).catch(() => {});
+          if (yt_refresh) AsyncStorage.setItem('qp_yt_refresh_token', yt_refresh).catch(() => {});
+          fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${yt_token}` },
+          }).then(r => r.json()).then(info => {
+            if (info && (info.email || info.name)) {
+              AsyncStorage.setItem('qp_user_profile', JSON.stringify(info)).catch(() => {});
+              if (info.email) AsyncStorage.setItem('qp_user_email', info.email).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+        setInitialTab('Sesión');
+      }
+    }
+  }, []);
+
   return (
     <SafeAreaProvider>
       <NavigationContainer theme={navTheme}>
         <StatusBar style="light" />
         <Tab.Navigator
+          key={initialTab}
+          initialRouteName={initialTab}
           screenOptions={{
             headerStyle: { backgroundColor: theme.colors.surface },
             headerTitleStyle: { color: theme.colors.text },

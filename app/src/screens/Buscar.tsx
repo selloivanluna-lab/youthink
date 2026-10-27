@@ -133,6 +133,10 @@ export default function Buscar() {
   const colaRef = useRef<YtResult[]>([]);
   const idxRef = useRef(-1);
   const audioRef = useRef(false);
+  const reproduciendoRef = useRef(false);
+  useEffect(() => { reproduciendoRef.current = reproduciendo; }, [reproduciendo]);
+  const actualRef = useRef<YtResult | null>(null);
+  useEffect(() => { actualRef.current = actual; }, [actual]);
   const [autoSiguiente, setAutoSiguiente] = useState(true);
   const autoRef = useRef(true);
   const [shuffle, setShuffle] = useState(false);
@@ -456,6 +460,22 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
+        // En Web con iframe de YouTube embed: avanzamos la barra de tiempo en tiempo real
+        if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
+          if (reproduciendoRef.current) {
+            setPos((prev) => {
+              const durTotal = actualRef.current?.duration || 0;
+              const next = prev + 0.4;
+              if (durTotal > 0 && next >= durTotal) {
+                setTimeout(() => siguienteRef.current(true), 0);
+                return durTotal;
+              }
+              return next;
+            });
+          }
+          return;
+        }
+
         if (!usarNativoRef.current) {
           const ct = player.currentTime;
           if (ct != null && isFinite(ct)) setPos(ct);
@@ -772,6 +792,14 @@ export default function Buscar() {
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
     if (usarNativoRef.current) { native.seek(target); setPos(target); return; }
     if (Platform.OS === 'web') {
+      if ((mediaUri || mediaUriRef.current)?.includes('/embed/')) {
+        const iframe = (globalThis as any).document?.querySelector('iframe') as HTMLIFrameElement | null;
+        if (iframe?.contentWindow) {
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [target, true] }), '*');
+        }
+        setPos(target);
+        return;
+      }
       const el = (globalThis as any).document?.querySelector('video') as any;
       if (el) {
         if (el.readyState >= 1) {
