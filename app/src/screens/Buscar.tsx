@@ -540,9 +540,61 @@ export default function Buscar() {
     return () => clearInterval(t);
   }, []);
 
+  // Desbloqueo de AudioContext para Safari WebKit en iOS y macOS
+  function unlockWebAudio() {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (AC) {
+        if (!(window as any).__qp_ac) (window as any).__qp_ac = new AC();
+        if ((window as any).__qp_ac.state === 'suspended') {
+          (window as any).__qp_ac.resume().catch(() => {});
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Escuchar eventos de la API IFrame de YouTube en Web para sincronización exacta y unMute automático
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onMsg = (e: MessageEvent) => {
+      try {
+        const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+        if (!data) return;
+        if (data.event === 'infoDelivery' && data.info) {
+          if (data.info.playerState === 1) {
+            setReproduciendo(true);
+          } else if (data.info.playerState === 2) {
+            setReproduciendo(false);
+          } else if (data.info.playerState === 0) {
+            siguienteRef.current(true);
+          }
+          if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
+            setPos(data.info.currentTime);
+          }
+          if (typeof data.info.duration === 'number' && isFinite(data.info.duration) && data.info.duration > 0) {
+            setDur(data.info.duration);
+          }
+        }
+        if (data.event === 'onReady') {
+          const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+          if (el?.contentWindow) {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+            if (reproduciendoRef.current) {
+              el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+            }
+          }
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
   useEffect(() => {
     if (!mediaUri) return;
-    if (mediaUri.startsWith('native:')) return;
+    if (mediaUri.startsWith('native:') || mediaUri.includes('/embed/')) return;
     setPos(0);
     setDur(0);
     pendingSeekRef.current = null;
@@ -691,16 +743,40 @@ export default function Buscar() {
     }
     // En Web (PC / iPhone Safari): reproducir directo vía iframe de YouTube sin depender del backend en la nube
     if (Platform.OS === 'web') {
+      unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      const originParam = typeof window !== 'undefined' && window.location.origin ? '&origin=' + encodeURIComponent(window.location.origin) : '';
-      setMediaUri('https://www.youtube-nocookie.com/embed/' + item.id + '?autoplay=1&enablejsapi=1&playsinline=1' + originParam);
+      const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0`;
+      setMediaUri(embedUrl);
       setReproduciendo(true);
       setError(null);
       setAudioTimeout(false);
       setPos(0);
       if (item.duration) setDur(item.duration);
 
-      // Registrar MediaSession para controles en pantalla de bloqueo de iPhone
+      // Despertar y forzar reproducción inmediata para Safari iOS / Chrome / PC
+      const forzarPlay = () => {
+        const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+        if (el?.contentWindow) {
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+        }
+      };
+
+      // Si el iframe ya existe en el DOM, cargar el video de inmediato sin recargar la página del frame
+      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+      if (el?.contentWindow && mediaUriRef.current) {
+        try {
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
+        } catch (_) {}
+      }
+
+      setTimeout(forzarPlay, 200);
+      setTimeout(forzarPlay, 600);
+      setTimeout(forzarPlay, 1200);
+      setTimeout(forzarPlay, 2200);
+
+      // Registrar MediaSession para controles en pantalla de bloqueo de iPhone / Mac / Windows
       if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
         try {
           navigator.mediaSession.metadata = new (window as any).MediaMetadata({
@@ -709,6 +785,17 @@ export default function Buscar() {
             album: 'YouThink Music',
             artwork: item.thumb ? [{ src: item.thumb, sizes: '512x512', type: 'image/jpeg' }] : [],
           });
+          navigator.mediaSession.setActionHandler('play', () => {
+            forzarPlay();
+            setReproduciendo(true);
+          });
+          navigator.mediaSession.setActionHandler('pause', () => {
+            const iframe = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+            if (iframe?.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+            setReproduciendo(false);
+          });
+          navigator.mediaSession.setActionHandler('previoustrack', () => anterior());
+          navigator.mediaSession.setActionHandler('nexttrack', () => siguiente(true));
         } catch (e) {}
       }
       return;
@@ -766,6 +853,7 @@ export default function Buscar() {
 
   function reproducir(lista: YtResult[], idx: number, audio: boolean) {
     if (!lista.length) return;
+    unlockWebAudio();
     autoPlayRef.current = true;
     setReproduciendo(true);
     let arr = lista; let start = idx;
@@ -871,9 +959,16 @@ export default function Buscar() {
     if (Platform.OS === 'web' && uri?.includes('/embed/')) {
       const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
       if (iframe?.contentWindow) {
-        const cmd = reproduciendo ? 'pauseVideo' : 'playVideo';
-        iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: cmd, args: [] }), '*');
-        setReproduciendo(!reproduciendo);
+        if (reproduciendo) {
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+          setReproduciendo(false);
+        } else {
+          unlockWebAudio();
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          setReproduciendo(true);
+        }
       }
       return;
     }
@@ -1077,6 +1172,250 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
   const durEfectiva = dur > 0 ? dur : (actual?.duration || 0);
   const estaSonando = Boolean(mediaUri && reproduciendo);
 
+  const renderPlayerList = () => (
+    <FlatList
+      data={proximos}
+      keyExtractor={(it) => 'q-' + it.id}
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingBottom: 40 }}
+      showsVerticalScrollIndicator={false}
+      ListHeaderComponent={
+        <View>
+          {/* Slot de Video (Web iframe o Native VideoView) */}
+          {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
+            <View style={modo === 'video' ? s.videoWeb : s.videoHidden}>
+              {React.createElement('iframe', {
+                id: 'yt-player-iframe',
+                src: mediaUri,
+                style: { width: '100%', height: '100%', border: 'none', borderRadius: modo === 'video' ? 12 : 0 },
+                allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                allowFullScreen: true,
+              })}
+            </View>
+          ) : Platform.OS !== 'web' && modo === 'video' ? (
+            <VideoView
+              player={player}
+              style={s.video}
+              nativeControls={true}
+              fullscreenOptions={{ enable: true }}
+              allowsPictureInPicture={true}
+              contentFit="contain"
+            />
+          ) : null}
+
+          {/* Portada en modo audio */}
+          {modo === 'audio' ? (
+            actual?.thumb ? (
+              <Image
+                source={{ uri: actual.thumb }}
+                style={{
+                  width: 220,
+                  height: 220,
+                  borderRadius: 16,
+                  marginBottom: 16,
+                  alignSelf: 'center',
+                  backgroundColor: '#111',
+                  borderWidth: 1,
+                  borderColor: theme.colors.border,
+                }}
+              />
+            ) : (
+              <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#222', alignSelf: 'center', marginBottom: 16 }} />
+            )
+          ) : null}
+
+          <View style={s.audioBox}>
+            <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
+            <Text style={s.audioSub}>{actual?.channel}</Text>
+            {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
+              error || audioTimeout ? (
+                <View style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
+                  <Text style={s.audioErr}>{error || 'Tiempo de espera agotado'}</Text>
+                  {actual ? (
+                    <Pressable
+                      style={[s.updateBtn, { paddingHorizontal: 16 }]}
+                      onPress={() => { setError(null); setMediaUri(null); setAudioTimeout(false); if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; } aplicar(actual, soloAudio, idxRef.current, true); }}
+                    >
+                      <Text style={s.updateBtnText}>🔄 Reintentar</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Cargando reproducción…"} />
+            ) : null}
+            <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
+            <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
+            <View style={s.ctrlRow}>
+              <Pressable style={s.ctrlBtn} onPress={anterior} disabled={!enCola || qIdx <= 0}>
+                <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
+              </Pressable>
+              <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
+              <Pressable style={s.playBtnCenter} onPress={togglePlay}>
+                <Text style={[s.playBtnCenterIcon, !estaSonando && { marginLeft: 3 }]}>
+                  {estaSonando ? '⏸' : '▶'}
+                </Text>
+              </Pressable>
+              <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
+              <Pressable style={s.ctrlBtn} onPress={siguiente} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
+                <Text style={[s.ctrl, (!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
+              </Pressable>
+            </View>
+
+            {/* ── Botones de Descarga y Lista ── */}
+            <View style={s.actionRow}>
+              <Pressable
+                style={[s.actionBtn, descargando && { opacity: 0.5 }]}
+                onPress={descargar}
+                disabled={!mediaUri || descargando}
+              >
+                <Text style={s.actionBtnIcon}>⬇️</Text>
+                <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
+              </Pressable>
+              <Pressable
+                style={s.actionBtn}
+                onPress={abrirModalPlaylists}
+                disabled={addingToPlaylist}
+              >
+                <Text style={s.actionBtnIcon}>➕</Text>
+                <Text style={s.actionBtnText}>Añadir a lista</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
+        </View>
+      }
+      renderItem={({ item }) => {
+        const realIdx = cola.length > 0 ? cola.indexOf(item) : results.indexOf(item);
+        const isUpcoming = cola.length > 0 && realIdx > qIdx;
+        const canMoveUp = isUpcoming && realIdx > qIdx + 1;
+        const canMoveDown = isUpcoming && realIdx < cola.length - 1;
+
+        return (
+          <View style={s.qRow}>
+            <Pressable
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}
+              onPress={() => aplicar(item, soloAudio, realIdx, true)}
+            >
+              <Image source={{ uri: item.thumb }} style={s.qThumb} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
+                <Text style={s.qSub} numberOfLines={1}>
+                  {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Controles de orden de cola si está en la cola activa y es un tema próximo */}
+            {isUpcoming ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }}>
+                <Pressable
+                  style={[s.qActionBtn, !canMoveUp && { opacity: 0.25 }]}
+                  disabled={!canMoveUp}
+                  onPress={() => moverEnCola(realIdx, realIdx - 1)}
+                >
+                  <Text style={s.qActionText}>▲</Text>
+                </Pressable>
+                <Pressable
+                  style={[s.qActionBtn, !canMoveDown && { opacity: 0.25 }]}
+                  disabled={!canMoveDown}
+                  onPress={() => moverEnCola(realIdx, realIdx + 1)}
+                >
+                  <Text style={s.qActionText}>▼</Text>
+                </Pressable>
+                <Pressable
+                  style={[s.qActionBtn, { backgroundColor: 'rgba(255, 60, 60, 0.15)' }]}
+                  onPress={() => quitarDeCola(realIdx)}
+                >
+                  <Text style={[s.qActionText, { color: '#ff5555' }]}>✕</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable onPress={() => aplicar(item, soloAudio, realIdx, true)} style={{ padding: 6 }}>
+                <Text style={s.play}>▶</Text>
+              </Pressable>
+            )}
+          </View>
+        );
+      }}
+      ListEmptyComponent={<Text style={s.empty}>{enCola ? 'Es el último de la cola.' : 'Sin cola. Usá "Reproducir todo".'}</Text>}
+    />
+  );
+
+  const renderPlayerContent = () => (
+    <View style={s.modalContent}>
+      <View style={s.modalHead}>
+        <Pressable onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
+          <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
+        </Pressable>
+        <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
+        <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
+      </View>
+
+      {/* Herramientas: Solo audio · Aleatorio · Repetir · Ecualizador · Listas · Info */}
+      <View style={s.toolsRow}>
+        <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
+          <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Audio' : 'Video'}</Text>
+        </Pressable>
+        <Pressable style={[s.tool, shuffle && s.toolOn]} onPress={toggleShuffle}>
+          <Text style={[s.toolText, shuffle && s.toolTextOn]}>🔀 Aleatorio</Text>
+        </Pressable>
+        <Pressable style={[s.tool, repeat !== 'off' && s.toolOn]} onPress={ciclarRepeat}>
+          <Text style={[s.toolText, repeat !== 'off' && s.toolTextOn]}>
+            {repeat === 'one' ? '🔂 Repetir 1' : repeat === 'all' ? '🔁 Repetir todo' : '🔁 Repetir'}
+          </Text>
+        </Pressable>
+        <Pressable style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
+          <Text style={[s.toolText, eq !== 'flat' && s.toolTextOn]}>🎚️ EQ</Text>
+        </Pressable>
+        <Pressable
+          style={[s.tool, crossover && s.toolOn]}
+          onPress={() => {
+            const nuevo = !crossover;
+            setCrossover(nuevo);
+            crossoverRef.current = nuevo;
+            AsyncStorage.setItem('qp_crossover', nuevo ? '1' : '0').catch(() => {});
+          }}
+        >
+          <Text style={[s.toolText, crossover && s.toolTextOn]}>⚡ Crossover</Text>
+        </Pressable>
+        <Pressable
+          style={[s.tool, lyricsOpen && s.toolOn]}
+          onPress={() => {
+            setLyricsOpen(true);
+            if (actual && !lyricsData && !cargandoLyrics) {
+              cargarLyrics(actual);
+            }
+          }}
+        >
+          <Text style={[s.toolText, lyricsOpen && s.toolTextOn]}>🎤 Letras</Text>
+        </Pressable>
+        <Pressable
+          style={[s.tool, iniciandoRadio && s.toolOn]}
+          onPress={() => actual && iniciarRadioDesdeActual(actual)}
+          disabled={iniciandoRadio || !actual}
+        >
+          <Text style={[s.toolText, iniciandoRadio && s.toolTextOn]}>
+            {iniciandoRadio ? '⏳ Sintonizando…' : '📻 Iniciar Radio'}
+          </Text>
+        </Pressable>
+        <Pressable style={s.tool} onPress={abrirModalPlaylists}>
+          <Text style={s.toolText}>📋 Listas</Text>
+        </Pressable>
+        <Pressable style={s.tool} onPress={() => actual && fetchInfo(actual)}>
+          <Text style={s.toolText}>💡 Info</Text>
+        </Pressable>
+      </View>
+      {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
+
+      {renderPlayerList()}
+
+      <Text style={s.hint}>
+        {modo === 'video' ? 'Reproduciendo video.' : 'Audio optimizado.'}
+        {enCola ? ' · Cola activa' : ''}{repeat !== 'off' ? (repeat === 'one' ? ' · Repetir 1' : ' · Repetir todo') : ''}{shuffle ? ' · Aleatorio' : ''}
+      </Text>
+    </View>
+  );
+
   return (
     <View style={s.container}>
       {esIosSafari ? (
@@ -1208,14 +1547,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {/* Mini-reproductor flotante si el modal está minimizado */}
       {actual && !playerVisible ? (
         <Pressable
-          style={{
-            position: 'absolute', bottom: 12, left: 16, right: 16,
-            backgroundColor: theme.colors.surface, borderRadius: 12,
-            borderWidth: 1, borderColor: theme.colors.gold,
-            flexDirection: 'row', alignItems: 'center', padding: 10, gap: 10,
-            shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.4, shadowRadius: 8, elevation: 8,
-          }}
+          style={s.miniPlayer}
           onPress={() => setPlayerVisible(true)}
         >
           <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
@@ -1232,61 +1564,46 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* Reproductor iframe Web PERMANENTE (fuera del Modal para que NO se pause al minimizar) */}
-      {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
-        <View
-          style={
-            playerVisible && modo === 'video'
-              ? {
-                  position: 'fixed' as any,
-                  top: 96,
-                  left: 16,
-                  right: 16,
-                  height: 240,
-                  zIndex: 99999,
-                  opacity: 1,
-                }
-              : {
-                  position: 'fixed' as any,
-                  bottom: 16,
-                  left: 16,
-                  width: 200,
-                  height: 120,
-                  zIndex: -9999,
-                  opacity: 0.05,
-                  pointerEvents: 'none' as any,
-                }
-          }
-        >
-          {React.createElement('iframe', {
-            id: 'yt-player-iframe',
-            src: mediaUri,
-            style: { width: '100%', height: '100%', border: 'none', borderRadius: 12 },
-            allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen',
-            allowFullScreen: true,
-          })}
-        </View>
-      ) : null}
-
-      <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
-        <View style={s.modal}>
-          {/* ── Fondo con portada desenfocada cinematográfica ── */}
-          {actual?.thumb ? (
-            Platform.OS === 'web' ? (
+      {/* ── Reproductor Web persistente (sin Modal portal para no cortar el audio en segundo plano ni al minimizar) ── */}
+      {Platform.OS === 'web' ? (
+        actual ? (
+          <View
+            style={[
+              s.modal,
+              {
+                position: 'fixed' as any,
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: playerVisible ? 9999 : -1,
+                opacity: playerVisible ? 1 : 0,
+                pointerEvents: (playerVisible ? 'auto' : 'none') as any,
+                transform: [{ translateY: playerVisible ? 0 : 3000 }],
+                transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease',
+              } as any,
+            ]}
+          >
+            {actual?.thumb ? (
               <View
                 pointerEvents="none"
                 style={[s.modalBg, {
                   opacity: 0.35,
                   filter: 'blur(32px)',
                   transform: [{ scale: 1.15 }],
-                  ...(typeof document !== 'undefined' ? {
-                    backgroundImage: `url(${actual.thumb})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                  } as any : {}),
-                }]}
+                  backgroundImage: `url(${actual.thumb})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                } as any]}
               />
-            ) : (
+            ) : null}
+            {renderPlayerContent()}
+          </View>
+        ) : null
+      ) : (
+        <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
+          <View style={s.modal}>
+            {actual?.thumb ? (
               <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <Image
                   source={{ uri: actual.thumb }}
@@ -1295,257 +1612,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   resizeMode="cover"
                 />
               </View>
-            )
-          ) : null}
-
-          <View style={s.modalContent}>
-          <View style={s.modalHead}>
-            <Pressable onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
-              <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
-            </Pressable>
-            <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
-            <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
+            ) : null}
+            {renderPlayerContent()}
           </View>
-
-          {/* Herramientas: Solo audio · Aleatorio · Repetir · Ecualizador · Listas · Info */}
-          <View style={s.toolsRow}>
-            <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
-              <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Audio' : 'Video'}</Text>
-            </Pressable>
-            <Pressable style={[s.tool, shuffle && s.toolOn]} onPress={toggleShuffle}>
-              <Text style={[s.toolText, shuffle && s.toolTextOn]}>🔀 Aleatorio</Text>
-            </Pressable>
-            <Pressable style={[s.tool, repeat !== 'off' && s.toolOn]} onPress={ciclarRepeat}>
-              <Text style={[s.toolText, repeat !== 'off' && s.toolTextOn]}>
-                {repeat === 'one' ? '🔂 Repetir 1' : repeat === 'all' ? '🔁 Repetir todo' : '🔁 Repetir'}
-              </Text>
-            </Pressable>
-            <Pressable style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
-              <Text style={[s.toolText, eq !== 'flat' && s.toolTextOn]}>🎚️ EQ</Text>
-            </Pressable>
-            <Pressable
-              style={[s.tool, crossover && s.toolOn]}
-              onPress={() => {
-                const nuevo = !crossover;
-                setCrossover(nuevo);
-                crossoverRef.current = nuevo;
-                AsyncStorage.setItem('qp_crossover', nuevo ? '1' : '0').catch(() => {});
-              }}
-            >
-              <Text style={[s.toolText, crossover && s.toolTextOn]}>⚡ Crossover</Text>
-            </Pressable>
-            <Pressable
-              style={[s.tool, lyricsOpen && s.toolOn]}
-              onPress={() => {
-                setLyricsOpen(true);
-                if (actual && !lyricsData && !cargandoLyrics) {
-                  cargarLyrics(actual);
-                }
-              }}
-            >
-              <Text style={[s.toolText, lyricsOpen && s.toolTextOn]}>🎤 Letras</Text>
-            </Pressable>
-            <Pressable
-              style={[s.tool, iniciandoRadio && s.toolOn]}
-              onPress={() => actual && iniciarRadioDesdeActual(actual)}
-              disabled={iniciandoRadio || !actual}
-            >
-              <Text style={[s.toolText, iniciandoRadio && s.toolTextOn]}>
-                {iniciandoRadio ? '⏳ Sintonizando…' : '📻 Iniciar Radio'}
-              </Text>
-            </Pressable>
-            <Pressable style={s.tool} onPress={abrirModalPlaylists}>
-              <Text style={s.toolText}>📋 Listas</Text>
-            </Pressable>
-            <Pressable style={s.tool} onPress={() => actual && fetchInfo(actual)}>
-              <Text style={s.toolText}>💡 Info</Text>
-            </Pressable>
-          </View>
-          {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
-
-          {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
-            modo === 'video' ? <View style={{ width: '100%', height: 240 }} /> : null
-          ) : (
-            <VideoView player={player} style={modo === 'video' ? s.video : s.videoHidden}
-              nativeControls={modo === 'video'} fullscreenOptions={{ enable: modo === 'video' }}
-              allowsPictureInPicture={modo === 'video'} contentFit="contain" />
-          )}
-
-          {modo === 'audio' ? (
-            <FlatList
-              data={proximos}
-              keyExtractor={(it) => 'q-' + it.id}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 40 }}
-              showsVerticalScrollIndicator={false}
-              ListHeaderComponent={
-                <View>
-                  <View style={s.audioBox}>
-                    {actual?.thumb ? (
-                      <Image
-                        source={{ uri: actual.thumb }}
-                        style={{
-                          width: 220,
-                          height: 220,
-                          borderRadius: 16,
-                          marginBottom: 16,
-                          alignSelf: 'center',
-                          backgroundColor: '#111',
-                          borderWidth: 1,
-                          borderColor: theme.colors.border,
-                        }}
-                      />
-                    ) : (
-                      <View style={{ width: 180, height: 180, borderRadius: 16, backgroundColor: '#222', alignSelf: 'center', marginBottom: 16 }} />
-                    )}
-                    <Text style={s.audioTitle} numberOfLines={2}>{actual?.title}</Text>
-                    <Text style={s.audioSub}>{actual?.channel}</Text>
-                    {!mediaUri || (usarNativo && (nativeResolving || nativeBuffering) && !reproduciendo) ? (
-                      error || audioTimeout ? (
-                        <View style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
-                          <Text style={s.audioErr}>{error || 'Tiempo de espera agotado'}</Text>
-                          {actual ? (
-                            <Pressable
-                              style={[s.updateBtn, { paddingHorizontal: 16 }]}
-                              onPress={() => { setError(null); setMediaUri(null); setAudioTimeout(false); if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; } aplicar(actual, true, idxRef.current, true); }}
-                            >
-                              <Text style={s.updateBtnText}>🔄 Reintentar</Text>
-                            </Pressable>
-                          ) : null}
-                        </View>
-                      ) : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Generando audio…"} />
-                    ) : null}
-                    <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
-                    <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
-                    <View style={s.ctrlRow}>
-                      <Pressable style={s.ctrlBtn} onPress={anterior} disabled={!enCola || qIdx <= 0}>
-                        <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
-                      </Pressable>
-                      <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
-                      <Pressable style={s.playBtnCenter} onPress={togglePlay}>
-                        <Text style={[s.playBtnCenterIcon, !estaSonando && { marginLeft: 3 }]}>
-                          {estaSonando ? '⏸' : '▶'}
-                        </Text>
-                      </Pressable>
-                      <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
-                      <Pressable style={s.ctrlBtn} onPress={siguiente} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
-                        <Text style={[s.ctrl, (!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
-                      </Pressable>
-                    </View>
-
-                    {/* ── Botones de Descarga y Lista ── */}
-                    <View style={s.actionRow}>
-                      <Pressable
-                        style={[s.actionBtn, descargando && { opacity: 0.5 }]}
-                        onPress={descargar}
-                        disabled={!mediaUri || descargando}
-                      >
-                        <Text style={s.actionBtnIcon}>⬇️</Text>
-                        <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
-                      </Pressable>
-                      <Pressable
-                        style={s.actionBtn}
-                        onPress={abrirModalPlaylists}
-                        disabled={addingToPlaylist}
-                      >
-                        <Text style={s.actionBtnIcon}>➕</Text>
-                        <Text style={s.actionBtnText}>Añadir a lista</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-
-                  <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
-                </View>
-              }
-              renderItem={({ item }) => {
-                const realIdx = cola.length > 0 ? cola.indexOf(item) : results.indexOf(item);
-                const isUpcoming = cola.length > 0 && realIdx > qIdx;
-                const canMoveUp = isUpcoming && realIdx > qIdx + 1;
-                const canMoveDown = isUpcoming && realIdx < cola.length - 1;
-
-                return (
-                  <View style={s.qRow}>
-                    <Pressable
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}
-                      onPress={() => aplicar(item, true, realIdx, true)}
-                    >
-                      <Image source={{ uri: item.thumb }} style={s.qThumb} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.qTitle} numberOfLines={2}>{item.title}</Text>
-                        <Text style={s.qSub} numberOfLines={1}>
-                          {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
-                        </Text>
-                      </View>
-                    </Pressable>
-
-                    {/* Controles de orden de cola si está en la cola activa y es un tema próximo */}
-                    {isUpcoming ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }}>
-                        <Pressable
-                          style={[s.qActionBtn, !canMoveUp && { opacity: 0.25 }]}
-                          disabled={!canMoveUp}
-                          onPress={() => moverEnCola(realIdx, realIdx - 1)}
-                        >
-                          <Text style={s.qActionText}>▲</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[s.qActionBtn, !canMoveDown && { opacity: 0.25 }]}
-                          disabled={!canMoveDown}
-                          onPress={() => moverEnCola(realIdx, realIdx + 1)}
-                        >
-                          <Text style={s.qActionText}>▼</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[s.qActionBtn, { backgroundColor: 'rgba(255, 60, 60, 0.15)' }]}
-                          onPress={() => quitarDeCola(realIdx)}
-                        >
-                          <Text style={[s.qActionText, { color: '#ff5555' }]}>✕</Text>
-                        </Pressable>
-                      </View>
-                    ) : (
-                      <Pressable onPress={() => aplicar(item, true, realIdx, true)} style={{ padding: 6 }}>
-                        <Text style={s.play}>▶</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                );
-              }}
-              ListEmptyComponent={<Text style={s.empty}>{enCola ? 'Es el último de la cola.' : 'Sin cola. Usá "Reproducir todo".'}</Text>}
-            />
-          ) : (
-            <>
-              {mediaUri && enCola ? (
-                <View style={s.navRow}>
-                  <Pressable style={s.navBtn} onPress={anterior}><Text style={s.navText}>⏮ Anterior</Text></Pressable>
-                  <Text style={s.navPos}>{qIdx + 1}/{cola.length}</Text>
-                  <Pressable style={s.navBtn} onPress={siguiente}><Text style={s.navText}>Siguiente ⏭</Text></Pressable>
-                </View>
-              ) : null}
-              {!mediaUri ? (
-                error ? (
-                  <View style={{ alignItems: 'center', gap: 10, marginVertical: 20 }}>
-                    <Text style={s.audioErr}>{error}</Text>
-                    {actual ? (
-                      <Pressable
-                        style={[s.updateBtn, { paddingHorizontal: 16 }]}
-                        onPress={() => { setError(null); setMediaUri(null); aplicar(actual, false, idxRef.current, true); }}
-                      >
-                        <Text style={s.updateBtnText}>🔄 Reintentar video</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : <CargaAnim texto="Generando vista previa…" />
-              ) : null}
-            </>
-          )}
-
-          <Text style={s.hint}>
-            {modo === 'video' ? 'Vista previa de 45s.' : 'Audio (hasta 10 min), calidad liviana.'}
-            {enCola ? ' · Cola activa' : ''}{repeat !== 'off' ? (repeat === 'one' ? ' · Repetir 1' : ' · Repetir todo') : ''}{shuffle ? ' · Aleatorio' : ''}
-          </Text>
-          </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
 
       {/* Panel de Ecualizador */}
       <Modal visible={eqOpen} transparent animationType="fade" onRequestClose={() => setEqOpen(false)}>
@@ -1865,7 +1936,28 @@ const s = StyleSheet.create({
   toolText: { color: theme.colors.text, fontSize: 13, fontWeight: '600' },
   toolTextOn: { color: '#111' },
   eqNote: { color: theme.colors.textDim, fontSize: 12, marginBottom: 8 },
+  miniPlayer: {
+    position: 'absolute',
+    bottom: 12,
+    left: 16,
+    right: 16,
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.gold,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 9000,
+  },
   video: { width: '100%', height: 240, borderRadius: theme.radius, backgroundColor: '#111' },
+  videoWeb: { width: '100%', maxWidth: 720, aspectRatio: 16 / 9, maxHeight: 360, alignSelf: 'center', borderRadius: theme.radius, overflow: 'hidden', backgroundColor: '#111', marginBottom: 12 },
   videoHidden: { position: 'absolute', width: 1, height: 1, opacity: 0 },
   audioBox: { width: '100%', borderRadius: theme.radius, backgroundColor: '#111', padding: 20, gap: 8 },
   audioIcon: { fontSize: 44, textAlign: 'center' },

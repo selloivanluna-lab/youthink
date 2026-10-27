@@ -381,7 +381,7 @@ export default function Sesion() {
         const refresh_token = params.get('refresh_token');
         const provider_token = params.get('provider_token');
         if (access_token && refresh_token) {
-          supabase.auth.setSession({ access_token, refresh_token }).then((res) => {
+          supabase.auth.setSession({ access_token, refresh_token }).then((res: any) => {
             const tok = provider_token || res.data?.session?.provider_token;
             if (tok) {
               AsyncStorage.setItem('qp_yt_access_token', tok).catch(() => {});
@@ -589,12 +589,12 @@ export default function Sesion() {
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
                                 }));
-                                navigation.navigate('Buscar' as never, {
+                                (navigation.navigate as any)('Buscar', {
                                   autoPlayId: it.yt_id,
                                   autoPlayTitle: it.title,
                                   autoPlayQueue: queue,
                                   autoPlayIndex: idx,
-                                } as never);
+                                });
                               }}
                             >
                               <Image source={{ uri: it.thumb }} style={{ width: 44, height: 26, borderRadius: 4, backgroundColor: '#000' }} />
@@ -707,12 +707,12 @@ export default function Sesion() {
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
                                 }));
-                                navigation.navigate('Buscar' as never, {
+                                (navigation.navigate as any)('Buscar', {
                                   autoPlayId: it.id,
                                   autoPlayTitle: it.title,
                                   autoPlayQueue: queue,
                                   autoPlayIndex: idx,
-                                } as never);
+                                });
                               }}
                             >
                               {it.thumb ? (
