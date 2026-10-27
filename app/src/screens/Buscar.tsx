@@ -543,16 +543,51 @@ export default function Buscar() {
     return () => clearInterval(t);
   }, []);
 
+  // ── Generar un WAV silencioso real de 2 segundos en memoria (16.000 muestras PCM) ──
+  // Safari iOS exige que el audio tenga duración real > 0 para activar AVAudioSession en segundo plano y pantalla bloqueada
+  function generarWavSilencioUrl(): string {
+    try {
+      const sampleRate = 8000;
+      const durationSec = 2;
+      const dataSize = sampleRate * durationSec;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+      const writeStr = (off: number, s: string) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+      };
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate, true);
+      view.setUint16(32, 1, true);
+      view.setUint16(34, 8, true); // 8-bit
+      writeStr(36, 'data');
+      view.setUint32(40, dataSize, true);
+      new Uint8Array(buffer, 44).fill(128); // 128 = silencio PCM 8-bit
+      const blob = new Blob([buffer], { type: 'audio/wav' });
+      return URL.createObjectURL(blob);
+    } catch (_) {
+      return '';
+    }
+  }
+
   // ── Audio silencioso looped para mantener MediaSession activa en pantalla bloqueada / minimizada ──
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    // WAV de ~1s de silencio con loop para mantener la sesión de audio del browser activa
-    const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    const audio = new Audio(SILENT_WAV);
+    const url = generarWavSilencioUrl();
+    if (!url) return;
+    const audio = new Audio(url);
     audio.loop = true;
-    audio.volume = 0.01; // Casi inaudible pero suficiente para que el browser no lo trate como silencio
+    audio.volume = 0.01; // Inaudible pero con flujo activo
     silentAudioRef.current = audio;
-    return () => { try { audio.pause(); audio.remove(); } catch (_) {} };
+    return () => {
+      try { audio.pause(); audio.remove(); URL.revokeObjectURL(url); } catch (_) {}
+    };
   }, []);
 
   // Desbloqueo de AudioContext para Safari WebKit en iOS y macOS
@@ -995,12 +1030,20 @@ export default function Buscar() {
         if (reproduciendo) {
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
           setReproduciendo(false);
+          try { silentAudioRef.current?.pause(); } catch (_) {}
+          if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused';
+          }
         } else {
           unlockWebAudio();
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           setReproduciendo(true);
+          try { silentAudioRef.current?.play().catch(() => {}); } catch (_) {}
+          if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+          }
         }
       }
       return;
@@ -1228,17 +1271,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       showsVerticalScrollIndicator={false}
       ListHeaderComponent={
         <View>
-          {/* Slot de Video (Web iframe o Native VideoView) */}
+          {/* Slot de Video (Placeholder en Web para preservar espacio; iframe vive persistente en el portal) */}
           {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
-            <View style={modo === 'video' ? s.videoWeb : s.videoHidden}>
-              {React.createElement('iframe', {
-                id: 'yt-player-iframe',
-                src: mediaUri,
-                style: { width: '100%', height: '100%', border: 'none', borderRadius: modo === 'video' ? 12 : 0 },
-                allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
-                allowFullScreen: true,
-              })}
-            </View>
+            modo === 'video' ? <View style={s.videoWeb} /> : null
           ) : Platform.OS !== 'web' && modo === 'video' ? (
             <VideoView
               player={player}
@@ -1591,8 +1626,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         }
       />
 
-      {/* Mini-reproductor flotante si el modal está minimizado */}
-      {actual && !playerVisible ? (
+      {/* Mini-reproductor flotante para móvil nativo (en Web se gestiona en el portal persistente) */}
+      {actual && !playerVisible && Platform.OS !== 'web' ? (
         <Pressable
           style={s.miniPlayer}
           onPress={() => setPlayerVisible(true)}
@@ -1611,48 +1646,103 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* ── Reproductor Web persistente via portal (escapa stacking context de React Navigation) ── */}
+      {/* ── Reproductor Web persistente via portal (escapa stacking context y mantiene audio en segundo plano) ── */}
       {Platform.OS === 'web' && (actual || mediaUri?.includes('/embed/')) && typeof document !== 'undefined' ? (
         (require('react-dom') as any).createPortal(
-          <View
-            style={[
-              s.modal,
-              {
-                position: 'fixed' as any,
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: playerVisible && actual ? 100000 : 1,
-                opacity: playerVisible && actual ? 1 : 0.01,
-                pointerEvents: (playerVisible && actual ? 'auto' : 'none') as any,
-              } as any,
-            ]}
-          >
-            {playerVisible && actual?.thumb ? (
+          <>
+            {/* 1. Iframe persistente de YouTube: SIEMPRE montado, nunca se destruye al minimizar */}
+            <View
+              style={
+                playerVisible && modo === 'video'
+                  ? [
+                      s.videoWeb,
+                      {
+                        position: 'fixed' as any,
+                        top: 156,
+                        left: 0,
+                        right: 0,
+                        marginLeft: 'auto' as any,
+                        marginRight: 'auto' as any,
+                        width: 'calc(100% - 32px)' as any,
+                        maxWidth: 720,
+                        zIndex: 100002,
+                      },
+                    ]
+                  : {
+                      position: 'fixed' as any,
+                      bottom: 22,
+                      left: 26,
+                      width: 44,
+                      height: 44,
+                      borderRadius: 8,
+                      overflow: 'hidden' as any,
+                      zIndex: playerVisible ? 99999 : 100002,
+                      opacity: 0.99,
+                      pointerEvents: 'none' as any,
+                    }
+              }
+            >
+              {React.createElement('iframe', {
+                id: 'yt-player-iframe',
+                src: mediaUri || '',
+                style: { width: '100%', height: '100%', border: 'none' },
+                allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+                allowFullScreen: true,
+              })}
+            </View>
+
+            {/* 2. Full Player Overlay (visible únicamente cuando playerVisible === true) */}
+            {playerVisible && actual ? (
               <View
-                pointerEvents="none"
-                style={[s.modalBg, {
-                  opacity: 0.35,
-                  filter: 'blur(32px)',
-                  transform: [{ scale: 1.15 }],
-                  backgroundImage: `url(${actual.thumb})`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                } as any]}
-              />
-            ) : null}
-            {actual ? renderPlayerContent() : (
-              <View style={{ width: 1, height: 1, overflow: 'hidden' as any }}>
-                {mediaUri?.includes('/embed/') ? React.createElement('iframe', {
-                  id: 'yt-player-iframe',
-                  src: mediaUri,
-                  style: { width: 1, height: 1, border: 'none', opacity: 0.01 },
-                  allow: 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
-                }) : null}
+                style={[
+                  s.modal,
+                  {
+                    position: 'fixed' as any,
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    zIndex: 100000,
+                  } as any,
+                ]}
+              >
+                {actual?.thumb ? (
+                  <View
+                    pointerEvents="none"
+                    style={[s.modalBg, {
+                      opacity: 0.35,
+                      filter: 'blur(32px)',
+                      transform: [{ scale: 1.15 }],
+                      backgroundImage: `url(${actual.thumb})`,
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                    } as any]}
+                  />
+                ) : null}
+                {renderPlayerContent()}
               </View>
-            )}
-          </View>,
+            ) : null}
+
+            {/* 3. Mini Player Web (visible cuando playerVisible === false) */}
+            {!playerVisible && actual ? (
+              <Pressable
+                style={[s.miniPlayer, { position: 'fixed' as any, zIndex: 100001 }]}
+                onPress={() => setPlayerVisible(true)}
+              >
+                <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
+                  <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
+                </View>
+                <Pressable onPress={togglePlay} style={{ padding: 8 }}>
+                  <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
+                </Pressable>
+                <Pressable onPress={cerrar} style={{ padding: 8 }}>
+                  <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
+                </Pressable>
+              </Pressable>
+            ) : null}
+          </>,
           document.body
         )
       ) : Platform.OS !== 'web' ? (
