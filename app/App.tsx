@@ -77,7 +77,7 @@ export default function App() {
           <Tab.Screen
             name="Play"
             component={Buscar}
-            options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>🧠</Text> }}
+            options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>▶️</Text> }}
           />
           <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
           <Tab.Screen
