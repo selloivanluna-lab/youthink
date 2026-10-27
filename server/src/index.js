@@ -533,6 +533,8 @@ function getOAuthCreds() {
   // Puente OAuth para YouThink: soporta token directo (hash) y canje de código por refresh_token
   if (p === '/oauth/callback') {
     const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state') || 'native';
+    const isWeb = state === 'web';
     const { clientId, clientSecret } = getOAuthCreds();
 
     if (code) {
@@ -553,14 +555,26 @@ function getOAuthCreds() {
         });
         const data = await resp.json();
         if (data.access_token) {
-          const fragment = new URLSearchParams({
-            access_token: data.access_token,
-            refresh_token: data.refresh_token || '',
-            expires_in: String(data.expires_in || 3600),
-          }).toString();
-          const target = 'youthink://oauth2redirect#' + fragment;
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(`<!DOCTYPE html>
+          if (isWeb) {
+            // En web (iPhone Safari): redirigir a yt.quepensabas.mov con tokens en el hash
+            // La app web los lee al montar y los guarda en AsyncStorage
+            const fragment = new URLSearchParams({
+              yt_token: data.access_token,
+              yt_refresh: data.refresh_token || '',
+            }).toString();
+            const target = 'https://yt.quepensabas.mov/#' + fragment;
+            res.writeHead(302, { 'Location': target });
+            res.end();
+          } else {
+            // En Android nativo: deep link youthink://
+            const fragment = new URLSearchParams({
+              access_token: data.access_token,
+              refresh_token: data.refresh_token || '',
+              expires_in: String(data.expires_in || 3600),
+            }).toString();
+            const target = 'youthink://oauth2redirect#' + fragment;
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -583,6 +597,7 @@ function getOAuthCreds() {
   </script>
 </body>
 </html>`);
+          }
           return;
         } else {
           log('Error canjeando token de Google: ' + JSON.stringify(data));

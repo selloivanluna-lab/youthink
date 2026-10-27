@@ -46,6 +46,26 @@ export default function Sesion() {
         cargarListasYouTube(token);
       }
     });
+
+    // En web (iPhone Safari): capturar tokens de YouTube que vienen en el hash de la URL
+    // después del redirect OAuth (yt.quepensabas.mov/#yt_token=...&yt_refresh=...)
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const hash = window.location.hash;
+      if (hash && hash.includes('yt_token=')) {
+        const params = new URLSearchParams(hash.slice(1));
+        const yt_token = params.get('yt_token');
+        const yt_refresh = params.get('yt_refresh');
+        if (yt_token) {
+          AsyncStorage.setItem('qp_yt_access_token', yt_token).catch(() => {});
+          if (yt_refresh) AsyncStorage.setItem('qp_yt_refresh_token', yt_refresh).catch(() => {});
+          setYtToken(yt_token);
+          setYtTokenExpirado(false);
+          cargarListasYouTube(yt_token);
+          // Limpiar el hash de la URL sin recargar
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    }
   }, []);
 
   // Función para refrescar el token de YouTube automáticamente en segundo plano
@@ -73,8 +93,10 @@ export default function Sesion() {
     try {
       const redirectUri = 'https://youthink-1.onrender.com/oauth/callback';
       const scope = encodeURIComponent('https://www.googleapis.com/auth/youtube.readonly');
-      // Usamos response_type=code y access_type=offline para obtener refresh_token permanente
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent`;
+      // En web: pasamos state=web para que el server redirija a yt.quepensabas.mov en vez de youthink://
+      const isWeb = Platform.OS === 'web';
+      const state = isWeb ? encodeURIComponent('web') : encodeURIComponent('native');
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${state}`;
       await Linking.openURL(authUrl);
     } catch (e: any) {
       setError(e?.message || 'Error al conectar con YouTube');
