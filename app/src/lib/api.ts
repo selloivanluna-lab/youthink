@@ -132,13 +132,13 @@ export const api = {
 
   // -- Crew Vault (Cloudflare R2) -------------------------------------------
   crewGetUploadUrl: (params: { filename: string; contentType?: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string }) =>
-    postJson<{ ok: boolean; uploadUrl: string; key: string; contentType: string }>('/api/crew/upload-url', params),
+    withRetry(() => postJson<{ ok: boolean; uploadUrl: string; key: string; contentType: string }>('/api/crew/upload-url', params)),
 
   crewSaveTrack: (params: { key: string; title: string; artist?: string; cover_url?: string | null; duration?: number | null; file_size?: number | null; crew_id?: string; uploaded_by?: string }) =>
-    postJson<{ ok: boolean; track: CrewTrack }>('/api/crew/track', params),
+    withRetry(() => postJson<{ ok: boolean; track: CrewTrack }>('/api/crew/track', params)),
 
   crewListTracks: (crew_id = 'main') =>
-    getJson<{ ok: boolean; tracks: CrewTrack[] }>(`/api/crew/tracks?crew_id=${encodeURIComponent(crew_id)}`),
+    withRetry(() => getJson<{ ok: boolean; tracks: CrewTrack[] }>(`/api/crew/tracks?crew_id=${encodeURIComponent(crew_id)}`), 3, 2000),
 
   crewDeleteTrack: (id: string) =>
     fetch(API_URL + `/api/crew/track/${encodeURIComponent(id)}`, {

@@ -47,6 +47,7 @@ export default function LibraryCrew() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [userEmail, setUserEmail] = useState('');
+  const webAudioRef = useRef<any>(null);
 
   // Campos del modal de subida
   const [uTitle, setUTitle] = useState('');
@@ -150,6 +151,29 @@ export default function LibraryCrew() {
 
   async function reproducir(track: CrewTrack) {
     if (!NATIVE_AUDIO) {
+      if (typeof window !== 'undefined' && typeof (window as any).Audio !== 'undefined') {
+        try {
+          if (webAudioRef.current) {
+            webAudioRef.current.pause();
+            webAudioRef.current = null;
+          }
+          if (playingId === track.id) {
+            setPlayingId(null);
+            return;
+          }
+          const a = new Audio(track.audio_url);
+          webAudioRef.current = a;
+          a.onended = () => setPlayingId(null);
+          a.onerror = () => { Alert.alert('Error', 'No se pudo reproducir en el navegador'); setPlayingId(null); };
+          setPlayingId(track.id);
+          await a.play();
+          return;
+        } catch (e: any) {
+          Alert.alert('Error', e?.message || 'Error en reproductor web');
+          setPlayingId(null);
+          return;
+        }
+      }
       Alert.alert('Solo disponible en Android', 'Library Crew se reproduce con el reproductor nativo en segundo plano.');
       return;
     }
