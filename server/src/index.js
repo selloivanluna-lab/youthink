@@ -671,10 +671,18 @@ function getOAuthCreds() {
     const q = (url.searchParams.get('q') || '').trim();
     const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '12', 10) || 12, 1), 25);
     if (!q) { respond(res, 400, { error: 'falta ?q=' }); return; }
-    await ensureCookiesFile();
-    runYtSearch(q, n, (err, results) => {
-      if (err) { respond(res, 502, { error: 'ytsearch: ' + err.message }); return; }
-      respond(res, 200, { ok: true, results });
+    // 1. Intentamos con ytmusicapi (ultrarrápido, ~300ms, sin bloqueo de bot de YouTube en cloud)
+    ytmusic.search(q, n, async (err, results) => {
+      if (!err && Array.isArray(results) && results.length > 0) {
+        respond(res, 200, { ok: true, results });
+        return;
+      }
+      // Fallback a yt-dlp si ytmusic no devolvió resultados
+      await ensureCookiesFile();
+      runYtSearch(q, n, (err2, results2) => {
+        if (err2) { respond(res, 502, { error: 'ytsearch: ' + (err ? err.message : err2.message) }); return; }
+        respond(res, 200, { ok: true, results: results2 });
+      });
     });
     return;
   }

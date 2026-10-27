@@ -42,4 +42,29 @@ function radio(seed, limit, cb) {
   });
 }
 
-module.exports = { radio };
+function search(query, limit, cb) {
+  const script = path.join(__dirname, '..', 'py', 'ytmusic_search.py');
+  if (!fs.existsSync(script)) return cb(new Error('ytmusic_search.py no encontrado'));
+  const py = process.env.PYTHON_BIN || findPython();
+  let p;
+  try { p = cp.spawn(py, [script, String(query || ''), String(limit || 15)], { windowsHide: true }); }
+  catch (e) { return cb(e); }
+  let out = '', err = '', done = false;
+  const finish = (e, data) => { if (done) return; done = true; cb(e, data); };
+  const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de búsqueda (>20s)')); }, 20000);
+  p.stdout.on('data', (d) => { out += d.toString(); });
+  p.stderr.on('data', (d) => { err += d.toString(); });
+  p.on('error', (e) => { clearTimeout(timer); finish(e); });
+  p.on('close', () => {
+    clearTimeout(timer);
+    try {
+      const data = JSON.parse(out);
+      if (!data.ok) return finish(new Error(data.error || 'búsqueda falló'));
+      finish(null, data.results || []);
+    } catch (e) {
+      finish(new Error((err || out || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ') || 'JSON de búsqueda inválido'));
+    }
+  });
+}
+
+module.exports = { radio, search };
