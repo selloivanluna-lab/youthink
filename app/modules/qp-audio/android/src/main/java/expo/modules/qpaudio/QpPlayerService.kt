@@ -9,6 +9,7 @@ import android.media.audiofx.Equalizer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -19,6 +20,10 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -37,6 +42,30 @@ class QpPlayerService : MediaSessionService() {
     override fun run() {
       pushState()
       if (player?.isPlaying == true) main.postDelayed(this, 500)
+    }
+  }
+
+  // Detección de doble-click en botón Play de parlantes Bluetooth / auriculares
+  private var hookCount = 0
+  private val hookRunnable = Runnable {
+    val count = hookCount
+    hookCount = 0
+    if (count == 1) {
+      togglePlay()
+    } else if (count == 2) {
+      QpEvents.push(mapOf("action" to "next"))
+    } else if (count >= 3) {
+      QpEvents.push(mapOf("action" to "prev"))
+    }
+  }
+
+  private fun handleHeadsetHook() {
+    hookCount++
+    main.removeCallbacks(hookRunnable)
+    if (hookCount >= 2) {
+      main.postDelayed(hookRunnable, 250)
+    } else {
+      main.postDelayed(hookRunnable, 350)
     }
   }
 
@@ -92,7 +121,84 @@ class QpPlayerService : MediaSessionService() {
     })
 
     player = exo
+
+    val sessionCallback = object : MediaSession.Callback {
+      override fun onConnect(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo
+      ): MediaSession.ConnectionResult {
+        val connectionResult = super.onConnect(session, controller)
+        val availablePlayerCommands = connectionResult.availablePlayerCommands
+          .buildUpon()
+          .add(Player.COMMAND_SEEK_TO_NEXT)
+          .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+          .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+          .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+          .build()
+        return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+          .setAvailableSessionCommands(connectionResult.availableSessionCommands)
+          .setAvailablePlayerCommands(availablePlayerCommands)
+          .build()
+      }
+
+      override fun onPlayerCommandRequest(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        playerCommand: Int
+      ): Int {
+        when (playerCommand) {
+          Player.COMMAND_SEEK_TO_NEXT,
+          Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+            QpEvents.push(mapOf("action" to "next"))
+            return SessionResult.RESULT_SUCCESS
+          }
+          Player.COMMAND_SEEK_TO_PREVIOUS,
+          Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+            QpEvents.push(mapOf("action" to "prev"))
+            return SessionResult.RESULT_SUCCESS
+          }
+        }
+        return super.onPlayerCommandRequest(session, controller, playerCommand)
+      }
+
+      override fun onMediaButtonEvent(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        intent: Intent
+      ): Boolean {
+        val ke = if (Build.VERSION.SDK_INT >= 33) {
+          intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+        } else {
+          @Suppress("DEPRECATION")
+          intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent
+        }
+        if (ke != null && ke.action == KeyEvent.ACTION_DOWN) {
+          when (ke.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_STEP_FORWARD,
+            KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> {
+              QpEvents.push(mapOf("action" to "next"))
+              return true
+            }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD,
+            KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> {
+              QpEvents.push(mapOf("action" to "prev"))
+              return true
+            }
+            KeyEvent.KEYCODE_HEADSETHOOK,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+              handleHeadsetHook()
+              return true
+            }
+          }
+        }
+        return super.onMediaButtonEvent(session, controller, intent)
+      }
+    }
+
     val sessionBuilder = MediaSession.Builder(this, exo)
+      .setCallback(sessionCallback)
     launchIntent()?.let { sessionBuilder.setSessionActivity(it) }
     session = sessionBuilder.build()
 

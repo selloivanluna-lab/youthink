@@ -332,13 +332,27 @@ export default function Buscar() {
   useEffect(() => { usarNativoRef.current = usarNativo; }, [usarNativo]);
   useEffect(() => { modoRef.current = modo; }, [modo]);
   useEffect(() => { eqRef.current = eq; }, [eq]);
+  const anteriorRef = useRef<any>(() => {});
   useEffect(() => { siguienteRef.current = siguiente; });
+  useEffect(() => { anteriorRef.current = anterior; });
+  const recomendacionesRef = useRef<YtResult[]>([]);
+  useEffect(() => { recomendacionesRef.current = recomendaciones; }, [recomendaciones]);
 
   // Estado del reproductor nativo: llega por eventos (se actualiza fuera del render).
   useEffect(() => {
     if (!NATIVE_AUDIO || !QpAudio || typeof (QpAudio as any).addListener !== 'function') return;
     try {
       const sub = (QpAudio as any).addListener('onPlaybackState', (st: any) => {
+        // Eventos de botones multimedia Bluetooth (Next / Prev / Doble-click)
+        if (st.action === 'next') {
+          siguienteRef.current(true);
+          return;
+        }
+        if (st.action === 'prev') {
+          anteriorRef.current();
+          return;
+        }
+
         if (modoRef.current !== 'audio') return;
         if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
         if (isFinite(st.position) && st.position >= 0) {
@@ -1066,6 +1080,17 @@ export default function Buscar() {
       aplicar(c[i + 1], audioRef.current, i + 1, true);
     } else if (repeatRef.current === 'all' && c.length) {
       aplicar(c[0], audioRef.current, 0, true);
+    } else if (recomendacionesRef.current && recomendacionesRef.current.length > 0) {
+      const rec = recomendacionesRef.current.filter((r) => r.id !== c[i]?.id);
+      if (rec.length > 0) {
+        setCola(rec);
+        colaRef.current = rec;
+        aplicar(rec[0], audioRef.current, 0, true);
+      } else {
+        if (usarNativoRef.current) native.pause();
+        else player.pause();
+        setReproduciendo(false);
+      }
     } else {
       if (usarNativoRef.current) native.pause();
       else player.pause();
