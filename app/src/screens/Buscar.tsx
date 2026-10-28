@@ -157,6 +157,7 @@ export default function Buscar() {
   const sourceRetryRef = useRef(0);
   const sourceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actualRetryRef = useRef<YtResult | null>(null);
+  const forzarPlayTimersRef = useRef<any[]>([]);
 
   // Cola / modos
   const [cola, setCola] = useState<YtResult[]>([]);
@@ -904,6 +905,26 @@ export default function Buscar() {
     setMediaUri(null);
     setError(null);
     setAudioTimeout(false);
+
+    // Cancelar cualquier temporizador de forzarPlay previo para evitar solapamiento
+    forzarPlayTimersRef.current.forEach((t) => clearTimeout(t));
+    forzarPlayTimersRef.current = [];
+
+    // Detener inmediatamente cualquier audio previo en todos los motores para evitar reproducción simultánea
+    if (usarNativoRef.current) {
+      try { native.pause(); native.stop(); } catch (_) {}
+    }
+    try { player.pause(); } catch (_) {}
+    if (Platform.OS === 'web') {
+      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+      if (el?.contentWindow) {
+        try {
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'stopVideo', args: [] }), '*');
+        } catch (_) {}
+      }
+    }
+
     // Resetear auto-retry counter para esta canción
     sourceRetryRef.current = 0;
     actualRetryRef.current = item;
@@ -969,10 +990,10 @@ export default function Buscar() {
         }
       };
 
-      setTimeout(forzarPlay, 200);
-      setTimeout(forzarPlay, 600);
-      setTimeout(forzarPlay, 1200);
-      setTimeout(forzarPlay, 2200);
+      forzarPlayTimersRef.current.push(setTimeout(forzarPlay, 200));
+      forzarPlayTimersRef.current.push(setTimeout(forzarPlay, 600));
+      forzarPlayTimersRef.current.push(setTimeout(forzarPlay, 1200));
+      forzarPlayTimersRef.current.push(setTimeout(forzarPlay, 2200));
 
       // Registrar MediaSession para controles en pantalla de bloqueo de iPhone / Mac / Windows
       if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
@@ -1332,14 +1353,40 @@ export default function Buscar() {
 
   // ── Listas de reproducción ──
   async function abrirModalPlaylists() {
-    // Abrir el modal sin requerir sesión de Supabase — las playlists funcionan localmente con AsyncStorage
     setPlaylistModalOpen(true);
     setCargandoPlaylists(true);
     try {
       const data = await getPlaylists();
-      setPlaylists(data);
+      let todas: Playlist[] = [...data];
+
+      // Cargar también las listas de la cuenta de YouTube vinculada (si existe token)
+      const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
+      if (ytToken) {
+        try {
+          const res = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50', {
+            headers: { Authorization: 'Bearer ' + ytToken },
+          });
+          const json = await res.json();
+          if (json.items && Array.isArray(json.items)) {
+            const ytListas: Playlist[] = json.items.map((it: any) => ({
+              id: 'yt_' + it.id,
+              nombre: it.snippet?.title || 'Lista de YouTube',
+              user_id: 'youtube',
+              created_at: it.snippet?.publishedAt || new Date().toISOString(),
+              items_count: it.contentDetails?.itemCount,
+            }));
+            const ids = new Set(todas.map((p) => p.id));
+            ytListas.forEach((yl) => {
+              if (!ids.has(yl.id)) todas.push(yl);
+            });
+          }
+        } catch (e) {
+          console.warn('[ModalPlaylists] Error cargando listas de YouTube:', e);
+        }
+      }
+
+      setPlaylists(todas);
     } catch (e) {
-      // Si falla Supabase (RLS/sin sesión), cargar solo las locales silenciosamente
       try {
         const raw = await AsyncStorage.getItem('qp_local_playlists');
         if (raw) setPlaylists(JSON.parse(raw));
@@ -1352,11 +1399,45 @@ export default function Buscar() {
     if (!actual) return;
     setAddingToPlaylist(true);
     try {
-      await addToPlaylist(playlist.id, actual);
-      setPlaylistModalOpen(false);
-      setNuevaListaNombre('');
-      // Feedback visual de éxito
-      Alert.alert('✅ Agregada', `"${actual.title}" se añadió a "${playlist.nombre}"`);
+      if (playlist.id.startsWith('yt_')) {
+        const rawYtId = playlist.id.replace(/^yt_/, '');
+        const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
+        let agregadoEnYt = false;
+        if (ytToken) {
+          try {
+            const res = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+              method: 'POST',
+              headers: {
+                Authorization: 'Bearer ' + ytToken,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                snippet: {
+                  playlistId: rawYtId,
+                  resourceId: {
+                    kind: 'youtube#video',
+                    videoId: actual.id,
+                  },
+                },
+              }),
+            });
+            const data = await res.json();
+            if (data?.id) agregadoEnYt = true;
+          } catch (_) {}
+        }
+        await addToPlaylist(playlist.id, actual);
+        setPlaylistModalOpen(false);
+        setNuevaListaNombre('');
+        Alert.alert(
+          '✅ Agregada',
+          `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${agregadoEnYt ? ' en YouTube' : ''}`
+        );
+      } else {
+        await addToPlaylist(playlist.id, actual);
+        setPlaylistModalOpen(false);
+        setNuevaListaNombre('');
+        Alert.alert('✅ Agregada', `"${actual.title}" se añadió a "${playlist.nombre}"`);
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'No se pudo agregar a la lista');
     }
@@ -2142,17 +2223,25 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 data={playlists}
                 keyExtractor={(p) => p.id}
                 style={{ maxHeight: 300 }}
-                renderItem={({ item }) => (
-                  <Pressable
-                    style={s.plItem}
-                    onPress={() => agregarALista(item)}
-                    disabled={addingToPlaylist}
-                  >
-                    <Text style={s.plItemIcon}>🎵</Text>
-                    <Text style={s.plItemText} numberOfLines={1}>{item.nombre}</Text>
-                    {addingToPlaylist ? <ActivityIndicator color={theme.colors.gold} size="small" /> : <Text style={s.plItemArrow}>›</Text>}
-                  </Pressable>
-                )}
+                renderItem={({ item }) => {
+                  const esYT = item.id.startsWith('yt_');
+                  return (
+                    <Pressable
+                      style={s.plItem}
+                      onPress={() => agregarALista(item)}
+                      disabled={addingToPlaylist}
+                    >
+                      <Text style={s.plItemIcon}>{esYT ? '▶️' : '🎵'}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.plItemText} numberOfLines={1}>{item.nombre}</Text>
+                        <Text style={{ color: theme.colors.textDim, fontSize: 11, marginTop: 1 }}>
+                          {esYT ? (item.items_count !== undefined ? `${item.items_count} temas · YouTube` : 'YouTube') : 'YouThink'}
+                        </Text>
+                      </View>
+                      {addingToPlaylist ? <ActivityIndicator color={theme.colors.gold} size="small" /> : <Text style={s.plItemArrow}>›</Text>}
+                    </Pressable>
+                  );
+                }}
               />
             )}
           </Pressable>

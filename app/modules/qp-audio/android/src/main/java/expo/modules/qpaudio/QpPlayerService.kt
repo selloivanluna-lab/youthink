@@ -231,10 +231,21 @@ class QpPlayerService : MediaSessionService() {
     super.onDestroy()
   }
 
+  private val currentRequestId = java.util.concurrent.atomic.AtomicLong(0)
+
   fun playVideo(videoId: String, title: String) {
+    val reqId = currentRequestId.incrementAndGet()
+    // Detener y limpiar inmediatamente cualquier reproducción previa para evitar audios simultáneos
+    main.post {
+      player?.stop()
+      player?.clearMediaItems()
+      pushState()
+    }
+
     // Si ya es una URL directa (ej: Cloudflare R2, HTTP stream), reproducir sin pasar por NewPipe
     if (videoId.startsWith("http://") || videoId.startsWith("https://")) {
       main.post {
+        if (reqId != currentRequestId.get()) return@post
         val p = player ?: return@post
         val item = MediaItem.Builder()
           .setUri(videoId)
@@ -255,14 +266,16 @@ class QpPlayerService : MediaSessionService() {
 
     val timeout = Runnable {
       if (timedOut.compareAndSet(false, true)) {
-        QpEvents.push(
-          mapOf(
-            "resolving" to false,
-            "buffering" to false,
-            "isPlaying" to false,
-            "error" to "La extracción tardó demasiado. Probá de nuevo."
+        if (reqId == currentRequestId.get()) {
+          QpEvents.push(
+            mapOf(
+              "resolving" to false,
+              "buffering" to false,
+              "isPlaying" to false,
+              "error" to "La extracción tardó demasiado. Probá de nuevo."
+            )
           )
-        )
+        }
       }
     }
     main.postDelayed(timeout, 25000)
@@ -270,9 +283,10 @@ class QpPlayerService : MediaSessionService() {
     io.execute {
       try {
         val r = QpResolver.resolveAudio(videoId)
-        if (timedOut.get()) return@execute
+        if (timedOut.get() || reqId != currentRequestId.get()) return@execute
         main.post {
           main.removeCallbacks(timeout)
+          if (reqId != currentRequestId.get()) return@post
           val p = player ?: return@post
           val item = MediaItem.Builder()
             .setUri(r.url)
@@ -286,7 +300,7 @@ class QpPlayerService : MediaSessionService() {
           pushState()
         }
       } catch (e: Exception) {
-        if (timedOut.get()) return@execute
+        if (timedOut.get() || reqId != currentRequestId.get()) return@execute
         main.post { main.removeCallbacks(timeout) }
         QpEvents.push(
           mapOf(
