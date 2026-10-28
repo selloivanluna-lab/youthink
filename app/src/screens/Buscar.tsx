@@ -1307,18 +1307,19 @@ export default function Buscar() {
 
   // ── Listas de reproducción ──
   async function abrirModalPlaylists() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      // Cerrar el reproductor (no lo cerramos, solo navegamos a Sesión)
-      navigation.navigate('Sesión');
-      return;
-    }
+    // Abrir el modal sin requerir sesión de Supabase — las playlists funcionan localmente con AsyncStorage
     setPlaylistModalOpen(true);
     setCargandoPlaylists(true);
     try {
       const data = await getPlaylists();
       setPlaylists(data);
-    } catch (e) {}
+    } catch (e) {
+      // Si falla Supabase (RLS/sin sesión), cargar solo las locales silenciosamente
+      try {
+        const raw = await AsyncStorage.getItem('qp_local_playlists');
+        if (raw) setPlaylists(JSON.parse(raw));
+      } catch (_) {}
+    }
     setCargandoPlaylists(false);
   }
 
@@ -1329,8 +1330,10 @@ export default function Buscar() {
       await addToPlaylist(playlist.id, actual);
       setPlaylistModalOpen(false);
       setNuevaListaNombre('');
+      // Feedback visual de éxito
+      Alert.alert('✅ Agregada', `"${actual.title}" se añadió a "${playlist.nombre}"`);
     } catch (e: any) {
-      alert('Error: ' + (e?.message || 'no se pudo agregar'));
+      Alert.alert('Error', e?.message || 'No se pudo agregar a la lista');
     }
     setAddingToPlaylist(false);
   }
@@ -1341,12 +1344,15 @@ export default function Buscar() {
     setCreandoLista(true);
     try {
       const pl = await createPlaylist(nombre);
-      if (actual) await addToPlaylist(pl.id, actual);
+      if (actual) {
+        await addToPlaylist(pl.id, actual);
+        Alert.alert('✅ Lista creada', `"${actual.title}" se añadió a "${nombre}"`);
+      }
       setPlaylists((prev) => [pl, ...prev]);
       setPlaylistModalOpen(false);
       setNuevaListaNombre('');
     } catch (e: any) {
-      alert('Error: ' + (e?.message || 'no se pudo crear la lista'));
+      Alert.alert('Error', e?.message || 'No se pudo crear la lista');
     }
     setCreandoLista(false);
   }

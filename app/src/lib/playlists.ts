@@ -71,14 +71,16 @@ export async function getPlaylists(): Promise<Playlist[]> {
         saveLocalPlaylists(merged).catch(() => {});
         return merged;
       }
-      // Si hay error, lo propagamos para que la UI lo muestre
-      if (error) throw new Error('Supabase: ' + (error.message || JSON.stringify(error)));
+      // Si hay error de Supabase, no lanzar — usar locales como fallback
+      if (error) {
+        console.warn('[Playlists] Error Supabase (usando local):', error.message);
+      }
     } else {
       console.log('[Playlists] Sin sesión activa, usando local');
     }
   } catch (e) {
-    console.warn('[Playlists] Error al cargar de Supabase:', e);
-    throw e; // re-lanzar para que cargarMisListas lo capture
+    console.warn('[Playlists] Error al cargar de Supabase (usando local):', e);
+    // No re-lanzar: fallback a storage local
   }
 
   // Retornar almacenamiento local persistente
