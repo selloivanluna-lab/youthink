@@ -150,10 +150,13 @@ export default function Buscar() {
   const [soloAudio, setSoloAudio] = useState(false);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [pos, setPos] = useState(0);
+  const posRef = useRef(0);
+  useEffect(() => { posRef.current = pos; }, [pos]);
   const [dur, setDur] = useState(0);
   const durRef = useRef(0);
   useEffect(() => { durRef.current = dur; }, [dur]);
   const finDisparadoRef = useRef(false);
+  const nuevoTrackCargandoRef = useRef(false);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
@@ -197,8 +200,8 @@ export default function Buscar() {
   const shuffleRef = useRef(false);
   const [repeat, setRepeat] = useState<Repeat>('off');
   const repeatRef = useRef<Repeat>('off');
-  const [crossover, setCrossover] = useState(false);
-  const crossoverRef = useRef(false);
+  const [crossover, setCrossover] = useState(true);
+  const crossoverRef = useRef(true);
   const crossoverTriggeredRef = useRef(false);
   const [eq, setEq] = useState('flat');
   const [eqOpen, setEqOpen] = useState(false);
@@ -461,7 +464,13 @@ export default function Buscar() {
       if (m.qp_shuffle != null) setShuffle(m.qp_shuffle === '1');
       if (m.qp_repeat) setRepeat(m.qp_repeat);
       if (m.qp_eq) setEq(m.qp_eq);
-      if (m.qp_crossover != null) setCrossover(m.qp_crossover === '1');
+      if (m.qp_crossover != null) {
+        setCrossover(m.qp_crossover === '1');
+      } else {
+        // Crossover activado por defecto
+        setCrossover(true);
+        crossoverRef.current = true;
+      }
       let hist: YtResult[] = [];
       if (m.qp_historial) {
         try {
@@ -627,22 +636,21 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
-        // En Web con iframe de YouTube embed: avanzamos la barra de tiempo en tiempo real
+        // En Web con iframe de YouTube embed: el tiempo real lo reporta YouTube vía postMessage.
+        // Aquí solo hacemos un watchdog para asegurar el pase de pista cuando alcanza el final o crossover.
         if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
-          if (reproduciendoRef.current) {
-            setPos((prev) => {
-              const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
-              const next = prev + 0.4;
-              if (durTotal > 0 && next >= durTotal - 0.5) {
+          if (!nuevoTrackCargandoRef.current && reproduciendoRef.current) {
+            const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
+            const currentPos = posRef.current;
+            if (durTotal > 5 && currentPos > 0) {
+              const crossoverUmbral = crossoverRef.current && durTotal > 15 ? 4.0 : 0.8;
+              if (currentPos >= durTotal - crossoverUmbral) {
                 if (!finDisparadoRef.current) {
                   finDisparadoRef.current = true;
                   setTimeout(() => siguienteRef.current(true), 0);
                 }
-                return durTotal;
               }
-              if (durTotal > 0 && next > durTotal) return durTotal;
-              return next;
-            });
+            }
           }
           return;
         }
@@ -759,14 +767,27 @@ export default function Buscar() {
         if (data.event === 'infoDelivery' && data.info) {
           if (data.info.playerState === 1) {
             setReproduciendo(true);
+            if (nuevoTrackCargandoRef.current && (data.info.currentTime == null || data.info.currentTime < 3)) {
+              nuevoTrackCargandoRef.current = false;
+            }
           } else if (data.info.playerState === 2) {
             setReproduciendo(false);
           } else if (data.info.playerState === 0) {
-            if (!finDisparadoRef.current) {
+            if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
               finDisparadoRef.current = true;
               siguienteRef.current(true);
             }
           }
+
+          // Si el navegador en segundo plano intentó mutear el iframe, forzar unMute y volumen 100
+          if (data.info.muted === true) {
+            const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+            if (el?.contentWindow) {
+              el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+              el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+            }
+          }
+
           if (typeof data.info.duration === 'number' && isFinite(data.info.duration) && data.info.duration > 0) {
             setDur(data.info.duration);
             durRef.current = data.info.duration;
@@ -774,11 +795,23 @@ export default function Buscar() {
               actualRef.current.duration = Math.round(data.info.duration);
             }
           }
+
           if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
+            // Descartar tiempos residuales del tema viejo (ej: 4:36) si todavía estamos en la transición
+            if (nuevoTrackCargandoRef.current) {
+              if (data.info.currentTime < 2) {
+                nuevoTrackCargandoRef.current = false;
+              } else {
+                return; // Ignorar el tiempo residual del tema viejo
+              }
+            }
             setPos(data.info.currentTime);
+            posRef.current = data.info.currentTime;
+
             const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
-            if (d > 5 && data.info.currentTime >= d - 0.8) {
-              if (!finDisparadoRef.current) {
+            const crossoverUmbral = crossoverRef.current && d > 15 ? 4.0 : 0.8;
+            if (d > 5 && data.info.currentTime >= d - crossoverUmbral) {
+              if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
                 finDisparadoRef.current = true;
                 siguienteRef.current(true);
               }
@@ -789,10 +822,13 @@ export default function Buscar() {
           const state = typeof data.info === 'number' ? data.info : (typeof data.data === 'number' ? data.data : data.info?.playerState);
           if (state === 1) {
             setReproduciendo(true);
+            if (nuevoTrackCargandoRef.current && posRef.current < 3) {
+              nuevoTrackCargandoRef.current = false;
+            }
           } else if (state === 2) {
             setReproduciendo(false);
           } else if (state === 0) {
-            if (!finDisparadoRef.current) {
+            if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
               finDisparadoRef.current = true;
               siguienteRef.current(true);
             }
@@ -970,15 +1006,6 @@ export default function Buscar() {
       try { native.pause(); native.stop(); } catch (_) {}
     }
     try { player.pause(); } catch (_) {}
-    if (Platform.OS === 'web') {
-      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
-      if (el?.contentWindow) {
-        try {
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'stopVideo', args: [] }), '*');
-        } catch (_) {}
-      }
-    }
 
     // Resetear auto-retry counter para esta canción
     sourceRetryRef.current = 0;
@@ -1011,6 +1038,7 @@ export default function Buscar() {
       unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       finDisparadoRef.current = false;
+      nuevoTrackCargandoRef.current = true;
       const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
       setMediaUri(embedUrl);
       mediaUriRef.current = embedUrl;
@@ -1018,6 +1046,7 @@ export default function Buscar() {
       setError(null);
       setAudioTimeout(false);
       setPos(0);
+      posRef.current = 0;
       const initialDur = item.duration || 0;
       setDur(initialDur);
       durRef.current = initialDur;
@@ -1155,6 +1184,7 @@ export default function Buscar() {
   function siguiente(_?: any) {
     autoPlayRef.current = true;
     finDisparadoRef.current = false;
+    nuevoTrackCargandoRef.current = true;
     const c = colaRef.current;
     const i = idxRef.current;
 
@@ -1199,6 +1229,7 @@ export default function Buscar() {
   function anterior(_?: any) {
     autoPlayRef.current = true;
     finDisparadoRef.current = false;
+    nuevoTrackCargandoRef.current = true;
     const c = colaRef.current;
     const i = idxRef.current;
     if (i - 1 >= 0) {
