@@ -39,11 +39,25 @@ def main():
         for t in (wp.get("tracks") or []):
             if not t.get("videoId"):
                 continue
+            sec = t.get("length_seconds") or t.get("duration_seconds") or 0
+            if not sec:
+                raw_len = t.get("length") or t.get("duration") or ""
+                if raw_len:
+                    try:
+                        parts = [int(p) for p in str(raw_len).split(":")]
+                        if len(parts) == 1:
+                            sec = parts[0]
+                        elif len(parts) == 2:
+                            sec = parts[0] * 60 + parts[1]
+                        elif len(parts) == 3:
+                            sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+                    except Exception:
+                        sec = 0
             tracks.append({
                 "id": t.get("videoId"),
                 "title": t.get("title") or "(sin título)",
                 "channel": (t.get("artists") or [{}])[0].get("name", "") if t.get("artists") else "",
-                "duration": t.get("length_seconds") or 0,
+                "duration": int(sec) if sec else 0,
                 "thumb": ((t.get("thumbnail") or [{}]) or [{}])[-1].get("url", ""),
                 "url": "https://www.youtube.com/watch?v=" + t.get("videoId"),
             })

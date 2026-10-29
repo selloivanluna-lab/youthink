@@ -151,6 +151,9 @@ export default function Buscar() {
   const [reproduciendo, setReproduciendo] = useState(false);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(0);
+  const durRef = useRef(0);
+  useEffect(() => { durRef.current = dur; }, [dur]);
+  const finDisparadoRef = useRef(false);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
@@ -628,12 +631,16 @@ export default function Buscar() {
         if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
           if (reproduciendoRef.current) {
             setPos((prev) => {
-              const durTotal = actualRef.current?.duration || 0;
+              const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
               const next = prev + 0.4;
-              if (durTotal > 0 && next >= durTotal) {
-                setTimeout(() => siguienteRef.current(true), 0);
+              if (durTotal > 0 && next >= durTotal - 0.5) {
+                if (!finDisparadoRef.current) {
+                  finDisparadoRef.current = true;
+                  setTimeout(() => siguienteRef.current(true), 0);
+                }
                 return durTotal;
               }
+              if (durTotal > 0 && next > durTotal) return durTotal;
               return next;
             });
           }
@@ -755,13 +762,40 @@ export default function Buscar() {
           } else if (data.info.playerState === 2) {
             setReproduciendo(false);
           } else if (data.info.playerState === 0) {
-            siguienteRef.current(true);
-          }
-          if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
-            setPos(data.info.currentTime);
+            if (!finDisparadoRef.current) {
+              finDisparadoRef.current = true;
+              siguienteRef.current(true);
+            }
           }
           if (typeof data.info.duration === 'number' && isFinite(data.info.duration) && data.info.duration > 0) {
             setDur(data.info.duration);
+            durRef.current = data.info.duration;
+            if (actualRef.current && !actualRef.current.duration) {
+              actualRef.current.duration = Math.round(data.info.duration);
+            }
+          }
+          if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
+            setPos(data.info.currentTime);
+            const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
+            if (d > 5 && data.info.currentTime >= d - 0.8) {
+              if (!finDisparadoRef.current) {
+                finDisparadoRef.current = true;
+                siguienteRef.current(true);
+              }
+            }
+          }
+        }
+        if (data.event === 'onStateChange' || data.event === 'initialDelivery') {
+          const state = typeof data.info === 'number' ? data.info : (typeof data.data === 'number' ? data.data : data.info?.playerState);
+          if (state === 1) {
+            setReproduciendo(true);
+          } else if (state === 2) {
+            setReproduciendo(false);
+          } else if (state === 0) {
+            if (!finDisparadoRef.current) {
+              finDisparadoRef.current = true;
+              siguienteRef.current(true);
+            }
           }
         }
         if (data.event === 'onReady') {
@@ -974,26 +1008,31 @@ export default function Buscar() {
     if (Platform.OS === 'web') {
       unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+      finDisparadoRef.current = false;
       const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
-      setMediaUri(embedUrl);
       setReproduciendo(true);
       setError(null);
       setAudioTimeout(false);
       setPos(0);
-      if (item.duration) setDur(item.duration);
+      const initialDur = item.duration || 0;
+      setDur(initialDur);
+      durRef.current = initialDur;
 
-      // Si el iframe ya existe en el DOM, forzar cambio directo de video con la API de YouTube
+      // Si el iframe ya existe en el DOM, forzar cambio directo de video con la API de YouTube sin recargar src
       const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
-      if (el?.contentWindow) {
+      if (el && mediaUriRef.current?.includes('/embed/')) {
+        mediaUriRef.current = embedUrl;
         try {
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
+          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           if (velocidadRef.current !== 1) {
-            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+            el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
           }
         } catch (_) {}
+      } else {
+        setMediaUri(embedUrl);
       }
 
       // Despertar y forzar reproducción inmediata para Safari iOS / Chrome / PC
@@ -1114,8 +1153,27 @@ export default function Buscar() {
 
   function siguiente(_?: any) {
     autoPlayRef.current = true;
+    finDisparadoRef.current = false;
     const c = colaRef.current;
     const i = idxRef.current;
+
+    // Si nos acercamos al final de la cola (últimos 2 temas), extender automáticamente la estación de radio
+    if (i >= c.length - 2 && c[i]?.id) {
+      api.radio(c[i].id, 20).then((res) => {
+        if (res.ok && res.tracks && res.tracks.length > 0) {
+          const idsExistentes = new Set(colaRef.current.map((t) => t.id));
+          const nuevos = res.tracks.filter((t) => !idsExistentes.has(t.id));
+          if (nuevos.length > 0) {
+            setCola((prev) => {
+              const actualizada = [...prev, ...nuevos];
+              colaRef.current = actualizada;
+              return actualizada;
+            });
+          }
+        }
+      }).catch(() => {});
+    }
+
     if (i + 1 < c.length) {
       aplicar(c[i + 1], audioRef.current, i + 1, true);
     } else if (repeatRef.current === 'all' && c.length) {
@@ -1139,6 +1197,7 @@ export default function Buscar() {
   }
   function anterior(_?: any) {
     autoPlayRef.current = true;
+    finDisparadoRef.current = false;
     const c = colaRef.current;
     const i = idxRef.current;
     if (i - 1 >= 0) {
