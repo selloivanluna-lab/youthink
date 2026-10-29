@@ -37,6 +37,13 @@
         height: 100%;
         flex: 1;
       }
+
+      /* Modales de React Native Web por encima del reproductor persistente */
+      div[aria-modal="true"],
+      body > div:has([aria-modal="true"]),
+      body > div:has([aria-modal="true"]) > div {
+        z-index: 110000 !important;
+      }
     </style>
   </head>
 

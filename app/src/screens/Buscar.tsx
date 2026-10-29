@@ -159,6 +159,25 @@ export default function Buscar() {
   const actualRetryRef = useRef<YtResult | null>(null);
   const forzarPlayTimersRef = useRef<any[]>([]);
 
+  // En Web: Inyectar regla CSS para que cualquier Modal de React Native Web flote sobre el reproductor persistente
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const styleId = 'youthink-modal-zindex';
+      if (!document.getElementById(styleId)) {
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.innerHTML = `
+          div[aria-modal="true"],
+          body > div:has([aria-modal="true"]),
+          body > div:has([aria-modal="true"]) > div {
+            z-index: 110000 !important;
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+  }, []);
+
   // Cola / modos
   const [cola, setCola] = useState<YtResult[]>([]);
   const [qIdx, setQIdx] = useState(-1);
@@ -1985,7 +2004,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                         marginRight: 'auto' as any,
                         width: 'calc(100% - 32px)' as any,
                         maxWidth: 720,
-                        zIndex: 100002,
+                        zIndex: 5002,
+                        pointerEvents: (lyricsOpen || infoOpen || eqOpen || velocidadOpen || playlistModalOpen || iosInstallOpen) ? 'none' : 'auto',
                       },
                     ]
                   : {
@@ -1996,7 +2016,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       height: 44,
                       borderRadius: 8,
                       overflow: 'hidden' as any,
-                      zIndex: playerVisible ? 99999 : 100002,
+                      zIndex: playerVisible ? 4999 : 5002,
                       opacity: 0.99,
                       pointerEvents: 'none' as any,
                     }
@@ -2022,7 +2042,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    zIndex: 100000,
+                    zIndex: 5000,
                   } as any,
                 ]}
               >
@@ -2046,7 +2066,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             {/* 3. Mini Player Web (visible cuando playerVisible === false) */}
             {!playerVisible && actual ? (
               <Pressable
-                style={[s.miniPlayer, { position: 'fixed' as any, zIndex: 100001 }]}
+                style={[s.miniPlayer, { position: 'fixed' as any, zIndex: 5001 }]}
                 onPress={() => setPlayerVisible(true)}
               >
                 <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
@@ -2560,7 +2580,7 @@ const s = StyleSheet.create({
   navText: { color: theme.colors.text, fontWeight: '600' },
   navPos: { color: theme.colors.textDim, fontSize: 13 },
   hint: { color: theme.colors.textDim, fontSize: 12, marginTop: 12, textAlign: 'center' },
-  eqBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  eqBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 24, ...(Platform.OS === 'web' ? { zIndex: 110000 } : {}) },
   eqPanel: { width: '100%', maxWidth: 360, backgroundColor: theme.colors.surface, borderRadius: 16, padding: 20 },
   eqTitle: { color: theme.colors.text, fontSize: 17, fontWeight: '800', marginBottom: 14, textAlign: 'center' },
   eqGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
@@ -2568,7 +2588,7 @@ const s = StyleSheet.create({
   eqItemOn: { backgroundColor: theme.colors.gold, borderColor: theme.colors.gold },
   eqItemText: { color: theme.colors.text, fontWeight: '600' },
   eqFoot: { color: theme.colors.textDim, fontSize: 12, marginTop: 14, textAlign: 'center' },
-  lyricsModal: { flex: 1, backgroundColor: '#0a0a0a', paddingHorizontal: 16, paddingTop: 48 },
+  lyricsModal: { flex: 1, backgroundColor: '#0a0a0a', paddingHorizontal: 16, paddingTop: 48, ...(Platform.OS === 'web' ? { zIndex: 110000 } : {}) },
   lyricsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   lyricsTitle: { color: theme.colors.text, fontSize: 17, fontWeight: '800' },
   lyricsArtist: { color: theme.colors.textDim, fontSize: 13, marginTop: 2 },
