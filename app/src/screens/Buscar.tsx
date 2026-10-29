@@ -955,7 +955,9 @@ export default function Buscar() {
     setActual(item);
     guardarEnHistorial(item);
     setPlayerVisible(true);
-    setMediaUri(null);
+    if (Platform.OS !== 'web') {
+      setMediaUri(null);
+    }
     setError(null);
     setAudioTimeout(false);
 
@@ -1010,6 +1012,8 @@ export default function Buscar() {
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       finDisparadoRef.current = false;
       const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
+      setMediaUri(embedUrl);
+      mediaUriRef.current = embedUrl;
       setReproduciendo(true);
       setError(null);
       setAudioTimeout(false);
@@ -1018,21 +1022,18 @@ export default function Buscar() {
       setDur(initialDur);
       durRef.current = initialDur;
 
-      // Si el iframe ya existe en el DOM, forzar cambio directo de video con la API de YouTube sin recargar src
+      // Si el iframe ya existe en el DOM, enviar loadVideoById para cambio directo sin recarga
       const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
-      if (el && mediaUriRef.current?.includes('/embed/')) {
-        mediaUriRef.current = embedUrl;
+      if (el?.contentWindow) {
         try {
-          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
-          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
-          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
-          el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           if (velocidadRef.current !== 1) {
-            el.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
           }
         } catch (_) {}
-      } else {
-        setMediaUri(embedUrl);
       }
 
       // Despertar y forzar reproducción inmediata para Safari iOS / Chrome / PC
