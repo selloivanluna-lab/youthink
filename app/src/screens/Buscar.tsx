@@ -149,6 +149,8 @@ export default function Buscar() {
   const [modo, setModo] = useState<Modo>('video');
   const [soloAudio, setSoloAudio] = useState(false);
   const [reproduciendo, setReproduciendo] = useState(false);
+  const reproduciendoRef = useRef(false);
+  useEffect(() => { reproduciendoRef.current = reproduciendo; }, [reproduciendo]);
   const [pos, setPos] = useState(0);
   const posRef = useRef(0);
   useEffect(() => { posRef.current = pos; }, [pos]);
@@ -156,7 +158,7 @@ export default function Buscar() {
   const durRef = useRef(0);
   useEffect(() => { durRef.current = dur; }, [dur]);
   const finDisparadoRef = useRef(false);
-  const nuevoTrackCargandoRef = useRef(false);
+  const trackStartTimeRef = useRef(0);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
@@ -190,8 +192,6 @@ export default function Buscar() {
   const colaRef = useRef<YtResult[]>([]);
   const idxRef = useRef(-1);
   const audioRef = useRef(false);
-  const reproduciendoRef = useRef(false);
-  useEffect(() => { reproduciendoRef.current = reproduciendo; }, [reproduciendo]);
   const actualRef = useRef<YtResult | null>(null);
   useEffect(() => { actualRef.current = actual; }, [actual]);
   const [autoSiguiente, setAutoSiguiente] = useState(true);
@@ -636,21 +636,28 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
-        // En Web con iframe de YouTube embed: el tiempo real lo reporta YouTube vía postMessage.
-        // Aquí solo hacemos un watchdog para asegurar el pase de pista cuando alcanza el final o crossover.
+        // En Web con iframe de YouTube embed: avanzamos el progreso con suavidad y verificamos crossover/fin
         if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
-          if (!nuevoTrackCargandoRef.current && reproduciendoRef.current) {
-            const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
-            const currentPos = posRef.current;
-            if (durTotal > 5 && currentPos > 0) {
-              const crossoverUmbral = crossoverRef.current && durTotal > 15 ? 4.0 : 0.8;
-              if (currentPos >= durTotal - crossoverUmbral) {
-                if (!finDisparadoRef.current) {
-                  finDisparadoRef.current = true;
-                  setTimeout(() => siguienteRef.current(true), 0);
+          if (reproduciendoRef.current && Date.now() - trackStartTimeRef.current > 300) {
+            setPos((prev) => {
+              const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
+              const step = 0.4 * (velocidadRef.current || 1);
+              const next = prev + step;
+              posRef.current = next;
+
+              if (durTotal > 5) {
+                const crossoverUmbral = crossoverRef.current && durTotal > 15 ? 4.0 : 0.8;
+                if (next >= durTotal - crossoverUmbral) {
+                  if (!finDisparadoRef.current) {
+                    finDisparadoRef.current = true;
+                    setTimeout(() => siguienteRef.current(true), 0);
+                  }
+                  return durTotal;
                 }
               }
-            }
+              if (durTotal > 0 && next > durTotal) return durTotal;
+              return next;
+            });
           }
           return;
         }
@@ -767,13 +774,12 @@ export default function Buscar() {
         if (data.event === 'infoDelivery' && data.info) {
           if (data.info.playerState === 1) {
             setReproduciendo(true);
-            if (nuevoTrackCargandoRef.current && (data.info.currentTime == null || data.info.currentTime < 3)) {
-              nuevoTrackCargandoRef.current = false;
-            }
+            reproduciendoRef.current = true;
           } else if (data.info.playerState === 2) {
             setReproduciendo(false);
+            reproduciendoRef.current = false;
           } else if (data.info.playerState === 0) {
-            if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
+            if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
               finDisparadoRef.current = true;
               siguienteRef.current(true);
             }
@@ -798,12 +804,8 @@ export default function Buscar() {
 
           if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
             // Descartar tiempos residuales del tema viejo (ej: 4:36) si todavía estamos en la transición
-            if (nuevoTrackCargandoRef.current) {
-              if (data.info.currentTime < 2) {
-                nuevoTrackCargandoRef.current = false;
-              } else {
-                return; // Ignorar el tiempo residual del tema viejo
-              }
+            if (Date.now() - trackStartTimeRef.current < 600 && data.info.currentTime > 3) {
+              return; // Ignorar el tiempo residual del tema viejo
             }
             setPos(data.info.currentTime);
             posRef.current = data.info.currentTime;
@@ -811,7 +813,7 @@ export default function Buscar() {
             const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
             const crossoverUmbral = crossoverRef.current && d > 15 ? 4.0 : 0.8;
             if (d > 5 && data.info.currentTime >= d - crossoverUmbral) {
-              if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
+              if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
                 finDisparadoRef.current = true;
                 siguienteRef.current(true);
               }
@@ -822,13 +824,12 @@ export default function Buscar() {
           const state = typeof data.info === 'number' ? data.info : (typeof data.data === 'number' ? data.data : data.info?.playerState);
           if (state === 1) {
             setReproduciendo(true);
-            if (nuevoTrackCargandoRef.current && posRef.current < 3) {
-              nuevoTrackCargandoRef.current = false;
-            }
+            reproduciendoRef.current = true;
           } else if (state === 2) {
             setReproduciendo(false);
+            reproduciendoRef.current = false;
           } else if (state === 0) {
-            if (!finDisparadoRef.current && !nuevoTrackCargandoRef.current) {
+            if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
               finDisparadoRef.current = true;
               siguienteRef.current(true);
             }
@@ -1038,11 +1039,12 @@ export default function Buscar() {
       unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       finDisparadoRef.current = false;
-      nuevoTrackCargandoRef.current = true;
+      trackStartTimeRef.current = Date.now();
       const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
       setMediaUri(embedUrl);
       mediaUriRef.current = embedUrl;
       setReproduciendo(true);
+      reproduciendoRef.current = true;
       setError(null);
       setAudioTimeout(false);
       setPos(0);
@@ -1184,7 +1186,7 @@ export default function Buscar() {
   function siguiente(_?: any) {
     autoPlayRef.current = true;
     finDisparadoRef.current = false;
-    nuevoTrackCargandoRef.current = true;
+    trackStartTimeRef.current = Date.now();
     const c = colaRef.current;
     const i = idxRef.current;
 
@@ -1229,7 +1231,7 @@ export default function Buscar() {
   function anterior(_?: any) {
     autoPlayRef.current = true;
     finDisparadoRef.current = false;
-    nuevoTrackCargandoRef.current = true;
+    trackStartTimeRef.current = Date.now();
     const c = colaRef.current;
     const i = idxRef.current;
     if (i - 1 >= 0) {
@@ -1286,6 +1288,7 @@ export default function Buscar() {
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [Math.round(target), true] }), '*');
         }
         setPos(target);
+        posRef.current = target;
         return;
       }
       const el = (globalThis as any).document?.querySelector('video') as any;
