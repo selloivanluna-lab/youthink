@@ -146,8 +146,8 @@ export default function Buscar() {
   const [error, setError] = useState<string | null>(null);
   const [actual, setActual] = useState<YtResult | null>(null);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
-  const [modo, setModo] = useState<Modo>('video');
-  const [soloAudio, setSoloAudio] = useState(false);
+  const [modo, setModo] = useState<Modo>('audio');
+  const [soloAudio, setSoloAudio] = useState(true);
   const [reproduciendo, setReproduciendo] = useState(false);
   const reproduciendoRef = useRef(false);
   useEffect(() => { reproduciendoRef.current = reproduciendo; }, [reproduciendo]);
@@ -159,6 +159,10 @@ export default function Buscar() {
   useEffect(() => { durRef.current = dur; }, [dur]);
   const finDisparadoRef = useRef(false);
   const trackStartTimeRef = useRef(0);
+  const currentTrackIdRef = useRef<string>('');
+  const hasStartedPlayingCurrentTrackRef = useRef<boolean>(false);
+  const crossoverFadingRef = useRef<boolean>(false);
+  const crossoverFadeTimerRef = useRef<any>(null);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
@@ -166,6 +170,17 @@ export default function Buscar() {
   const sourceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actualRetryRef = useRef<YtResult | null>(null);
   const forzarPlayTimersRef = useRef<any[]>([]);
+
+  // Función auxiliar para graduar volumen del iframe de YouTube (Web) sin mutear
+  function setWebPlayerVolume(vol: number) {
+    if (Platform.OS !== 'web') return;
+    try {
+      const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+      if (el?.contentWindow) {
+        el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [Math.max(0, Math.min(100, Math.round(vol)))] }), '*');
+      }
+    } catch (_) {}
+  }
 
   // En Web: Inyectar regla CSS para que cualquier Modal de React Native Web flote sobre el reproductor persistente
   useEffect(() => {
@@ -191,7 +206,7 @@ export default function Buscar() {
   const [qIdx, setQIdx] = useState(-1);
   const colaRef = useRef<YtResult[]>([]);
   const idxRef = useRef(-1);
-  const audioRef = useRef(false);
+  const audioRef = useRef(true);
   const actualRef = useRef<YtResult | null>(null);
   useEffect(() => { actualRef.current = actual; }, [actual]);
   const [autoSiguiente, setAutoSiguiente] = useState(true);
@@ -383,13 +398,13 @@ export default function Buscar() {
         if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
         if (isFinite(st.position) && st.position >= 0) {
           setPos(st.position);
-          // Crossover / Crossfade: cuando falten 4 segundos o menos para el final, pasar suave a la siguiente
+          // Crossover / Crossfade: cuando falte 1 segundo para el final, pasar a la siguiente sin corte abrupto
           if (
             crossoverRef.current &&
             !crossoverTriggeredRef.current &&
             isFinite(st.duration) &&
             st.duration > 15 &&
-            st.position >= st.duration - 4
+            st.position >= st.duration - 1.0
           ) {
             crossoverTriggeredRef.current = true;
             siguienteRef.current(true);
@@ -459,7 +474,12 @@ export default function Buscar() {
   useEffect(() => {
     AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover', 'qp_historial']).then((rows) => {
       const m: any = {}; rows.forEach(([k, v]) => (m[k] = v));
-      if (m.qp_soloAudio != null) setSoloAudio(m.qp_soloAudio === '1');
+      if (m.qp_soloAudio != null) {
+        const isA = m.qp_soloAudio === '1';
+        setSoloAudio(isA);
+        setModo(isA ? 'audio' : 'video');
+        audioRef.current = isA;
+      }
       if (m.qp_autoSig != null) setAutoSiguiente(m.qp_autoSig === '1');
       if (m.qp_shuffle != null) setShuffle(m.qp_shuffle === '1');
       if (m.qp_repeat) setRepeat(m.qp_repeat);
@@ -636,24 +656,42 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
-        // En Web con iframe de YouTube embed: avanzamos el progreso con suavidad y verificamos crossover/fin
+        // En Web con iframe de YouTube embed: avanzamos el progreso con suavidad y aplicamos crossover con fade real
         if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
-          if (reproduciendoRef.current && Date.now() - trackStartTimeRef.current > 300) {
+          if (reproduciendoRef.current && hasStartedPlayingCurrentTrackRef.current) {
             setPos((prev) => {
               const durTotal = durRef.current > 0 ? durRef.current : (actualRef.current?.duration || 0);
               const step = 0.4 * (velocidadRef.current || 1);
               const next = prev + step;
               posRef.current = next;
 
-              if (durTotal > 5) {
-                const crossoverUmbral = crossoverRef.current && durTotal > 15 ? 4.0 : 0.8;
-                if (next >= durTotal - crossoverUmbral) {
+              if (durTotal > 15 && crossoverRef.current) {
+                const restante = durTotal - next;
+                if (restante <= 4.0 && restante > 2.8) {
+                  crossoverFadingRef.current = true;
+                  setWebPlayerVolume(70);
+                } else if (restante <= 2.8 && restante > 1.6) {
+                  crossoverFadingRef.current = true;
+                  setWebPlayerVolume(40);
+                } else if (restante <= 1.6 && restante > 0.5) {
+                  crossoverFadingRef.current = true;
+                  setWebPlayerVolume(15);
+                } else if (restante <= 0.5) {
+                  crossoverFadingRef.current = true;
+                  setWebPlayerVolume(0);
                   if (!finDisparadoRef.current) {
                     finDisparadoRef.current = true;
                     setTimeout(() => siguienteRef.current(true), 0);
                   }
                   return durTotal;
                 }
+              } else if (durTotal > 5 && next >= durTotal - 0.5) {
+                // Sin crossover: se reproduce hasta el final natural sin corte prematuro
+                if (!finDisparadoRef.current) {
+                  finDisparadoRef.current = true;
+                  setTimeout(() => siguienteRef.current(true), 0);
+                }
+                return durTotal;
               }
               if (durTotal > 0 && next > durTotal) return durTotal;
               return next;
@@ -771,10 +809,18 @@ export default function Buscar() {
       try {
         const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
         if (!data) return;
+
+        // Descartar mensajes residuales de canciones previas
+        const msgVideoId = data.info?.videoData?.video_id;
+        if (msgVideoId && currentTrackIdRef.current && msgVideoId !== currentTrackIdRef.current) {
+          return;
+        }
+
         if (data.event === 'infoDelivery' && data.info) {
           if (data.info.playerState === 1) {
             setReproduciendo(true);
             reproduciendoRef.current = true;
+            hasStartedPlayingCurrentTrackRef.current = true;
           } else if (data.info.playerState === 2) {
             setReproduciendo(false);
             reproduciendoRef.current = false;
@@ -785,12 +831,14 @@ export default function Buscar() {
             }
           }
 
-          // Si el navegador en segundo plano intentó mutear el iframe, forzar unMute y volumen 100
+          // Si el navegador en segundo plano intentó mutear el iframe, forzar unMute y restaurar volumen si no estamos en fade
           if (data.info.muted === true) {
             const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
             if (el?.contentWindow) {
               el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
-              el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+              if (!crossoverFadingRef.current) {
+                el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+              }
             }
           }
 
@@ -803,16 +851,38 @@ export default function Buscar() {
           }
 
           if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
-            // Descartar tiempos residuales del tema viejo (ej: 4:36) si todavía estamos en la transición
-            if (Date.now() - trackStartTimeRef.current < 600 && data.info.currentTime > 3) {
-              return; // Ignorar el tiempo residual del tema viejo
+            const ct = data.info.currentTime;
+            // Descartar tiempos residuales del tema viejo (ej: > 2s) si la pista actual aún no confirmó inicio
+            if (!hasStartedPlayingCurrentTrackRef.current && ct > 2) {
+              return;
             }
-            setPos(data.info.currentTime);
-            posRef.current = data.info.currentTime;
+            if (ct <= 2) {
+              hasStartedPlayingCurrentTrackRef.current = true;
+            }
+            setPos(ct);
+            posRef.current = ct;
 
             const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
-            const crossoverUmbral = crossoverRef.current && d > 15 ? 4.0 : 0.8;
-            if (d > 5 && data.info.currentTime >= d - crossoverUmbral) {
+            if (d > 15 && crossoverRef.current) {
+              const restante = d - ct;
+              if (restante <= 4.0 && restante > 2.8) {
+                crossoverFadingRef.current = true;
+                setWebPlayerVolume(70);
+              } else if (restante <= 2.8 && restante > 1.6) {
+                crossoverFadingRef.current = true;
+                setWebPlayerVolume(40);
+              } else if (restante <= 1.6 && restante > 0.5) {
+                crossoverFadingRef.current = true;
+                setWebPlayerVolume(15);
+              } else if (restante <= 0.5) {
+                crossoverFadingRef.current = true;
+                setWebPlayerVolume(0);
+                if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
+                  finDisparadoRef.current = true;
+                  siguienteRef.current(true);
+                }
+              }
+            } else if (d > 5 && ct >= d - 0.5) {
               if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
                 finDisparadoRef.current = true;
                 siguienteRef.current(true);
@@ -825,6 +895,7 @@ export default function Buscar() {
           if (state === 1) {
             setReproduciendo(true);
             reproduciendoRef.current = true;
+            hasStartedPlayingCurrentTrackRef.current = true;
           } else if (state === 2) {
             setReproduciendo(false);
             reproduciendoRef.current = false;
@@ -931,7 +1002,10 @@ export default function Buscar() {
   }, [mediaUri]);
 
   function setAudio(v: boolean) {
-    setSoloAudio(v); AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
+    setSoloAudio(v);
+    setModo(v ? 'audio' : 'video');
+    audioRef.current = v;
+    AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
     if (actual) aplicar(actual, v, idxRef.current);
   }
   function setAuto(v: boolean) { setAutoSiguiente(v); AsyncStorage.setItem('qp_autoSig', v ? '1' : '0').catch(() => {}); }
@@ -987,7 +1061,11 @@ export default function Buscar() {
     }
   }
 
-  async function aplicar(item: YtResult, audio: boolean, idx: number, autoPlay = true) {
+  async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true) {
+    const isAudio = typeof audio === 'boolean' ? audio : audioRef.current;
+    audioRef.current = isAudio;
+    setSoloAudio(isAudio);
+    setModo(isAudio ? 'audio' : 'video');
     autoPlayRef.current = autoPlay;
     setActual(item);
     guardarEnHistorial(item);
@@ -997,6 +1075,15 @@ export default function Buscar() {
     }
     setError(null);
     setAudioTimeout(false);
+
+    currentTrackIdRef.current = item.id;
+    hasStartedPlayingCurrentTrackRef.current = false;
+    finDisparadoRef.current = false;
+    crossoverFadingRef.current = false;
+    if (crossoverFadeTimerRef.current) {
+      clearTimeout(crossoverFadeTimerRef.current);
+      crossoverFadeTimerRef.current = null;
+    }
 
     // Cancelar cualquier temporizador de forzarPlay previo para evitar solapamiento
     forzarPlayTimersRef.current.forEach((t) => clearTimeout(t));
@@ -1017,7 +1104,6 @@ export default function Buscar() {
     setNativeResolving(false);
     crossoverTriggeredRef.current = false;
     if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-    setModo(audio ? 'audio' : 'video');
     setReproduciendo(autoPlay);
     if (idx >= 0) {
       setQIdx(idx);
@@ -1026,7 +1112,7 @@ export default function Buscar() {
     cargarLyrics(item);
     // Timeout de 12s: si en ese tiempo no llegó ningún evento del reproductor nativo,
     // mostramos botón de reintento en lugar del spinner infinito.
-    if (audio) {
+    if (isAudio) {
       audioTimeoutRef.current = setTimeout(() => {
         setAudioTimeout((prev) => {
           if (!prev) return true;
@@ -1039,6 +1125,7 @@ export default function Buscar() {
       unlockWebAudio();
       if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       finDisparadoRef.current = false;
+      crossoverFadingRef.current = false;
       trackStartTimeRef.current = Date.now();
       const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
       setMediaUri(embedUrl);
@@ -1053,13 +1140,28 @@ export default function Buscar() {
       setDur(initialDur);
       durRef.current = initialDur;
 
+      // Si crossover está activo, arranque suave con rampa de volumen; si no, volumen al 100 directo
+      if (crossoverRef.current) {
+        setWebPlayerVolume(40);
+        crossoverFadeTimerRef.current = setTimeout(() => {
+          setWebPlayerVolume(75);
+          crossoverFadeTimerRef.current = setTimeout(() => {
+            setWebPlayerVolume(100);
+          }, 450);
+        }, 350);
+      } else {
+        setWebPlayerVolume(100);
+      }
+
       // Si el iframe ya existe en el DOM, enviar loadVideoById para cambio directo sin recarga
       const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
       if (el?.contentWindow) {
         try {
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          if (!crossoverRef.current) {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          }
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           if (velocidadRef.current !== 1) {
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
@@ -1072,7 +1174,9 @@ export default function Buscar() {
         const iframe = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
         if (iframe?.contentWindow) {
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
-          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          if (!crossoverFadingRef.current) {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
+          }
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
           if (velocidadRef.current !== 1) {
             iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
@@ -1168,8 +1272,9 @@ export default function Buscar() {
     }
   }, [versoActivoIdx, lyricsOpen, autoScrollLyrics]);
 
-  function reproducir(lista: YtResult[], idx: number, audio: boolean) {
+  function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current) {
     if (!lista.length) return;
+    const isAudio = typeof audio === 'boolean' ? audio : audioRef.current;
     unlockWebAudio();
     autoPlayRef.current = true;
     setReproduciendo(true);
@@ -1180,7 +1285,7 @@ export default function Buscar() {
       for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
       arr = [first, ...rest]; start = 0;
     }
-    setCola(arr); colaRef.current = arr; aplicar(arr[start], audio, start, true);
+    setCola(arr); colaRef.current = arr; aplicar(arr[start], isAudio, start, true);
   }
 
   function siguiente(_?: any) {
@@ -1248,9 +1353,10 @@ export default function Buscar() {
 
     if (pId) {
       setPlayerVisible(true);
+      const isAudio = audioRef.current;
       if (Array.isArray(pQueue) && pQueue.length > 0) {
         // Cargar toda la lista de canciones en la cola y arrancar desde la canción tocada
-        reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), soloAudio);
+        reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), isAudio);
       } else {
         const item: YtResult = {
           id: pId,
@@ -1260,7 +1366,7 @@ export default function Buscar() {
           duration: 0,
           thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
         };
-        reproducir([item], 0, soloAudio);
+        reproducir([item], 0, isAudio);
       }
       // Limpiar params para no re-ejecutar en re-render
       navigation.setParams({
@@ -1814,7 +1920,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {/* Herramientas: Solo audio · Velocidad · Aleatorio · Repetir · Ecualizador · Listas · Info */}
       <View style={s.toolsRow}>
         <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
-          <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Audio' : 'Video'}</Text>
+          <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Modo Audio' : 'Modo Video'}</Text>
         </Pressable>
         <Pressable style={[s.tool, velocidad !== 1 && s.toolOn]} onPress={() => setVelocidadOpen(true)}>
           <Text style={[s.toolText, velocidad !== 1 && s.toolTextOn]}>
