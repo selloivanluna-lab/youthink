@@ -137,10 +137,27 @@ function cookieArgs() {
 // Clientes de YouTube a probar EN ORDEN hasta que uno funcione. YouTube cambia
 // cuál cliente esquiva el PO token ("Sign in to confirm you're not a bot") y el
 // "The page needs to be reloaded" cada pocas semanas. Override con YT_PLAYER_CLIENT
-// (sets separados por "|"). 'android' e 'ios' tienen menores restricciones de bot.
-const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'android|ios|mweb|web_embedded|default,-tv_downgraded,web_embedded|tv,web_safari').split('|');
+// (sets separados por "|").
+//
+// Orden: 'web_embedded' PRIMERO. Es el único que sigue resolviendo desde IPs de
+// datacenter (Render) sin PO token ni cookies; 'android'/'ios' desde esas IPs
+// devuelven "Requested format is not available" y 'tv' "The page needs to be
+// reloaded", así que probarlos antes sólo hace perder ~20s por cliente.
+const YT_CLIENT_SETS = (process.env.YT_PLAYER_CLIENT || 'web_embedded|default,-tv_downgraded,web_embedded|mweb|tv,web_safari|android|ios').split('|');
+// Intentos (cliente + ¿cookies?). Las cookies viejas pueden EMPEORAR el bot-check,
+// por eso el primer intento de cada cliente va sin ellas y recién después se
+// reintenta con cookies. Tope de intentos para no colgar la request.
+const YT_MAX_ATTEMPTS = Math.max(1, Number(process.env.YT_MAX_ATTEMPTS || 5));
+const YT_ATTEMPTS = (() => {
+  const out = [];
+  YT_CLIENT_SETS.forEach((client) => { out.push({ client, cookies: false }); out.push({ client, cookies: true }); });
+  return out.slice(0, YT_MAX_ATTEMPTS);
+})();
+// Tope por intento y tope global (evita los 110s de espera que veía la app).
+const YT_ATTEMPT_MS = Math.max(5000, Number(process.env.YT_ATTEMPT_MS || 45000));
+const YT_TOTAL_MS = Math.max(10000, Number(process.env.YT_TOTAL_MS || 100000));
 function ytExtractorArgs(set) { return ['--extractor-args', 'youtube:player_client=' + set]; }
-function ytExtraArgs() { return ytExtractorArgs(YT_CLIENT_SETS[0]); }
+function ytExtraArgs() { return ytExtractorArgs(YT_ATTEMPTS[0].client); }
 // Proxy opcional (p.ej. residencial) si Google bloquea la IP del datacenter. Env: YT_PROXY=http://user:pass@host:port
 function ytProxyArgs() { return process.env.YT_PROXY ? ['--proxy', process.env.YT_PROXY] : []; }
 function ytRetryable(msg) { return /Sign in to confirm|needs to be reloaded|not a bot|Requested format is not available|player response|HTTP Error 403|Unable to extract/i.test(msg || ''); }
@@ -216,13 +233,16 @@ function runYtClip(id, cb) {
   try { fs.mkdirSync(CLIP_DIR, { recursive: true }); } catch (e) {}
   const deno = findDeno();
   let lastErr = null;
+  const t0 = Date.now();
+  const restante = () => Math.max(5000, Math.min(YT_ATTEMPT_MS, YT_TOTAL_MS - (Date.now() - t0)));
   const attempt = (i) => {
-    if (i >= YT_CLIENT_SETS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    if (i >= YT_ATTEMPTS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    const att = YT_ATTEMPTS[i];
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
-    args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    args.push(...ytExtractorArgs(att.client));
     args.push(...ytProxyArgs());
-    if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
+    if (att.cookies && process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     args.push('-f', '18/bv*[height<=360][ext=mp4]+ba[ext=m4a]/b[height<=360][ext=mp4]/bv*[height<=360]+ba/b[height<=360]/b/best',
       '--merge-output-format', 'mp4',
       '--download-sections', '*0-' + CLIP_SECONDS,
@@ -237,7 +257,7 @@ function runYtClip(id, cb) {
       if (settled) return; settled = true;
       lastErr = new Error('timeout de vista previa');
       attempt(i + 1);
-    }, 90000);
+    }, restante());
     p.stderr.on('data', (d) => { err += d.toString(); });
     p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; done(e); });
     p.on('close', (code) => {
@@ -246,7 +266,7 @@ function runYtClip(id, cb) {
       try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return done(null); } catch (e) {}
       const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
       lastErr = new Error(det || ('yt-dlp code ' + code));
-      if (ytRetryable(det) && i + 1 < YT_CLIENT_SETS.length) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
+      if (ytRetryable(det) && i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
       done(lastErr);
     });
   };
@@ -270,13 +290,16 @@ function runYtAudio(id, cb) {
   try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
   const deno = findDeno();
   let lastErr = null;
+  const t0 = Date.now();
+  const restante = () => Math.max(5000, Math.min(YT_ATTEMPT_MS, YT_TOTAL_MS - (Date.now() - t0)));
   const attempt = (i) => {
-    if (i >= YT_CLIENT_SETS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    if (i >= YT_ATTEMPTS.length) return done(lastErr || new Error('yt-dlp agotó los clientes'));
+    const att = YT_ATTEMPTS[i];
     const args = [];
     if (deno) args.push('--js-runtimes', 'deno:' + deno);
-    args.push(...ytExtractorArgs(YT_CLIENT_SETS[i]));
+    args.push(...ytExtractorArgs(att.client));
     args.push(...ytProxyArgs());
-    if (process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
+    if (att.cookies && process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
     // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
     args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
@@ -292,7 +315,7 @@ function runYtAudio(id, cb) {
       if (settled) return; settled = true;
       lastErr = new Error('timeout de audio');
       attempt(i + 1);
-    }, 90000);
+    }, restante());
     p.stderr.on('data', (d) => { err += d.toString(); });
     p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; done(e); });
     p.on('close', (code) => {
@@ -301,11 +324,119 @@ function runYtAudio(id, cb) {
       try { if (fs.existsSync(out) && fs.statSync(out).size > 0) return done(null); } catch (e) {}
       const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
       lastErr = new Error(det || ('yt-dlp code ' + code));
-      if (ytRetryable(det) && i + 1 < YT_CLIENT_SETS.length) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
+      if (ytRetryable(det) && i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) { try { fs.rmSync(out, { force: true }); } catch (e) {} return attempt(i + 1); }
       done(lastErr);
     });
   };
   attempt(0);
+}
+
+// ── resolución de URL + streaming directo ────────────────────────────
+// Antes /api/aclip bajaba el audio COMPLETO (hasta 2 h) antes de mandar el
+// primer byte: en el celular eso se veía como "tiempo de espera agotado".
+// Ahora sólo resolvemos la URL con yt-dlp (`-g`, ~4s) y hacemos de proxy
+// reenviando el Range, así el reproductor arranca al toque y puede buscar.
+const YT_URL_TTL = 25 * 60 * 1000;
+const YT_URL_CACHE = new Map(); // 'a:<id>' | 'v:<id>' -> { url, exp }
+
+function ytStreamFormat(kind) {
+  return kind === 'video'
+    // Un solo archivo progresivo (con audio): no se puede proxear un merge.
+    ? '18/b[ext=mp4][height<=360]/b[ext=mp4]'
+    : '140/139/bestaudio[ext=m4a]/bestaudio';
+}
+
+function runYtUrl(id, kind, cb) {
+  const key = (kind === 'video' ? 'v:' : 'a:') + id;
+  const hit = YT_URL_CACHE.get(key);
+  if (hit && hit.exp > Date.now()) return cb(null, hit.url);
+  const ytdlp = findBin('yt-dlp');
+  if (!ytdlp) return cb(new Error('yt-dlp no encontrado en PATH'));
+  const deno = findDeno();
+  let lastErr = null;
+  const t0 = Date.now();
+  const attempt = (i) => {
+    if (i >= YT_ATTEMPTS.length) return cb(lastErr || new Error('yt-dlp agotó los clientes'));
+    const att = YT_ATTEMPTS[i];
+    const args = [];
+    if (deno) args.push('--js-runtimes', 'deno:' + deno);
+    args.push(...ytExtractorArgs(att.client));
+    args.push(...ytProxyArgs());
+    if (att.cookies && process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
+    args.push('-g', '-f', ytStreamFormat(kind), '--no-warnings', '--no-playlist',
+      'https://www.youtube.com/watch?v=' + id);
+    let p;
+    try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return cb(e); }
+    let out = '', err = '', settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      try { p.kill('SIGKILL'); } catch (e) {}
+      lastErr = new Error('timeout al resolver la URL');
+      if (i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) return attempt(i + 1);
+      cb(lastErr);
+    }, Math.max(8000, Math.min(25000, YT_TOTAL_MS - (Date.now() - t0))));
+    p.stdout.on('data', (d) => { out += d.toString(); });
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; cb(e); });
+    p.on('close', () => {
+      clearTimeout(timer);
+      if (settled) return; settled = true;
+      const u = out.split(/\r?\n/).map((s) => s.trim()).filter((s) => /^https?:\/\//.test(s))[0] || '';
+      if (u) { YT_URL_CACHE.set(key, { url: u, exp: Date.now() + YT_URL_TTL }); return cb(null, u); }
+      const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
+      lastErr = new Error(det || 'yt-dlp no devolvió ninguna URL');
+      if (ytRetryable(det) && i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) return attempt(i + 1);
+      cb(lastErr);
+    });
+  };
+  attempt(0);
+}
+
+// Mensaje entendible para la app (el error crudo de yt-dlp es ilegible en el celular).
+function ytFriendlyError(err, kind) {
+  const pre = kind === 'video' ? 'clip: ' : 'audio: ';
+  const m = (err && err.message) || 'error desconocido';
+  if (/Sign in to confirm|not a bot|needs to be reloaded/i.test(m)) {
+    return pre + 'YouTube está pidiendo verificación al servidor (anti-bot). Probá de nuevo en unos minutos.';
+  }
+  if (/Requested format is not available/i.test(m)) {
+    return pre + 'Ese video no ofrece un formato reproducible.';
+  }
+  return pre + m;
+}
+
+// Proxy del medio: reenvía Range para que el player pueda seekear.
+function pipeRemoteMedia(req, res, mediaUrl, contentType) {
+  let u;
+  try { u = new URL(mediaUrl); } catch (e) { respond(res, 502, { error: 'URL de medio inválida' }); return; }
+  const headers = {
+    'User-Agent': UA,
+    'Accept-Encoding': 'identity',
+    'Referer': 'https://www.youtube.com/',
+    'Origin': 'https://www.youtube.com',
+  };
+  if (req.headers['range']) headers['Range'] = req.headers['range'];
+  const lib = u.protocol === 'https:' ? https : http;
+  let responded = false;
+  const r = lib.request(u, { method: 'GET', headers }, (rr) => {
+    responded = true;
+    const h = {
+      'Content-Type': rr.headers['content-type'] || contentType || 'application/octet-stream',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+    };
+    ['content-length', 'content-range', 'accept-ranges'].forEach((k) => { if (rr.headers[k]) h[k] = rr.headers[k]; });
+    res.writeHead(rr.statusCode || 200, h);
+    rr.on('error', () => { try { res.destroy(); } catch (e) {} });
+    res.on('close', () => { try { rr.destroy(); } catch (e) {} });
+    rr.pipe(res);
+  });
+  r.on('error', () => {
+    if (responded) { try { res.destroy(); } catch (e) {} return; }
+    try { respond(res, 502, { error: 'no se pudo leer el medio desde YouTube' }); } catch (e) {}
+  });
+  req.on('aborted', () => { try { r.destroy(); } catch (e) {} });
+  r.end();
 }
 
 // ── streaming de archivo local con Range ─────────────────────────────
@@ -368,7 +499,7 @@ const server = http.createServer(async (req, res) => {
       ok: true, ts: Date.now(), ytdlp: !!findBin('yt-dlp'), ffmpeg: !!findBin('ffmpeg'), deno: !!findDeno(),
       // Diagnóstico del deploy: commit que corre Render y config de YouTube (sin secretos).
       commit: process.env.RENDER_GIT_COMMIT || null,
-      yt: { clientes: YT_CLIENT_SETS, cookies: process.env.YT_COOKIES !== '0', proxy: !!process.env.YT_PROXY },
+      yt: { clientes: YT_CLIENT_SETS, intentos: YT_ATTEMPTS.map((a) => a.client + (a.cookies ? '+cookies' : '')), cookies: process.env.YT_COOKIES !== '0', proxy: !!process.env.YT_PROXY },
     });
     return;
   }
