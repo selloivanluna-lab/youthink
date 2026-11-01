@@ -23,10 +23,15 @@ import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
 import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/playlists';
+import { useCast, CAST_ANDROID } from '../lib/cast';
 import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
 import { useNavigation, useRoute } from '@react-navigation/native';
+
+// En Android se carga el botón nativo de Chromecast. En web el paquete ni se evalúa.
+const CastButtonHost: any =
+  CAST_ANDROID ? require('../components/CastButtonHost').default : null;
 
 function CargaAnim({ texto = 'Cargando…' }: { texto?: string }) {
   const bars = useRef([0, 1, 2, 3, 4].map(() => new Animated.Value(0.2))).current;
@@ -134,9 +139,16 @@ function Barra({ pos, dur, onSeek }: { pos: number; dur: number; onSeek: (t: num
 export default function Buscar() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
+  const tv = useCast();
+  const tvRef = useRef(false);
+  const tvCargandoRef = useRef('');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [results, setResults] = useState<YtResult[]>([]);
+  const [searchType, setSearchType] = useState<'all' | 'videos' | 'songs'>('all');
+  const [nextPage, setNextPage] = useState<string | null>(null);
+  const searchReqRef = useRef(0);
   const [recomendaciones, setRecomendaciones] = useState<YtResult[]>([]);
   const [cargandoRecomendaciones, setCargandoRecomendaciones] = useState(false);
   const [historial, setHistorial] = useState<YtResult[]>([]);
@@ -158,6 +170,9 @@ export default function Buscar() {
   const durRef = useRef(0);
   useEffect(() => { durRef.current = dur; }, [dur]);
   const finDisparadoRef = useRef(false);
+  // Guarda anti-duplicado: varios listeners (ended del nativo, playerState 0 del
+  // iframe, polling web) pueden avisar del mismo final. Sin esto se salteaba un tema.
+  const finGuardRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
   const trackStartTimeRef = useRef(0);
   const currentTrackIdRef = useRef<string>('');
   const hasStartedPlayingCurrentTrackRef = useRef<boolean>(false);
@@ -213,6 +228,9 @@ export default function Buscar() {
   const autoRef = useRef(true);
   const [shuffle, setShuffle] = useState(false);
   const shuffleRef = useRef(false);
+  // Solo las colas generadas automáticamente (radio / recomendados) se extienden
+  // solas. Una lista del usuario debe respetarse tal cual.
+  const autoExtenderRef = useRef(false);
   const [repeat, setRepeat] = useState<Repeat>('off');
   const repeatRef = useRef<Repeat>('off');
   const [crossover, setCrossover] = useState(true);
@@ -379,6 +397,70 @@ export default function Buscar() {
   const recomendacionesRef = useRef<YtResult[]>([]);
   useEffect(() => { recomendacionesRef.current = recomendaciones; }, [recomendaciones]);
 
+  // ── Fin de pista: un único avance por canción ──────────────────────────────
+  // Antes, el reproductor nativo, el iframe de YouTube y el polling web podían
+  // disparar "siguiente" dos veces por el mismo final (o un evento tardío de la
+  // canción anterior), lo que hacía saltar temas de la cola sin reproducirlos.
+  function avanzarPorFin(trackId?: string) {
+    const id = String(trackId || '').trim();
+    // Evento de una pista vieja que llega después del cambio: ignorar.
+    if (id && currentTrackIdRef.current && id !== currentTrackIdRef.current) return;
+    const g = finGuardRef.current;
+    if (g.id && g.id === currentTrackIdRef.current && Date.now() - g.at < 4000) return;
+    finGuardRef.current = { id: currentTrackIdRef.current, at: Date.now() };
+    finDisparadoRef.current = true;
+    siguienteRef.current(true);
+  }
+
+  // Reinicia la canción actual desde 0 (para "Repetir 1").
+  function reiniciarActual() {
+    setPos(0);
+    posRef.current = 0;
+    finDisparadoRef.current = false;
+    finGuardRef.current = { id: '', at: 0 };
+    if (tvRef.current) {
+      if (actual) {
+        tvCargandoRef.current = '';
+        const esAudio = soloAudio;
+        tv.transmitir({
+          id: actual.id,
+          title: actual.title,
+          channel: actual.channel,
+          thumb: actual.thumb,
+          url: esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id),
+          contentType: esAudio ? 'audio/mp4' : 'video/mp4',
+          duration: actual.duration,
+          startTime: 0,
+        });
+      }
+      setReproduciendo(true);
+      return;
+    }
+    if (usarNativoRef.current) {
+      try { native.seek(0); native.resume(); } catch (_) {}
+      setReproduciendo(true);
+      return;
+    }
+    if (Platform.OS === 'web') {
+      const uri = mediaUriRef.current || '';
+      if (uri.includes('/embed/')) {
+        const iframe = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+        if (iframe?.contentWindow) {
+          try {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [0, true] }), '*');
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          } catch (_) {}
+        }
+        setReproduciendo(true);
+        reproduciendoRef.current = true;
+        return;
+      }
+    }
+    saltar(0);
+    try { player.play(); } catch (_) {}
+    setReproduciendo(true);
+  }
+
   // Estado del reproductor nativo: llega por eventos (se actualiza fuera del render).
   useEffect(() => {
     if (!NATIVE_AUDIO || !QpAudio || typeof (QpAudio as any).addListener !== 'function') return;
@@ -395,20 +477,14 @@ export default function Buscar() {
         }
 
         if (modoRef.current !== 'audio') return;
+
+        // Ignorar eventos que llegan tarde de la pista anterior (mediaId distinto).
+        const evId = st.mediaId ? String(st.mediaId) : '';
+        if (evId && currentTrackIdRef.current && evId !== currentTrackIdRef.current) return;
+
         if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
         if (isFinite(st.position) && st.position >= 0) {
           setPos(st.position);
-          // Crossover / Crossfade: cuando falte 1 segundo para el final, pasar a la siguiente sin corte abrupto
-          if (
-            crossoverRef.current &&
-            !crossoverTriggeredRef.current &&
-            isFinite(st.duration) &&
-            st.duration > 15 &&
-            st.position >= st.duration - 1.0
-          ) {
-            crossoverTriggeredRef.current = true;
-            siguienteRef.current(true);
-          }
         }
         if (isFinite(st.duration) && st.duration > 0) setDur(st.duration);
         setNativeBuffering(Boolean(st.buffering));
@@ -430,7 +506,9 @@ export default function Buscar() {
             setError(st.error);
           }
         }
-        if (st.ended && !crossoverTriggeredRef.current) siguienteRef.current(true);
+        // Fin natural de la pista: NO adelantamos por "crossover" (cortaba el
+        // último segundo). ExoPlayer avisa `ended` cuando termina de verdad.
+        if (st.ended) avanzarPorFin(evId);
       });
       return () => {
         try { sub?.remove?.(); } catch (_) {}
@@ -448,6 +526,47 @@ export default function Buscar() {
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
   useEffect(() => { crossoverRef.current = crossover; }, [crossover]);
   useEffect(() => { try { player.loop = repeat === 'one'; } catch (e) {} }, [repeat, player]);
+
+  // ── Chromecast: mantener el TV sincronizado con el tema actual ──────────────
+  useEffect(() => { tvRef.current = tv.conectado; }, [tv.conectado]);
+
+  // Al conectar o desconectar el TV hay que volver a cargar el tema.
+  useEffect(() => { tvCargandoRef.current = ''; }, [tv.conectado]);
+
+  useEffect(() => {
+    if (!tv.conectado || !actual) return;
+    const esAudio = soloAudio;
+    const clave = actual.id + '|' + (esAudio ? 'a' : 'v');
+    if (tvCargandoRef.current === clave) return;
+    tvCargandoRef.current = clave;
+    // El audio sale por el TV: pausamos el reproductor local para no superponer.
+    try { if (usarNativoRef.current) native.pause(); } catch (_) {}
+    try { player.pause(); } catch (_) {}
+    setReproduciendo(true);
+    tv.transmitir({
+      id: actual.id,
+      title: actual.title,
+      channel: actual.channel,
+      thumb: actual.thumb,
+      url: esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id),
+      contentType: esAudio ? 'audio/mp4' : 'video/mp4',
+      duration: actual.duration,
+      startTime: 0,
+    }).then((res: any) => {
+      if (!res?.ok) {
+        tvCargandoRef.current = '';
+        setError(res?.error || 'No se pudo transmitir al Chromecast.');
+      }
+    });
+  }, [tv.conectado, actual?.id, soloAudio]);
+
+  // Fin natural en el TV: avanzar la cola (una sola vez, con el guard de fin).
+  useEffect(() => {
+    if (!tv.conectado) return;
+    const off = tv.alTerminarEnTv(() => avanzarPorFin());
+    return () => { try { off(); } catch (_) {} };
+  }, [tv.conectado]);
+
 
   // ── Historial de reproducción ──
   async function guardarEnHistorial(item: YtResult) {
@@ -579,13 +698,13 @@ export default function Buscar() {
     try {
       const res = await api.radio(track.id, 25);
       if (res.ok && res.tracks && res.tracks.length > 0) {
-        // Encolar y reproducir
-        reproducir(res.tracks, 0, soloAudio);
+        // Encolar y reproducir (la radio sí se auto-extiende)
+        reproducir(res.tracks, 0, soloAudio, true);
       } else {
         // Fallback: búsqueda de temas del mismo artista o canal
         const busq = await api.search(track.channel || track.title, 15);
         if (busq.ok && busq.results && busq.results.length > 0) {
-          reproducir(busq.results, 0, soloAudio);
+          reproducir(busq.results, 0, soloAudio, true);
         }
       }
     } catch (e) {
@@ -636,7 +755,7 @@ export default function Buscar() {
     const subE = player.addListener('playToEnd', () => {
       setReproduciendo(false);
       // Avanza siempre que haya cola o repetición activa (el toggle autoSiguiente no bloquea el avance natural).
-      siguiente(true);
+      avanzarPorFin();
     });
     const subErr = player.addListener('statusChange', (e: any) => {
       if (e?.status === 'error') {
@@ -656,7 +775,10 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
-        // En Web con iframe de YouTube embed: avanzamos el progreso con suavidad y aplicamos crossover con fade real
+        // En Web con iframe de YouTube embed: progreso suave SOLO visual + fade de
+        // crossover. El avance de pista lo dispara el evento real del reproductor
+        // (playerState 0), nunca este temporizador: antes iba "adelantado" y cortaba
+        // la canción antes de que terminara.
         if (Platform.OS === 'web' && mediaUriRef.current?.includes('/embed/')) {
           if (reproduciendoRef.current && hasStartedPlayingCurrentTrackRef.current) {
             setPos((prev) => {
@@ -665,35 +787,18 @@ export default function Buscar() {
               const next = prev + step;
               posRef.current = next;
 
-              if (durTotal > 15 && crossoverRef.current) {
+              if (durTotal > 15 && crossoverRef.current && !crossoverFadingRef.current) {
                 const restante = durTotal - next;
                 if (restante <= 4.0 && restante > 2.8) {
-                  crossoverFadingRef.current = true;
                   setWebPlayerVolume(70);
                 } else if (restante <= 2.8 && restante > 1.6) {
-                  crossoverFadingRef.current = true;
                   setWebPlayerVolume(40);
-                } else if (restante <= 1.6 && restante > 0.5) {
+                } else if (restante <= 1.6) {
                   crossoverFadingRef.current = true;
-                  setWebPlayerVolume(15);
-                } else if (restante <= 0.5) {
-                  crossoverFadingRef.current = true;
-                  setWebPlayerVolume(0);
-                  if (!finDisparadoRef.current) {
-                    finDisparadoRef.current = true;
-                    setTimeout(() => siguienteRef.current(true), 0);
-                  }
-                  return durTotal;
+                  setWebPlayerVolume(10);
                 }
-              } else if (durTotal > 5 && next >= durTotal - 0.5) {
-                // Sin crossover: se reproduce hasta el final natural sin corte prematuro
-                if (!finDisparadoRef.current) {
-                  finDisparadoRef.current = true;
-                  setTimeout(() => siguienteRef.current(true), 0);
-                }
-                return durTotal;
               }
-              if (durTotal > 0 && next > durTotal) return durTotal;
+              if (durTotal > 0 && next >= durTotal) return durTotal;
               return next;
             });
           }
@@ -825,10 +930,7 @@ export default function Buscar() {
             setReproduciendo(false);
             reproduciendoRef.current = false;
           } else if (data.info.playerState === 0) {
-            if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
-              finDisparadoRef.current = true;
-              siguienteRef.current(true);
-            }
+            avanzarPorFin(msgVideoId);
           }
 
           // Si el navegador en segundo plano intentó mutear el iframe, forzar unMute y restaurar volumen si no estamos en fade
@@ -863,31 +965,20 @@ export default function Buscar() {
             posRef.current = ct;
 
             const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
-            if (d > 15 && crossoverRef.current) {
+            // Fade suave de crossover (solo volumen, sin adelantar la pista)
+            if (d > 15 && crossoverRef.current && !crossoverFadingRef.current) {
               const restante = d - ct;
               if (restante <= 4.0 && restante > 2.8) {
-                crossoverFadingRef.current = true;
                 setWebPlayerVolume(70);
               } else if (restante <= 2.8 && restante > 1.6) {
-                crossoverFadingRef.current = true;
                 setWebPlayerVolume(40);
-              } else if (restante <= 1.6 && restante > 0.5) {
+              } else if (restante <= 1.6) {
                 crossoverFadingRef.current = true;
-                setWebPlayerVolume(15);
-              } else if (restante <= 0.5) {
-                crossoverFadingRef.current = true;
-                setWebPlayerVolume(0);
-                if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
-                  finDisparadoRef.current = true;
-                  siguienteRef.current(true);
-                }
-              }
-            } else if (d > 5 && ct >= d - 0.5) {
-              if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
-                finDisparadoRef.current = true;
-                siguienteRef.current(true);
+                setWebPlayerVolume(10);
               }
             }
+            // Fin real según el tiempo que informa YouTube: avanza una única vez.
+            if (d > 5 && ct >= d - 0.3) avanzarPorFin(msgVideoId);
           }
         }
         if (data.event === 'onStateChange' || data.event === 'initialDelivery') {
@@ -900,10 +991,7 @@ export default function Buscar() {
             setReproduciendo(false);
             reproduciendoRef.current = false;
           } else if (state === 0) {
-            if (!finDisparadoRef.current && Date.now() - trackStartTimeRef.current > 1500) {
-              finDisparadoRef.current = true;
-              siguienteRef.current(true);
-            }
+            avanzarPorFin(msgVideoId);
           }
         }
         if (data.event === 'onReady') {
@@ -955,7 +1043,7 @@ export default function Buscar() {
         } catch (e) {}
       }
     }
-    if (autoPlayRef.current) {
+    if (autoPlayRef.current && !tvRef.current) {
       player.play();
       if (Platform.OS === 'web') {
         const el = (globalThis as any).document?.querySelector('video') as any;
@@ -978,7 +1066,7 @@ export default function Buscar() {
     const onEnded = () => {
       setReproduciendo(false);
       // Avanza siempre al terminar; el toggle autoSiguiente no debería bloquear el avance natural de la cola.
-      siguiente(true);
+      avanzarPorFin();
     };
     // Cuando hay metadatos (duración conocida), aplicar seek pendiente si existe.
     const applyPendingSeek = () => {
@@ -1015,14 +1103,55 @@ export default function Buscar() {
     setRepeat(next); AsyncStorage.setItem('qp_repeat', next).catch(() => {});
   }
 
-  async function buscar() {
+  async function buscar(tipo?: 'all' | 'videos' | 'songs', mas = false) {
     const q = query.trim();
     if (!q) return;
-    setLoading(true); setError(null);
-    try { const data = await api.search(q, 15); setResults(data.results || []); }
-    catch (e: any) { setError(e?.message || 'Error de búsqueda'); setResults([]); }
-    finally { setLoading(false); }
+    const t = tipo || searchType;
+    if (mas && (!nextPage || loadingMore || loading)) return;
+    const reqId = ++searchReqRef.current;
+    if (mas) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+      if (tipo) setResults([]);
+      setNextPage(null);
+    }
+    setError(null);
+    try {
+      const data = await api.search(q, mas ? 20 : 30, t, mas ? nextPage : null);
+      if (reqId !== searchReqRef.current) return;
+      const nuevos = data.results || [];
+      if (mas) {
+        setResults((prev) => {
+          const vistos = new Set(prev.map((r) => r.id));
+          return prev.concat(nuevos.filter((r) => !vistos.has(r.id)));
+        });
+      } else {
+        setResults(nuevos);
+      }
+      setNextPage(data.next || null);
+    } catch (e: any) {
+      if (reqId !== searchReqRef.current) return;
+      setError(e?.message || 'Error de búsqueda');
+      if (!mas) setResults([]);
+    } finally {
+      if (reqId === searchReqRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
   }
+
+  function buscarConTipo(tipo: 'all' | 'videos' | 'songs') {
+    setSearchType(tipo);
+    buscar(tipo);
+  }
+
+  function cargarMas() {
+    buscar(searchType, true);
+  }
+
+  function buscarDesdeInput() { buscar(searchType); }
 
   async function cargarLyrics(item: YtResult) {
     setCargandoLyrics(true);
@@ -1211,7 +1340,7 @@ export default function Buscar() {
             navigator.mediaSession.playbackState = 'paused';
           });
           navigator.mediaSession.setActionHandler('previoustrack', () => anterior());
-          navigator.mediaSession.setActionHandler('nexttrack', () => siguiente(true));
+          navigator.mediaSession.setActionHandler('nexttrack', () => siguiente());
           navigator.mediaSession.setActionHandler('seekto', (details: any) => {
             if (details?.seekTime != null) saltar(details.seekTime);
           });
@@ -1226,7 +1355,7 @@ export default function Buscar() {
         setMediaUri('native:' + item.id);
         setError(null);
         await native.setEq(eqRef.current);
-        if (autoPlay) await native.play(item.id, item.title);
+        if (autoPlay && !tvRef.current) await native.play(item.id, item.title);
         if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
       } else if (audio) { 
         await api.previewAudio(item.id); 
@@ -1272,11 +1401,12 @@ export default function Buscar() {
     }
   }, [versoActivoIdx, lyricsOpen, autoScrollLyrics]);
 
-  function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current) {
+  function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current, autoExtender = false) {
     if (!lista.length) return;
     const isAudio = typeof audio === 'boolean' ? audio : audioRef.current;
     unlockWebAudio();
     autoPlayRef.current = true;
+    autoExtenderRef.current = autoExtender;
     setReproduciendo(true);
     let arr = lista; let start = idx;
     if (shuffleRef.current) {
@@ -1288,15 +1418,23 @@ export default function Buscar() {
     setCola(arr); colaRef.current = arr; aplicar(arr[start], isAudio, start, true);
   }
 
-  function siguiente(_?: any) {
+  function siguiente(auto?: any) {
+    const esFinNatural = auto === true;
     autoPlayRef.current = true;
     finDisparadoRef.current = false;
     trackStartTimeRef.current = Date.now();
     const c = colaRef.current;
     const i = idxRef.current;
 
-    // Si nos acercamos al final de la cola (últimos 2 temas), extender automáticamente la estación de radio
-    if (i >= c.length - 2 && c[i]?.id) {
+    // Repetir 1: al terminar naturalmente, volvemos a empezar la misma canción.
+    if (esFinNatural && repeatRef.current === 'one' && actualRef.current) {
+      reiniciarActual();
+      return;
+    }
+
+    // Extender la "estación" solo si la cola fue generada automáticamente
+    // (radio/recomendados). Una lista del usuario se respeta tal cual.
+    if (autoExtenderRef.current && i >= c.length - 2 && c[i]?.id) {
       api.radio(c[i].id, 20).then((res) => {
         if (res.ok && res.tracks && res.tracks.length > 0) {
           const idsExistentes = new Set(colaRef.current.map((t) => t.id));
@@ -1316,7 +1454,7 @@ export default function Buscar() {
       aplicar(c[i + 1], audioRef.current, i + 1, true);
     } else if (repeatRef.current === 'all' && c.length) {
       aplicar(c[0], audioRef.current, 0, true);
-    } else if (recomendacionesRef.current && recomendacionesRef.current.length > 0) {
+    } else if (autoExtenderRef.current && recomendacionesRef.current && recomendacionesRef.current.length > 0) {
       const rec = recomendacionesRef.current.filter((r) => r.id !== c[i]?.id);
       if (rec.length > 0) {
         setCola(rec);
@@ -1386,6 +1524,7 @@ export default function Buscar() {
   function saltar(t: number) {
     const durTotal = dur > 0 ? dur : (actual?.duration || 0);
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
+    if (tvRef.current) { tv.moverTv(target); setPos(target); return; }
     if (usarNativoRef.current) { native.seek(target); setPos(target); return; }
     if (Platform.OS === 'web') {
       if ((mediaUri || mediaUriRef.current)?.includes('/embed/')) {
@@ -1413,6 +1552,13 @@ export default function Buscar() {
     setPos(target);
   }
   async function togglePlay() {
+    // Con Chromecast conectado, play/pausa controla el TV (el reproductor local está pausado).
+    if (tvRef.current) {
+      const quiereSonar = !tv.sonando;
+      await tv.alternarTv(quiereSonar);
+      setReproduciendo(quiereSonar);
+      return;
+    }
     if (usarNativoRef.current) {
       if (reproduciendo) {
         await native.pause();
@@ -1749,7 +1895,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
   const renderPlayerList = () => (
     <FlatList
       data={proximos}
-      keyExtractor={(it) => 'q-' + it.id}
+      keyExtractor={(it, i) => 'q-' + i + '-' + it.id}
       style={{ flex: 1 }}
       contentContainerStyle={{ paddingBottom: 40 }}
       showsVerticalScrollIndicator={false}
@@ -1811,7 +1957,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
             <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
             <View style={s.ctrlRow}>
-              <Pressable style={s.ctrlBtn} onPress={anterior} disabled={!enCola || qIdx <= 0}>
+              <Pressable style={s.ctrlBtn} onPress={() => anterior()} disabled={!enCola || qIdx <= 0}>
                 <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
               </Pressable>
               <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
@@ -1821,7 +1967,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 </Text>
               </Pressable>
               <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
-              <Pressable style={s.ctrlBtn} onPress={siguiente} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
+              <Pressable style={s.ctrlBtn} onPress={() => siguiente()} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
                 <Text style={[s.ctrl, (!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
               </Pressable>
             </View>
@@ -1850,8 +1996,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
         </View>
       }
-      renderItem={({ item }) => {
-        const realIdx = cola.length > 0 ? cola.indexOf(item) : results.indexOf(item);
+      renderItem={({ item, index }) => {
+        const realIdx = idxEfectivo + 1 + index;
         const isUpcoming = cola.length > 0 && realIdx > qIdx;
         const canMoveUp = isUpcoming && realIdx > qIdx + 1;
         const canMoveDown = isUpcoming && realIdx < cola.length - 1;
@@ -1949,6 +2095,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         >
           <Text style={[s.toolText, crossover && s.toolTextOn]}>⚡ Crossover</Text>
         </Pressable>
+        {CAST_ANDROID ? (
+          tv.conectado ? (
+            <Pressable style={[s.tool, s.toolOn]} onPress={() => { tv.cortar(); setReproduciendo(false); }}>
+              <Text style={[s.toolText, s.toolTextOn]}>📺 {tv.nombre || 'TV'} · Detener</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={[s.tool, tv.ocupado && s.toolOn]} onPress={() => tv.conectar()} disabled={tv.ocupado}>
+              <Text style={[s.toolText, tv.ocupado && s.toolTextOn]}>
+                {tv.ocupado ? '⏳ Buscando TV…' : '📺 Chromecast'}
+              </Text>
+            </Pressable>
+          )
+        ) : null}
         <Pressable
           style={[s.tool, lyricsOpen && s.toolOn]}
           onPress={() => {
@@ -1976,6 +2135,15 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={s.toolText}>💡 Info</Text>
         </Pressable>
       </View>
+      {CAST_ANDROID && CastButtonHost ? (
+        <View style={{ width: 1, height: 1, opacity: 0, overflow: 'hidden' }} pointerEvents="none">
+          <CastButtonHost style={{ width: 1, height: 1 }} tintColor={theme.colors.gold} />
+        </View>
+      ) : null}
+      {tv.error ? <Text style={s.eqNote}>{tv.error}</Text> : null}
+      {tv.conectado ? (
+        <Text style={s.eqNote}>📺 Transmitiendo a {tv.nombre || 'Chromecast'} · el audio sale por el TV</Text>
+      ) : null}
       {eqOpen && !NATIVE_AUDIO && Platform.OS !== 'web' ? <Text style={s.eqNote}>El ecualizador requiere Web Audio (disponible en la versión web por ahora).</Text> : null}
 
       {renderPlayerList()}
@@ -2015,8 +2183,26 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       <View style={s.searchRow}>
         <TextInput style={s.input} placeholder="Buscar música y videos…" placeholderTextColor={theme.colors.textDim}
-          value={query} onChangeText={setQuery} onSubmitEditing={buscar} returnKeyType="search" autoCorrect={false} />
-        <Pressable style={s.btn} onPress={buscar}><Text style={s.btnText}>🔎</Text></Pressable>
+          value={query} onChangeText={setQuery} onSubmitEditing={buscarDesdeInput} returnKeyType="search" autoCorrect={false} />
+        <Pressable style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></Pressable>
+      </View>
+      <View style={{ flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4 }}>
+        {(['all', 'videos', 'songs'] as const).map((t) => {
+          const activo = t === searchType;
+          return (
+            <Pressable
+              key={t}
+              onPress={() => buscarConTipo(t)}
+              style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14,
+                backgroundColor: activo ? theme.colors.gold + '22' : 'transparent',
+                borderWidth: 1, borderColor: activo ? theme.colors.gold : theme.colors.border }}
+            >
+              <Text style={{ color: activo ? theme.colors.gold : theme.colors.textDim, fontSize: 12, fontWeight: activo ? '700' : '400' }}>
+                {t === 'all' ? '🌐 Todo' : t === 'videos' ? '▶️ Videos' : '🎵 Canciones'}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <View style={s.toggleRow}>
@@ -2046,8 +2232,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, soloAudio)}>
               <Image source={{ uri: item.thumb }} style={s.thumb} />
               <View style={{ flex: 1 }}>
-                <Text style={s.title} numberOfLines={2}>{item.title}</Text>
-                <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}</Text>
+                <Text style={s.title} numberOfLines={2}>
+                  {item.kind === 'song' ? '🎵 ' : item.kind === 'short' ? '⚡ ' : ''}
+                  {item.title}
+                </Text>
+                <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}{item.live ? ' · 🔴 EN VIVO' : ''}</Text>
               </View>
             </Pressable>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
@@ -2065,6 +2254,20 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </View>
           </View>
         )}
+        ListFooterComponent={
+          results.length > 0 && nextPage ? (
+            <Pressable
+              style={{ marginTop: 12, marginBottom: 8, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
+                backgroundColor: theme.colors.surface2, borderWidth: 1, borderColor: theme.colors.border }}
+              onPress={cargarMas}
+              disabled={loadingMore}
+            >
+              <Text style={{ color: theme.colors.gold, fontWeight: '700' }}>
+                {loadingMore ? '⏳ Cargando…' : '⬇️ Cargar más resultados'}
+              </Text>
+            </Pressable>
+          ) : null
+        }
         ListEmptyComponent={
           !loading ? (
             historial.length > 0 || recomendaciones.length > 0 ? (

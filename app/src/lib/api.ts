@@ -7,6 +7,19 @@ export type YtResult = {
   duration: number;
   channel: string;
   thumb: string;
+  /** Origen del resultado: video normal, Short o canción de YouTube Music. */
+  kind?: 'video' | 'short' | 'song';
+  live?: boolean;
+  views?: string;
+  published?: string;
+};
+
+export type YtSearchResponse = {
+  ok: boolean;
+  results: YtResult[];
+  /** Token para pedir la página siguiente (solo videos). */
+  next?: string | null;
+  counts?: { videos: number; songs: number };
 };
 
 export type CookieStatus = {
@@ -95,8 +108,15 @@ export type CrewTrack = {
 export const api = {
   health: () => getJson<{ ok: boolean; ytdlp: boolean; ffmpeg: boolean; deno: boolean }>('/api/health', 8000),
 
-  search: (q: string, n = 15) =>
-    withRetry(() => getJson<{ ok: boolean; results: YtResult[] }>(`/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}`, 25000)),
+  search: (q: string, n = 20, type: 'all' | 'videos' | 'songs' = 'all', ct?: string | null) =>
+    withRetry(() =>
+      getJson<YtSearchResponse>(
+        `/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}&type=${encodeURIComponent(type)}${
+          ct ? `&ct=${encodeURIComponent(ct)}` : ''
+        }`,
+        25000
+      )
+    ),
 
   // preview necesita yt-dlp + ffmpeg — puede demorar hasta 60s en servidor cloud
   preview: (id: string) =>

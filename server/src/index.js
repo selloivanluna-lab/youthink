@@ -12,6 +12,7 @@ const cp = require('child_process');
 const { requireAuth, verifyToken } = require('./auth');
 const cookies = require('./cookies');
 const ytmusic = require('./ytmusic');
+const innertube = require('./innertube');
 const browser = require('./browser');
 const r2 = require('./r2');
 
@@ -687,20 +688,107 @@ function getOAuthCreds() {
 
   if (p === '/api/ytsearch') {
     const q = (url.searchParams.get('q') || '').trim();
-    const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '12', 10) || 12, 1), 25);
-    if (!q) { respond(res, 400, { error: 'falta ?q=' }); return; }
-    // 1. Intentamos con ytmusicapi (ultrarrápido, ~300ms, sin bloqueo de bot de YouTube en cloud)
-    ytmusic.search(q, n, async (err, results) => {
-      if (!err && Array.isArray(results) && results.length > 0) {
-        respond(res, 200, { ok: true, results });
-        return;
+    const n = Math.min(Math.max(parseInt(url.searchParams.get('n') || '20', 10) || 20, 1), 40);
+    const type = (url.searchParams.get('type') || 'all').toLowerCase(); // 'all' | 'videos' | 'songs'
+    const ct = (url.searchParams.get('ct') || '').trim(); // token de continuación (página siguiente)
+    if (!q && !ct) { respond(res, 400, { error: 'falta ?q=' }); return; }
+
+    const fallbackYtDlp = async (lastErr) => {
+      try {
+        await ensureCookiesFile();
+        runYtSearch(q, n, (err2, results2) => {
+          if (err2) { respond(res, 502, { error: 'ytsearch: ' + (lastErr ? lastErr.message : err2.message) }); return; }
+          respond(res, 200, { ok: true, results: results2, next: null });
+        });
+      } catch (e) {
+        respond(res, 502, { error: 'ytsearch: ' + (lastErr ? lastErr.message : e.message) });
       }
-      // Fallback a yt-dlp si ytmusic no devolvió resultados
-      await ensureCookiesFile();
-      runYtSearch(q, n, (err2, results2) => {
-        if (err2) { respond(res, 502, { error: 'ytsearch: ' + (err ? err.message : err2.message) }); return; }
-        respond(res, 200, { ok: true, results: results2 });
+    };
+
+    const dedupe = (arr) => {
+      const seen = new Set();
+      const out = [];
+      for (const it of arr) {
+        if (!it || !it.id || seen.has(it.id)) continue;
+        seen.add(it.id);
+        out.push(it);
+      }
+      return out;
+    };
+
+    // Página siguiente de videos (continuation de InnerTube)
+    if (ct) {
+      innertube.continueSearch(ct, n, (err, results, next) => {
+        if (err) { respond(res, 502, { error: 'ytsearch: ' + err.message }); return; }
+        respond(res, 200, { ok: true, results: results || [], next: next || null });
       });
+      return;
+    }
+
+    // Si el usuario pidió explícitamente canciones, probamos con ytmusicapi primero
+    if (type === 'songs') {
+      ytmusic.search(q, n, (err, results) => {
+        if (!err && Array.isArray(results) && results.length > 0) {
+          respond(res, 200, { ok: true, results: results.map((r) => ({ ...r, kind: 'song' })), next: null });
+          return;
+        }
+        innertube.search(q, n, 'all', (err2, results2, next2) => {
+          if (!err2 && Array.isArray(results2) && results2.length > 0) {
+            respond(res, 200, { ok: true, results: results2, next: next2 || null });
+            return;
+          }
+          fallbackYtDlp(err || err2);
+        });
+      });
+      return;
+    }
+
+    // type === 'videos': solo videos reales de YouTube (entrevistas, podcasts, tutoriales…)
+    if (type === 'videos') {
+      innertube.search(q, n, 'videos', (err, results, next) => {
+        if (!err && Array.isArray(results) && results.length > 0) {
+          respond(res, 200, { ok: true, results, next: next || null });
+          return;
+        }
+        fallbackYtDlp(err);
+      });
+      return;
+    }
+
+    // type === 'all': los VIDEOS tienen prioridad y se completan con canciones de
+    // YouTube Music. Antes, si InnerTube fallaba, el fallback devolvía SOLO canciones
+    // y los videos buscados nunca aparecían.
+    innertube.search(q, n, 'all', (err, results, next) => {
+      const videos = Array.isArray(results) ? results : [];
+
+      const completarConCanciones = () => {
+        if (videos.length >= n) {
+          respond(res, 200, { ok: true, results: videos.slice(0, n), next: next || null });
+          return;
+        }
+        let terminado = false;
+        const listo = (songs) => {
+          if (terminado) return;
+          terminado = true;
+          const canciones = (Array.isArray(songs) ? songs : []).map((s) => ({ ...s, kind: 'song' }));
+          const merged = dedupe([...videos, ...canciones]).slice(0, n);
+          if (merged.length === 0) { fallbackYtDlp(err); return; }
+          respond(res, 200, {
+            ok: true,
+            results: merged,
+            next: next || null,
+            counts: { videos: videos.length, songs: canciones.length },
+          });
+        };
+        // ytmusicapi puede tardar (spawn de Python): no bloqueamos más de 6s
+        const timer = setTimeout(() => listo([]), 6000);
+        ytmusic.search(q, Math.min(n, 15), (err2, songs) => {
+          clearTimeout(timer);
+          listo(err2 ? [] : songs);
+        });
+      };
+
+      completarConCanciones();
     });
     return;
   }

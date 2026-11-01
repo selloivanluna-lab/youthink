@@ -126,6 +126,7 @@ export async function deletePlaylist(id: string): Promise<void> {
   const filtered = locals.filter((p) => p.id !== id);
   await saveLocalPlaylists(filtered);
   await AsyncStorage.removeItem(LOCAL_ITEMS_KEY + id);
+  memItems.delete(id);
 
   try {
     await supabase.from('youthink_playlists').delete().eq('id', id);
@@ -134,24 +135,84 @@ export async function deletePlaylist(id: string): Promise<void> {
 
 // ── Items de una lista ──
 
-export async function getPlaylistItems(playlistId: string): Promise<PlaylistItem[]> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
+// Caché en memoria para que al reabrir una lista sus canciones aparezcan al
+// instante (sin esperar a Supabase) y nunca se muestre "vacía" por un fallo de red.
+const memItems = new Map<string, PlaylistItem[]>();
+
+function mergeItems(remote: PlaylistItem[], local: PlaylistItem[]): PlaylistItem[] {
+  const out: PlaylistItem[] = [];
+  const ids = new Set<string>();
+  for (const it of [...remote, ...local]) {
+    const key = (it.yt_id || it.id || '').trim();
+    if (!key || ids.has(key)) continue;
+    ids.add(key);
+    out.push(it);
+  }
+  out.sort((a, b) => String(a.added_at || '').localeCompare(String(b.added_at || '')));
+  return out;
+}
+
+async function fetchRemoteItems(
+  playlistId: string
+): Promise<{ ok: boolean; items: PlaylistItem[] }> {
+  // Reintenta una vez: los fallos transitorios de red/sesión eran la causa de
+  // que la lista se viera vacía hasta reiniciar la app.
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { ok: false, items: [] };
       const { data, error } = await supabase
         .from('youthink_playlist_items')
         .select('*')
         .eq('playlist_id', playlistId)
         .order('added_at', { ascending: true });
-      if (!error && Array.isArray(data)) {
-        saveLocalItems(playlistId, data).catch(() => {});
-        return data;
-      }
-    }
-  } catch {}
-
-  return getLocalItems(playlistId);
+      if (!error && Array.isArray(data)) return { ok: true, items: data as PlaylistItem[] };
+    } catch {}
+    await new Promise((r) => setTimeout(r, 400 * (intento + 1)));
+  }
+  return { ok: false, items: [] };
 }
+
+/**
+ * Devuelve los items de una lista fusionando Supabase + caché local.
+ * - Nunca borra la caché local si el remoto viene vacío o falla.
+ * - Si ya hay items en memoria, responde al instante y refresca en segundo plano.
+ */
+export async function getPlaylistItems(
+  playlistId: string,
+  opts?: { force?: boolean }
+): Promise<PlaylistItem[]> {
+  return (await getPlaylistItemsDetailed(playlistId, opts)).items;
+}
+
+export async function getPlaylistItemsDetailed(
+  playlistId: string,
+  opts?: { force?: boolean }
+): Promise<{ items: PlaylistItem[]; remoteOk: boolean }> {
+  const local = await getLocalItems(playlistId);
+  const cache = memItems.get(playlistId);
+  const base = cache && cache.length >= local.length ? cache : local;
+
+  const refrescar = async (): Promise<{ items: PlaylistItem[]; remoteOk: boolean }> => {
+    const remote = await fetchRemoteItems(playlistId);
+    const merged = mergeItems(remote.items, base);
+    // Solo escribimos la caché si no perdemos canciones.
+    if (merged.length >= local.length) {
+      await saveLocalItems(playlistId, merged).catch(() => {});
+    }
+    if (merged.length > 0) memItems.set(playlistId, merged);
+    return { items: merged, remoteOk: remote.ok };
+  };
+
+  if (!opts?.force && base.length > 0) {
+    // Respuesta inmediata con lo que ya tenemos + refresco silencioso
+    refrescar().catch(() => {});
+    return { items: base, remoteOk: true };
+  }
+
+  return refrescar();
+}
+
 
 export async function addToPlaylist(playlistId: string, item: YtResult): Promise<void> {
   const items = await getLocalItems(playlistId);
@@ -169,17 +230,21 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
     };
     items.push(newItem);
     await saveLocalItems(playlistId, items);
+    // Reflejar de inmediato en la caché en memoria (así al abrir la lista ya está)
+    memItems.set(playlistId, mergeItems(items, memItems.get(playlistId) || []));
 
-    // Intentar sincronizar con Supabase
+    // Intentar sincronizar con Supabase (si falla, la canción igual queda local)
     try {
       await supabase.from('youthink_playlist_items').upsert(
         {
+          id: newItem.id,
           playlist_id: playlistId,
           yt_id: item.id,
           title: item.title,
           channel: item.channel,
           thumb: item.thumb,
           duration: item.duration,
+          added_at: newItem.added_at,
         },
         { onConflict: 'playlist_id,yt_id', ignoreDuplicates: true }
       );
@@ -191,6 +256,7 @@ export async function removeFromPlaylist(playlistId: string, ytId: string): Prom
   const items = await getLocalItems(playlistId);
   const filtered = items.filter((it) => it.yt_id !== ytId);
   await saveLocalItems(playlistId, filtered);
+  memItems.set(playlistId, filtered);
 
   try {
     await supabase

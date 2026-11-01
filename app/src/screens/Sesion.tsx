@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { theme } from '../theme';
-import { getPlaylists, getPlaylistItems, createPlaylist, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
-import { useNavigation } from '@react-navigation/native';
+import { getPlaylists, getPlaylistItemsDetailed, createPlaylist, deletePlaylist, removeFromPlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { obtenerItemsPlaylistYouTube, refrescarTokenYouTube } from '../lib/youtubeAuth';
 
 type UserInfo = {
   id: string;
@@ -26,6 +27,10 @@ export default function Sesion() {
   const [listaSeleccionada, setListaSeleccionada] = useState<Playlist | null>(null);
   const [itemsLista, setItemsLista] = useState<PlaylistItem[]>([]);
   const [cargandoItems, setCargandoItems] = useState(false);
+  const [errorItems, setErrorItems] = useState('');
+  const [itemsOffline, setItemsOffline] = useState(false);
+  // Evita que la respuesta de una lista lenta pise la lista que el usuario abrió después.
+  const itemsReqRef = useRef(0);
 
   const [nuevaLista, setNuevaLista] = useState('');
   const [creandoLista, setCreandoLista] = useState(false);
@@ -158,26 +163,11 @@ export default function Sesion() {
     if (!ytToken) return;
     setCargandoYTItems(true);
     try {
-      // El id real de la playlist YT viene sin el prefijo 'yt_'
-      const playlistId = lista.id.replace(/^yt_/, '');
-      let all: any[] = [];
-      let pageToken = '';
-      do {
-        const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${pageToken ? '&pageToken=' + pageToken : ''}`;
-        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + ytToken } });
-        const json = await res.json();
-        if (json.error) break;
-        const items = (json.items || []).map((it: any) => ({
-          id: it.snippet.resourceId?.videoId || it.id,
-          title: it.snippet.title,
-          channel: it.snippet.videoOwnerChannelTitle || '',
-          thumb: it.snippet.thumbnails?.medium?.url || it.snippet.thumbnails?.default?.url || '',
-          duration: 0,
-        }));
-        all = [...all, ...items];
-        pageToken = json.nextPageToken || '';
-      } while (pageToken);
-      setYtItems(all);
+      // Usar obtenerItemsPlaylistYouTube: carga caché offline inmediato y refresca en fondo
+      const items = await obtenerItemsPlaylistYouTube(lista.id, (frescos) => {
+        setYtItems(frescos);
+      });
+      setYtItems(items);
     } catch (e) {
       console.warn('[YT Items]', e);
     }
@@ -193,15 +183,18 @@ export default function Sesion() {
     try {
       let allItems: Playlist[] = [];
       let pageToken = '';
+      let tokenActual = token;
       do {
         const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${pageToken ? '&pageToken=' + pageToken : ''}`;
-        let res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+        let res = await fetch(url, { headers: { Authorization: 'Bearer ' + tokenActual } });
         let json = await res.json();
         if (json.error) {
           if (json.error.code === 401) {
             // Token expirado: intentar renovar automáticamente con el refresh_token
             const nuevoToken = await refrescarTokenYouTube();
             if (nuevoToken) {
+              tokenActual = nuevoToken;
+              setYtToken(nuevoToken);
               res = await fetch(url, { headers: { Authorization: 'Bearer ' + nuevoToken } });
               json = await res.json();
               if (json.error) {
@@ -262,14 +255,32 @@ export default function Sesion() {
     setCargandoPlaylists(false);
   };
 
-  const verItems = async (p: Playlist) => {
+  const verItems = async (p: Playlist, force = false) => {
+    const req = ++itemsReqRef.current;
     setListaSeleccionada(p);
+    setItemsLista([]);
+    setErrorItems('');
     setCargandoItems(true);
     try {
-      const items = await getPlaylistItems(p.id);
+      const { items, remoteOk } = await getPlaylistItemsDetailed(p.id, { force });
+      if (req !== itemsReqRef.current) return;
       setItemsLista(items);
-    } catch {}
-    setCargandoItems(false);
+      setItemsOffline(!remoteOk);
+      if (items.length === 0 && !remoteOk) {
+        setErrorItems('No pudimos conectar con el servidor. Las canciones guardadas en este teléfono siguen acá.');
+      }
+    } catch (e: any) {
+      if (req !== itemsReqRef.current) return;
+      setErrorItems(e?.message || 'No se pudieron cargar las canciones');
+    }
+    if (req === itemsReqRef.current) setCargandoItems(false);
+  };
+
+  const cerrarLista = () => {
+    itemsReqRef.current++;
+    setListaSeleccionada(null);
+    setItemsLista([]);
+    setErrorItems('');
   };
 
   const borrarItem = async (ytId: string) => {
@@ -403,6 +414,13 @@ export default function Sesion() {
       linkingSub.remove();
     };
   }, []);
+
+  // Refrescar listas propias cada vez que la pestaña Sesión vuelve al foco
+  useFocusEffect(
+    useCallback(() => {
+      cargarMisListas();
+    }, [])
+  );
 
   const loginGoogle = async () => {
     setSigning(true);
@@ -558,10 +576,10 @@ export default function Sesion() {
               return (
                 <View key={p.id} style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, backgroundColor: theme.colors.surface2 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Pressable style={{ flex: 1 }} onPress={() => estaAbierta ? setListaSeleccionada(null) : verItems(p)}>
+                    <Pressable style={{ flex: 1 }} onPress={() => estaAbierta ? cerrarLista() : verItems(p)}>
                       <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>🎵 {p.nombre}</Text>
                       <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>
-                        {estaAbierta ? 'Tocar para cerrar' : 'Tocar para ver canciones'}
+                        {estaAbierta ? (itemsLista.length > 0 ? `${itemsLista.length} canciones · Tocar para cerrar` : 'Tocar para cerrar') : 'Tocar para ver canciones'}
                       </Text>
                     </Pressable>
                     <Pressable onPress={() => borrarLista(p.id)} style={{ padding: 6 }}>
@@ -574,7 +592,17 @@ export default function Sesion() {
                       {cargandoItems ? (
                         <ActivityIndicator color={theme.colors.gold} size="small" style={{ marginVertical: 8 }} />
                       ) : itemsLista.length === 0 ? (
-                        <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Esta lista está vacía.</Text>
+                        <View style={{ gap: 8 }}>
+                          <Text style={{ color: errorItems ? theme.colors.danger : theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+                            {errorItems || 'Esta lista está vacía.'}
+                          </Text>
+                          <Pressable
+                            style={{ alignSelf: 'flex-start', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}
+                            onPress={() => verItems(p, true)}
+                          >
+                            <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: '700' }}>🔄 Reintentar</Text>
+                          </Pressable>
+                        </View>
                       ) : (
                         <View style={{ gap: 8 }}>
                           {itemsLista.map((it, idx) => (
