@@ -2,9 +2,10 @@ import { useMemo } from 'react';
 import { Platform } from 'react-native';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 
-// En Android reproducimos el audio con el reproductor nativo (NewPipe + Media3).
-// Si el módulo nativo no se pudo registrar (QpAudio === null), caemos al modo
-// de audio por API sin crashear la app.
+// El reproductor nativo (NewPipe + Media3) sólo existe en Android y sólo si el
+// módulo se registró de verdad. Nunca lo damos por disponible "a ciegas": si no
+// está, la pantalla usa el fallback (WebView de YouTube) en lugar de quedarse
+// esperando eventos que jamás van a llegar.
 export const NATIVE_AUDIO = Platform.OS === 'android' && QpAudio !== null;
 
 const noop = () => Promise.resolve(true);

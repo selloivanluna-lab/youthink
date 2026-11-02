@@ -19,6 +19,10 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { api, YtResult } from '../lib/api';
+// WebView: fallback de reproducción en Android cuando el módulo nativo no está
+// disponible. Se carga sólo en nativo para no romper el bundle de web.
+const NativeWebView: any =
+  Platform.OS === 'web' ? null : require('react-native-webview').WebView;
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
@@ -158,6 +162,10 @@ export default function Buscar() {
   const [error, setError] = useState<string | null>(null);
   const [actual, setActual] = useState<YtResult | null>(null);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
+  // Fallback Android: si no hay módulo nativo, el video de YouTube se reproduce
+  // dentro de un WebView (usa la IP del teléfono, no depende del backend).
+  const [webEmbedUri, setWebEmbedUri] = useState<string | null>(null);
+  const webViewRef = useRef<any>(null);
   const [modo, setModo] = useState<Modo>('audio');
   const [soloAudio, setSoloAudio] = useState(true);
   const [reproduciendo, setReproduciendo] = useState(false);
@@ -197,7 +205,74 @@ export default function Buscar() {
     } catch (_) {}
   }
 
-  // En Web: Inyectar regla CSS para que cualquier Modal de React Native Web flote sobre el reproductor persistente
+  // ── Fallback WebView (Android sin módulo nativo) ──────────────────────────
+  // Si `QpAudio` no está disponible, reproducimos el embed oficial de YouTube
+  // dentro de un WebView. Usa la IP del teléfono (no pasa por el backend de
+  // Render, que YouTube bloquea) y funciona en cualquier Android con WebView.
+  const WEBVIEW_MONITOR = `
+    (function () {
+      if (window.__qpMonitor) return;
+      window.__qpMonitor = true;
+      var last = -1;
+      function tick() {
+        try {
+          var v = document.querySelector('video');
+          if (v && window.ReactNativeWebView) {
+            var t = v.currentTime || 0;
+            var d = v.duration || 0;
+            if (Math.abs(t - last) >= 0.25 || v.paused) {
+              last = t;
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                __qp: 1, t: t, d: d, p: !v.paused, e: !!v.ended
+              }));
+            }
+          }
+        } catch (e) {}
+      }
+      setInterval(tick, 500);
+      tick();
+    })();
+    true;
+  `;
+
+  function webViewCmd(js: string) {
+    try { webViewRef.current?.injectJavaScript(js + ';true;'); } catch (_) {}
+  }
+
+  function abrirEnYoutube(id?: string) {
+    const vid = id || actual?.id;
+    if (!vid) return;
+    Linking.openURL('https://www.youtube.com/watch?v=' + vid).catch(() => {});
+  }
+
+  function usarWebView(item: YtResult) {
+    const embed =
+      'https://www.youtube.com/embed/' + item.id +
+      '?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&iv_load_policy=3&fs=1&enablejsapi=1';
+    setWebEmbedUri(embed);
+    setMediaUri('webview:' + item.id);
+    mediaUriRef.current = 'webview:' + item.id;
+    setPos(0); posRef.current = 0;
+    const initialDur = item.duration || 0;
+    setDur(initialDur); durRef.current = initialDur;
+    setReproduciendo(true);
+    reproduciendoRef.current = true;
+    setError(null);
+    setAudioTimeout(false);
+    if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+  }
+
+  function onWebViewMessage(ev: any) {
+    try {
+      const d = JSON.parse(ev?.nativeEvent?.data || '{}');
+      if (!d || d.__qp !== 1) return;
+      if (isFinite(d.t) && d.t >= 0) { setPos(d.t); posRef.current = d.t; }
+      if (isFinite(d.d) && d.d > 0) { setDur(d.d); durRef.current = d.d; }
+      setReproduciendo(Boolean(d.p));
+      if (d.e) avanzarPorFin();
+    } catch (_) {}
+  }
+
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const styleId = 'youthink-modal-zindex';
@@ -441,6 +516,12 @@ export default function Buscar() {
       setReproduciendo(true);
       return;
     }
+    if (webEmbedUri) {
+      webViewCmd("var v=document.querySelector('video'); if(v){v.currentTime=0; v.play();}");
+      setPos(0); posRef.current = 0;
+      setReproduciendo(true);
+      return;
+    }
     if (Platform.OS === 'web') {
       const uri = mediaUriRef.current || '';
       if (uri.includes('/embed/')) {
@@ -626,6 +707,10 @@ export default function Buscar() {
     }).catch(() => {});
   }, []);
 
+  // Despertar el backend al abrir la app: Render (free) duerme y el primer
+  // request puede tardar 30-50s. Así la búsqueda ya lo encuentra despierto.
+  useEffect(() => { api.health().catch(() => {}); }, []);
+
   async function cargarRecomendaciones(historialParaUsar?: YtResult[]) {
     setCargandoRecomendaciones(true);
     try {
@@ -775,6 +860,8 @@ export default function Buscar() {
   useEffect(() => {
     const t = setInterval(() => {
       try {
+        // Fallback WebView: la posición la reporta el propio WebView (onMessage).
+        if (Platform.OS !== 'web' && mediaUriRef.current?.startsWith('webview:')) return;
         // En Web con iframe de YouTube embed: progreso suave SOLO visual + fade de
         // crossover. El avance de pista lo dispara el evento real del reproductor
         // (playerState 0), nunca este temporizador: antes iba "adelantado" y cortaba
@@ -1029,7 +1116,7 @@ export default function Buscar() {
 
   useEffect(() => {
     if (!mediaUri) return;
-    if (mediaUri.startsWith('native:') || mediaUri.includes('/embed/')) return;
+    if (mediaUri.startsWith('native:') || mediaUri.startsWith('webview:') || mediaUri.includes('/embed/')) return;
     setPos(0);
     setDur(0);
     pendingSeekRef.current = null;
@@ -1201,6 +1288,7 @@ export default function Buscar() {
     setPlayerVisible(true);
     if (Platform.OS !== 'web') {
       setMediaUri(null);
+      setWebEmbedUri(null);
     }
     setError(null);
     setAudioTimeout(false);
@@ -1351,29 +1439,37 @@ export default function Buscar() {
       return;
     }
     try {
-      if (audio && NATIVE_AUDIO) {
-        setMediaUri('native:' + item.id);
-        setError(null);
-        await native.setEq(eqRef.current);
-        if (autoPlay && !tvRef.current) await native.play(item.id, item.title);
-        if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      } else if (audio) { 
-        await api.previewAudio(item.id); 
-        setMediaUri(api.audioClipUrl(item.id));
-        if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      } else if (NATIVE_AUDIO && QpAudio) {
-        // En Android: resolvemos el video directamente con NewPipe desde el celular (IP del usuario, sin bloqueo de bot ni demoras de servidor)
-        const v = await QpAudio.resolveVideo(item.id);
-        if (!v || !v.url) throw new Error('No se pudo extraer el video desde YouTube');
-        setMediaUri(v.url);
-      } else {
-        await api.preview(item.id);
-        setMediaUri(api.clipUrl(item.id));
+      // ── Android/iOS nativo ────────────────────────────────────────────────
+      // 1) Módulo nativo disponible (Android): NewPipe extrae el stream en el
+      //    propio teléfono. Es el mejor camino: audio en segundo plano, sin
+      //    backend y sin bloqueo de YouTube por IP de datacenter.
+      if (NATIVE_AUDIO && QpAudio) {
+        if (audio) {
+          setMediaUri('native:' + item.id);
+          setError(null);
+          await native.setEq(eqRef.current);
+          if (autoPlay && !tvRef.current) await native.play(item.id, item.title);
+          if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+          return;
+        }
+        try {
+          const v = await QpAudio.resolveVideo(item.id);
+          if (v && v.url) {
+            setMediaUri(v.url);
+            return;
+          }
+        } catch (_) {
+          // Si NewPipe no puede resolver este video, seguimos con el WebView.
+        }
       }
-    } catch (e: any) { 
-      setError(e?.message || 'No se pudo cargar el medio');
-      if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-      setAudioTimeout(false);
+
+      // 2) Sin módulo nativo (o NewPipe falló): WebView con el embed oficial de
+      //    YouTube. Nunca usamos /api/audio ni /api/clip para reproducir: el
+      //    backend en la nube está bloqueado por YouTube y colgaba la app.
+      usarWebView(item);
+    } catch (e: any) {
+      // Último recurso: WebView con el embed de YouTube.
+      usarWebView(item);
     }
   }
 
@@ -1525,6 +1621,12 @@ export default function Buscar() {
     const durTotal = dur > 0 ? dur : (actual?.duration || 0);
     const target = Math.max(0, Math.min(durTotal || 0, t || 0));
     if (tvRef.current) { tv.moverTv(target); setPos(target); return; }
+    if (webEmbedUri) {
+      webViewCmd("var v=document.querySelector('video'); if(v){v.currentTime=" + target + ";}");
+      setPos(target);
+      posRef.current = target;
+      return;
+    }
     if (usarNativoRef.current) { native.seek(target); setPos(target); return; }
     if (Platform.OS === 'web') {
       if ((mediaUri || mediaUriRef.current)?.includes('/embed/')) {
@@ -1565,6 +1667,16 @@ export default function Buscar() {
         setReproduciendo(false);
       } else {
         await native.resume();
+        setReproduciendo(true);
+      }
+      return;
+    }
+    if (webEmbedUri) {
+      if (reproduciendo) {
+        webViewCmd("var v=document.querySelector('video'); if(v)v.pause();");
+        setReproduciendo(false);
+      } else {
+        webViewCmd("var v=document.querySelector('video'); if(v)v.play();");
         setReproduciendo(true);
       }
       return;
@@ -1635,6 +1747,7 @@ export default function Buscar() {
 
   function cerrar() {
     if (usarNativoRef.current) native.stop();
+    if (webEmbedUri) webViewCmd("var v=document.querySelector('video'); if(v){v.pause();}");
     player.pause();
     // En web, pausar el iframe de YouTube antes de limpiar
     if (Platform.OS === 'web') {
@@ -1653,6 +1766,7 @@ export default function Buscar() {
     setActual(null);
     setPlayerVisible(false);
     setMediaUri(null);
+    setWebEmbedUri(null);
     setQIdx(-1);
     setCola([]);
     colaRef.current = [];
@@ -1663,7 +1777,7 @@ export default function Buscar() {
   // ── Actualizar app (abre enlace de APK) ──
   function actualizarApp() {
     try {
-      Linking.openURL('https://expo.dev/artifacts/eas/_z2QQbuqUx1NnQnopPWJfk-POmYxEIWJ9K6X5RM1Wfg.apk');
+      Linking.openURL('https://github.com/selloivanluna-lab/youthink/releases/latest');
     } catch (e) {}
   }
 
@@ -1904,6 +2018,27 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           {/* Slot de Video (Placeholder en Web para preservar espacio; iframe vive persistente en el portal) */}
           {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
             modo === 'video' ? <View style={s.videoWeb} /> : null
+          ) : Platform.OS !== 'web' && webEmbedUri ? (
+            <View style={[s.video, { overflow: 'hidden', marginBottom: 12 }]}>
+              {NativeWebView ? (
+                <NativeWebView
+                  ref={webViewRef}
+                  source={{ uri: webEmbedUri }}
+                  style={{ flex: 1, backgroundColor: '#000' }}
+                  originWhitelist={['*']}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  allowsInlineMediaPlayback
+                  mediaPlaybackRequiresUserAction={false}
+                  allowsFullscreenVideo
+                  setSupportMultipleWindows={false}
+                  mixedContentMode="always"
+                  injectedJavaScript={WEBVIEW_MONITOR}
+                  onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
+                  onMessage={onWebViewMessage}
+                />
+              ) : null}
+            </View>
           ) : Platform.OS !== 'web' && modo === 'video' ? (
             <VideoView
               player={player}
@@ -1916,8 +2051,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           ) : null}
 
           <View style={s.audioBox}>
-            {/* Portada en modo audio dentro del recuadro principal */}
-            {modo === 'audio' ? (
+            {/* Portada en modo audio dentro del recuadro principal.
+                Si el video corre en el WebView (fallback Android), no repetimos
+                la portada: arriba ya se ve el reproductor de YouTube. */}
+            {modo === 'audio' && !webEmbedUri ? (
               actual?.thumb ? (
                 <Image
                   source={{ uri: actual.thumb }}
@@ -1989,6 +2126,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               >
                 <Text style={s.actionBtnIcon}>➕</Text>
                 <Text style={s.actionBtnText}>Añadir a lista</Text>
+              </Pressable>
+              <Pressable style={s.actionBtn} onPress={() => abrirEnYoutube()}>
+                <Text style={s.actionBtnIcon}>▶️</Text>
+                <Text style={s.actionBtnText}>YouTube</Text>
               </Pressable>
             </View>
           </View>

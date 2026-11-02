@@ -114,8 +114,8 @@ export const api = {
         `/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}&type=${encodeURIComponent(type)}${
           ct ? `&ct=${encodeURIComponent(ct)}` : ''
         }`,
-        25000
-      )
+        22000
+      ), 2, 1500
     ),
 
   // preview necesita yt-dlp + ffmpeg — puede demorar hasta 60s en servidor cloud

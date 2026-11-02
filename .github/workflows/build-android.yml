@@ -6,99 +6,95 @@ on:
     paths:
       - 'app/**'
       - '.github/workflows/build-android.yml'
-  workflow_dispatch:   # permite lanzar el build manualmente desde la UI de GitHub
+  workflow_dispatch:
+
+permissions:
+  contents: write   # necesario para publicar el APK en un Release
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build APK (sin EAS)
+    name: Build APK standalone (Gradle, sin EAS)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
-      - name: Checkout código
+      # ── 1. Código ────────────────────────────────────────────────────────────
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Java 17 (requerido por Gradle / React Native) ─────────────────────
+      # ── 2. JDK 17 (Gradle / AGP / NewPipe) ───────────────────────────────────
       - name: Configurar JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ── 3. Node + cache de npm ───────────────────────────────────────────────
-      - name: Configurar Node 20
+      # ── 3. Node 22 (RN 0.86 exige >= 20.19.4) ────────────────────────────────
+      - name: Configurar Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      # ── 4. Instalar dependencias JS ──────────────────────────────────────────
+      # ── 4. Dependencias JS ───────────────────────────────────────────────────
       - name: Instalar dependencias
         working-directory: app
         run: npm ci
 
-      # ── 5. Expo CLI ──────────────────────────────────────────────────────────
-      - name: Instalar Expo CLI
-        run: npm install -g expo-cli@latest
-
-      # ── 6. Quitar expo-dev-client (causa la pantalla de dev server en debug) ──
-      - name: Quitar expo-dev-client de dependencias
+      # ── 5. Quitar expo-dev-client (APK standalone, sin pantalla de dev server)
+      - name: Quitar expo-dev-client
         working-directory: app
-        run: |
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            delete pkg.dependencies['expo-dev-client'];
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-          npm install --prefer-offline || true
+        run: npm uninstall expo-dev-client --no-save
 
-      # ── 7. Generar proyecto nativo Android (expo prebuild) ───────────────────
-      - name: expo prebuild (genera carpeta android/)
+      # ── 6. Generar android/ desde app.json (incluye autolinking de qp-audio) ──
+      - name: expo prebuild
         working-directory: app
         env:
+          EXPO_NO_TELEMETRY: '1'
           EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL || 'https://youthink-1.onrender.com' }}
           EXPO_PUBLIC_QP_TOKEN: ${{ secrets.EXPO_PUBLIC_QP_TOKEN || '7a5df9bf6747453fa4a97c9b55a62145' }}
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || 'https://prixtmnilittshdegrxq.supabase.co' }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4' }}
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
-        run: npx expo prebuild --platform android --no-install --clean
+        run: npx expo prebuild --platform android --clean --no-install
 
-      # ── 8. Cache de Gradle ───────────────────────────────────────────────────
+      # ── 7. Verificar que el módulo nativo qp-audio entró al proyecto ─────────
+      - name: Verificar autolinking de qp-audio
+        working-directory: app
+        run: |
+          echo "--- Paquetes Expo detectados ---"
+          npx expo-modules-autolinking resolve --platform android | tee /tmp/autolink.json
+          grep -q 'expo.modules.qpaudio' /tmp/autolink.json \
+            || (echo "ERROR: qp-audio no fue autolinkeado" && exit 1)
+
+      # ── 8. Ajustes de build: sin R8 (NewPipe usa reflexión) y firma debug ────
+      - name: Ajustar gradle.properties
+        working-directory: app/android
+        run: |
+          {
+            echo ""
+            echo "# Generado por GitHub Actions"
+            echo "android.enableMinifyInReleaseBuilds=false"
+            echo "android.enableShrinkResourcesInReleaseBuilds=false"
+          } >> gradle.properties
+          grep -A2 'android.enableMinify' gradle.properties
+
+      # ── 9. Cache de Gradle ───────────────────────────────────────────────────
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle-wrapper.properties') }}
+          key: gradle-${{ hashFiles('app/android/**/*.gradle*', 'app/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      # ── 9. Permisos de ejecución para gradlew ────────────────────────────────
-      - name: Permisos gradlew
-        working-directory: app/android
-        run: chmod +x gradlew
-
-      # ── 10. Parchear build.gradle: deshabilitar R8 y usar firma debug ─────────
-      # R8 (minify) rompe NewPipe Extractor que usa reflexión intensamente.
-      # Sin minificación el APK funciona correctamente.
-      - name: Parchear build.gradle (deshabilitar minify + firma debug)
-        working-directory: app/android
-        run: |
-          # Firma: usar debug keystore para no necesitar keystore de producción
-          sed -i 's/signingConfig signingConfigs\.release/signingConfig signingConfigs.debug/g' app/build.gradle || true
-          # Deshabilitar minificación R8 (rompe NewPipe/reflexión)
-          sed -i 's/minifyEnabled enableProguardInReleaseBuilds/minifyEnabled false/g' app/build.gradle || true
-          sed -i 's/minifyEnabled true/minifyEnabled false/g' app/build.gradle || true
-          # Deshabilitar shrinkResources (requiere minify activo)
-          sed -i 's/shrinkResources (minifyEnabled)/shrinkResources false/g' app/build.gradle || true
-          sed -i 's/shrinkResources true/shrinkResources false/g' app/build.gradle || true
-          echo "--- build.gradle release block ---"
-          grep -A 10 'release {' app/build.gradle || true
-
-      # ── 11. Compilar APK Release standalone ──────────────────────────────────
+      # ── 10. Compilar APK release ─────────────────────────────────────────────
       - name: Compilar APK
         working-directory: app/android
         env:
@@ -107,59 +103,52 @@ jobs:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL || 'https://prixtmnilittshdegrxq.supabase.co' }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4' }}
           EXPO_PUBLIC_GEMINI_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_KEY }}
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
-
-      # ── 12. Diagnóstico del APK generado ────────────────────────────────────
-      - name: Verificar APK generado (tamaño y presencia del bundle JS)
-        working-directory: app/android
         run: |
-          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -1)
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No se encontró ningún APK en la carpeta release"
-            exit 1
-          fi
-          SIZE=$(du -sh "$APK_PATH" | cut -f1)
-          echo "APK: $APK_PATH — Tamaño: $SIZE"
-          # Si el APK pesa < 5 MB el bundle JS no fue embebido (app crasheará al iniciar)
-          SIZE_BYTES=$(stat -c%s "$APK_PATH")
-          if [ "$SIZE_BYTES" -lt 5000000 ]; then
-            echo "ADVERTENCIA: APK demasiado pequeño (${SIZE}). El bundle JS probablemente no está embebido."
-          else
-            echo "OK: APK tiene tamaño razonable (${SIZE}). Bundle JS parece embebido."
-          fi
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # ── 13. Subir APK como artifact ──────────────────────────────────────────
-      - name: Subir APK
+      # ── 11. Renombrar con versión + número de build ─────────────────────────
+      - name: Preparar APK
+        id: apk
+        working-directory: app
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then echo "ERROR: no se generó ningún APK"; exit 1; fi
+          NAME="youthink-v${VERSION}-build-${GITHUB_RUN_NUMBER}.apk"
+          cp "$APK" "$NAME"
+          SIZE=$(stat -c%s "$NAME")
+          echo "APK: $NAME ($((SIZE/1024/1024)) MB)"
+          if [ "$SIZE" -lt 5000000 ]; then
+            echo "ERROR: APK demasiado chico, el bundle JS no está embebido"; exit 1
+          fi
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "path=$PWD/$NAME" >> $GITHUB_OUTPUT
+
+      # ── 12. Artifact del run ─────────────────────────────────────────────────
+      - name: Subir artifact
         uses: actions/upload-artifact@v4
         with:
-          name: youthink-app-${{ github.run_number }}
-          path: app/android/app/build/outputs/apk/release/app-release.apk
-          retention-days: 14
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 30
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OPCIONAL: Build release firmado (requiere keystore en GitHub Secrets)
-# Para activarlo, comentá el step "Build APK debug" y descomentá este bloque.
-# ─────────────────────────────────────────────────────────────────────────────
-#
-#      - name: Build APK release (firmado)
-#        working-directory: app/android
-#        env:
-#          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-#          KEY_ALIAS:       ${{ secrets.ANDROID_KEY_ALIAS }}
-#          KEY_PASSWORD:    ${{ secrets.ANDROID_KEY_PASSWORD }}
-#          STORE_PASSWORD:  ${{ secrets.ANDROID_STORE_PASSWORD }}
-#        run: |
-#          echo "$KEYSTORE_BASE64" | base64 --decode > keystore.jks
-#          ./gradlew assembleRelease \
-#            -Pandroid.injected.signing.store.file=$PWD/keystore.jks \
-#            -Pandroid.injected.signing.store.password=$STORE_PASSWORD \
-#            -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-#            -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
-#            --no-daemon
-#
-#      - name: Subir APK release
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: youthink-release-${{ github.run_number }}
-#          path: app/android/app/build/outputs/apk/release/app-release.apk
-#          retention-days: 30
+      # ── 13. Release público → link de descarga directa ───────────────────────
+      - name: Publicar Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-v${{ steps.apk.outputs.version }}-${{ github.run_number }}
+          name: YouThink v${{ steps.apk.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            APK standalone de YouThink (YouThink / Qué Pensabas Bajar).
+
+            - Búsqueda y descargas contra el backend de Render.
+            - Reproducción Android: módulo nativo `qp-audio` (NewPipe) si está
+              disponible; si no, WebView con el embed de YouTube (sin depender
+              del backend bloqueado).
+            - Firmado con keystore de debug: desinstalá la versión anterior antes
+              de instalar si Android rechaza la actualización.
+          files: ${{ steps.apk.outputs.path }}
+          fail_on_unmatched_files: true
+          make_latest: true
