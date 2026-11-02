@@ -1791,6 +1791,23 @@ export default function Buscar() {
     const url = (soloAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)) + `&dl=1&nombre=${encodeURIComponent(filename)}`;
 
     try {
+      // Android con módulo nativo: resolvemos el stream EN EL TELÉFONO (IP real,
+      // sin el bloqueo que YouTube aplica a los servidores de Render) y dejamos
+      // que Android lo descargue/abra. Evita el backend roto por completo.
+      if (Platform.OS !== 'web' && QpAudio) {
+        try {
+          const r: any = soloAudio
+            ? await QpAudio.resolveAudio(actual.id)
+            : await QpAudio.resolveVideo(actual.id);
+          if (r && r.url) {
+            await Linking.openURL(r.url);
+            return;
+          }
+        } catch (_) {
+          // Si el módulo no puede resolverlo, probamos el backend de siempre.
+        }
+      }
+
       // 1. Asegurar que el backend haya generado el clip en disco (evita error de archivo inexistente)
       if (soloAudio) {
         await api.previewAudio(actual.id);

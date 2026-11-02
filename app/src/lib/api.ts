@@ -118,16 +118,18 @@ export const api = {
       ), 2, 1500
     ),
 
-  // preview necesita yt-dlp + ffmpeg — puede demorar hasta 60s en servidor cloud
+  // preview necesita yt-dlp + ffmpeg — puede demorar en servidor cloud.
+  // Presupuesto corto: si el backend está bloqueado por YouTube, mejor fallar
+  // rápido y usar el enlace directo.
   preview: (id: string) =>
-    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 75000), 2, 2000),
+    withRetry(() => getJson<{ ok: boolean; clip: string }>(`/api/ytpreview?id=${encodeURIComponent(id)}`, 22000), 1, 2000),
 
   // URL absoluta para expo-video. El token va en la URL (los reproductores no mandan headers).
   clipUrl: (id: string) => `${API_URL}/api/clip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
 
-  // Modo solo audio (ahorra datos en 4G). Reintenta por si el server está despertando (cold start).
+  // Modo solo audio (ahorra datos en 4G).
   previewAudio: (id: string) =>
-    withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 30000)),
+    withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 18000)),
   audioClipUrl: (id: string) =>
     `${API_URL}/api/aclip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
 
