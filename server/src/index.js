@@ -51,6 +51,10 @@ const AUDIO_DIR = path.join(TMP_DIR, 'Audio');
 const DESCARGAS_DIR = path.join(TMP_DIR, 'Descargas');
 const CLIP_SECONDS = Number(process.env.CLIP_SECONDS || 45);
 const AUDIO_SECONDS = Number(process.env.AUDIO_SECONDS || 7200); // 2 horas (soporta mixes y sets largos)
+// Cadena de formatos para audio. 139/140 son audio-only (los más livianos), pero
+// desde IPs de datacenter el cliente `web_embedded` suele no ofrecerlos: por eso
+// terminamos en 18 (progresivo m4a con audio AAC), que casi siempre está.
+const AUDIO_FORMAT = process.env.AUDIO_FORMAT || '139/140/bestaudio[ext=m4a]/bestaudio/b[ext=mp4][height<=480]/18/b';
 const CLIP_CACHE = {};
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -302,7 +306,10 @@ function runYtAudio(id, cb) {
     if (att.cookies && process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
     // Con deno activo, --download-sections es rápido (segundos) y recorta el audio,
     // así no bajamos 10-60 min completos. Formato liviano (139=48kbps m4a).
-    args.push('-f', '139/140/bestaudio[ext=m4a]/bestaudio',
+    // Cadena de fallback larga: `web_embedded` (el único cliente que resuelve desde
+    // Render) muchas veces NO expone 139/140; en ese caso caemos a formatos
+    // progresivos (18 = m4a 360p) antes de rendirnos.
+    args.push('-f', AUDIO_FORMAT,
       '--download-sections', '*0-' + AUDIO_SECONDS,
       '-o', out,
       '--no-warnings', '--no-playlist',
@@ -342,8 +349,8 @@ const YT_URL_CACHE = new Map(); // 'a:<id>' | 'v:<id>' -> { url, exp }
 function ytStreamFormat(kind) {
   return kind === 'video'
     // Un solo archivo progresivo (con audio): no se puede proxear un merge.
-    ? '18/b[ext=mp4][height<=360]/b[ext=mp4]'
-    : '140/139/bestaudio[ext=m4a]/bestaudio';
+    ? '18/b[ext=mp4][height<=360]/b[ext=mp4]/b'
+    : AUDIO_FORMAT;
 }
 
 function runYtUrl(id, kind, cb) {
