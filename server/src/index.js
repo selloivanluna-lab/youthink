@@ -413,7 +413,7 @@ function ytFriendlyError(err, kind) {
 }
 
 // Proxy del medio: reenvía Range para que el player pueda seekear.
-function pipeRemoteMedia(req, res, mediaUrl, contentType) {
+function pipeRemoteMedia(req, res, mediaUrl, contentType, downloadFilename, onFail) {
   let u;
   try { u = new URL(mediaUrl); } catch (e) { respond(res, 502, { error: 'URL de medio inválida' }); return; }
   const headers = {
@@ -426,12 +426,22 @@ function pipeRemoteMedia(req, res, mediaUrl, contentType) {
   const lib = u.protocol === 'https:' ? https : http;
   let responded = false;
   const r = lib.request(u, { method: 'GET', headers }, (rr) => {
+    // URL expirada / bloqueada: dejamos que el llamador limpie la caché y reintente.
+    if ((rr.statusCode || 200) >= 400) {
+      try { rr.resume(); } catch (e) {}
+      if (onFail) { onFail(rr.statusCode); return; }
+      if (!responded) { responded = true; respond(res, 502, { error: 'YouTube devolvió HTTP ' + rr.statusCode }); }
+      return;
+    }
     responded = true;
     const h = {
       'Content-Type': rr.headers['content-type'] || contentType || 'application/octet-stream',
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-store',
     };
+    if (downloadFilename) {
+      h['Content-Disposition'] = `attachment; filename="${encodeURIComponent(downloadFilename)}"`;
+    }
     ['content-length', 'content-range', 'accept-ranges'].forEach((k) => { if (rr.headers[k]) h[k] = rr.headers[k]; });
     res.writeHead(rr.statusCode || 200, h);
     rr.on('error', () => { try { res.destroy(); } catch (e) {} });
@@ -444,6 +454,47 @@ function pipeRemoteMedia(req, res, mediaUrl, contentType) {
   });
   req.on('aborted', () => { try { r.destroy(); } catch (e) {} });
   r.end();
+}
+
+// Streaming directo: resuelve la URL con yt-dlp (`-g`, ~4s) y hace de proxy.
+// Mucho más rápido que descargar el archivo entero en el servidor (eso era lo
+// que tardaba >100s y hacía fallar las descargas desde el celular).
+function streamYtMedia(req, res, id, kind, downloadFilename) {
+  const key = (kind === 'video' ? 'v:' : 'a:') + id;
+  const intentar = (reintento) => {
+    runYtUrl(id, kind, (err, mediaUrl) => {
+      if (err) {
+        if (reintento) return;
+        // Plan B: descarga clásica en el servidor (puede tardar, pero funciona).
+        if (kind === 'video') {
+          runYtPreview(id, (e2) => {
+            if (e2) { respond(res, 502, { error: ytFriendlyError(e2, kind) }); return; }
+            streamLocalFile(req, res, path.join(CLIP_DIR, id + '.mp4'), 'video/mp4', downloadFilename);
+          });
+        } else {
+          runYtAudio(id, (e2) => {
+            if (e2) { respond(res, 502, { error: ytFriendlyError(e2, kind) }); return; }
+            streamLocalFile(req, res, path.join(AUDIO_DIR, id + '.m4a'), 'audio/mp4', downloadFilename);
+          });
+        }
+        return;
+      }
+      pipeRemoteMedia(
+        req,
+        res,
+        mediaUrl,
+        kind === 'video' ? 'video/mp4' : 'audio/mp4',
+        downloadFilename,
+        () => {
+          // 403/410 típico de URL vencida: limpiamos caché y reintentamos una vez.
+          YT_URL_CACHE.delete(key);
+          if (!reintento) intentar(true);
+          else respond(res, 502, { error: 'YouTube rechazó el stream' });
+        }
+      );
+    });
+  };
+  intentar(false);
 }
 
 // ── streaming de archivo local con Range ─────────────────────────────
@@ -953,10 +1004,8 @@ function getOAuthCreds() {
       return;
     }
     await ensureCookiesFile();
-    runYtPreview(id, (err) => {
-      if (err) { respond(res, 502, { error: 'clip: ' + err.message }); return; }
-      streamLocalFile(req, res, file, 'video/mp4', dl ? nombre : null);
-    });
+    // Streaming directo (proxy con Range) en vez de descargar el clip entero.
+    streamYtMedia(req, res, id, 'video', dl ? nombre : null);
     return;
   }
 
@@ -964,9 +1013,12 @@ function getOAuthCreds() {
     const id = (url.searchParams.get('id') || '').trim();
     if (!/^[\w-]{6,20}$/.test(id)) { respond(res, 400, { error: 'falta ?id= válido' }); return; }
     await ensureCookiesFile();
-    runYtAudio(id, (err) => {
-      if (err) { respond(res, 502, { error: 'audio: ' + err.message }); return; }
-      respond(res, 200, { ok: true, audio: '/api/aclip?id=' + id });
+    // Ya no descargamos el audio en el servidor (tardaba >100s y fallaba).
+    // Sólo verificamos que la URL se pueda resolver y devolvemos el endpoint
+    // de streaming; el celular lo consume con Range desde /api/aclip.
+    runYtUrl(id, 'audio', (err, mediaUrl) => {
+      if (err || !mediaUrl) { respond(res, 502, { error: ytFriendlyError(err, 'audio') }); return; }
+      respond(res, 200, { ok: true, audio: '/api/aclip?id=' + id, stream: true });
     });
     return;
   }
@@ -982,10 +1034,8 @@ function getOAuthCreds() {
       return;
     }
     await ensureCookiesFile();
-    runYtAudio(id, (err) => {
-      if (err) { respond(res, 502, { error: 'audio: ' + err.message }); return; }
-      streamLocalFile(req, res, file, 'audio/mp4', dl ? nombre : null);
-    });
+    // Streaming directo: arranca al toque (y la descarga empieza al instante).
+    streamYtMedia(req, res, id, 'audio', dl ? nombre : null);
     return;
   }
 
