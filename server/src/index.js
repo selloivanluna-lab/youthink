@@ -353,7 +353,7 @@ function ytStreamFormat(kind) {
     : AUDIO_FORMAT;
 }
 
-function runYtUrl(id, kind, cb) {
+function runYtUrl(id, kind, cb, maxMs) {
   const key = (kind === 'video' ? 'v:' : 'a:') + id;
   const hit = YT_URL_CACHE.get(key);
   if (hit && hit.exp > Date.now()) return cb(null, hit.url);
@@ -362,6 +362,8 @@ function runYtUrl(id, kind, cb) {
   const deno = findDeno();
   let lastErr = null;
   const t0 = Date.now();
+  // Presupuesto total: permite fallar rápido (la app no debe esperar 2 minutos).
+  const totalMs = Math.max(5000, Number(maxMs) || YT_TOTAL_MS);
   const attempt = (i) => {
     if (i >= YT_ATTEMPTS.length) return cb(lastErr || new Error('yt-dlp agotó los clientes'));
     const att = YT_ATTEMPTS[i];
@@ -379,9 +381,9 @@ function runYtUrl(id, kind, cb) {
       if (settled) return; settled = true;
       try { p.kill('SIGKILL'); } catch (e) {}
       lastErr = new Error('timeout al resolver la URL');
-      if (i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) return attempt(i + 1);
+      if (i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < totalMs) return attempt(i + 1);
       cb(lastErr);
-    }, Math.max(8000, Math.min(25000, YT_TOTAL_MS - (Date.now() - t0))));
+    }, Math.max(6000, Math.min(20000, totalMs - (Date.now() - t0))));
     p.stdout.on('data', (d) => { out += d.toString(); });
     p.stderr.on('data', (d) => { err += d.toString(); });
     p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; cb(e); });
@@ -392,7 +394,7 @@ function runYtUrl(id, kind, cb) {
       if (u) { YT_URL_CACHE.set(key, { url: u, exp: Date.now() + YT_URL_TTL }); return cb(null, u); }
       const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
       lastErr = new Error(det || 'yt-dlp no devolvió ninguna URL');
-      if (ytRetryable(det) && i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < YT_TOTAL_MS) return attempt(i + 1);
+      if (ytRetryable(det) && i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < totalMs) return attempt(i + 1);
       cb(lastErr);
     });
   };
@@ -456,45 +458,29 @@ function pipeRemoteMedia(req, res, mediaUrl, contentType, downloadFilename, onFa
   r.end();
 }
 
-// Streaming directo: resuelve la URL con yt-dlp (`-g`, ~4s) y hace de proxy.
+// Streaming directo: resuelve la URL con yt-dlp (`-g`) y hace de proxy.
 // Mucho más rápido que descargar el archivo entero en el servidor (eso era lo
 // que tardaba >100s y hacía fallar las descargas desde el celular).
+// Presupuesto corto: si YouTube bloquea al servidor, la app recibe el error en
+// ~18s en vez de quedarse colgada dos minutos.
+const STREAM_RESOLVE_MS = Math.max(6000, Number(process.env.STREAM_RESOLVE_MS || 18000));
+
 function streamYtMedia(req, res, id, kind, downloadFilename) {
   const key = (kind === 'video' ? 'v:' : 'a:') + id;
-  const intentar = (reintento) => {
-    runYtUrl(id, kind, (err, mediaUrl) => {
-      if (err) {
-        if (reintento) return;
-        // Plan B: descarga clásica en el servidor (puede tardar, pero funciona).
-        if (kind === 'video') {
-          runYtPreview(id, (e2) => {
-            if (e2) { respond(res, 502, { error: ytFriendlyError(e2, kind) }); return; }
-            streamLocalFile(req, res, path.join(CLIP_DIR, id + '.mp4'), 'video/mp4', downloadFilename);
-          });
-        } else {
-          runYtAudio(id, (e2) => {
-            if (e2) { respond(res, 502, { error: ytFriendlyError(e2, kind) }); return; }
-            streamLocalFile(req, res, path.join(AUDIO_DIR, id + '.m4a'), 'audio/mp4', downloadFilename);
-          });
-        }
-        return;
-      }
-      pipeRemoteMedia(
-        req,
-        res,
-        mediaUrl,
-        kind === 'video' ? 'video/mp4' : 'audio/mp4',
-        downloadFilename,
-        () => {
-          // 403/410 típico de URL vencida: limpiamos caché y reintentamos una vez.
-          YT_URL_CACHE.delete(key);
-          if (!reintento) intentar(true);
-          else respond(res, 502, { error: 'YouTube rechazó el stream' });
-        }
-      );
+  const contentType = kind === 'video' ? 'video/mp4' : 'audio/mp4';
+  runYtUrl(id, kind, (err, mediaUrl) => {
+    if (err || !mediaUrl) { respond(res, 502, { error: ytFriendlyError(err, kind) }); return; }
+    pipeRemoteMedia(req, res, mediaUrl, contentType, downloadFilename, () => {
+      // 403/410 típico de URL vencida: limpiamos caché y reintentamos una vez.
+      YT_URL_CACHE.delete(key);
+      runYtUrl(id, kind, (e2, u2) => {
+        if (e2 || !u2) { respond(res, 502, { error: ytFriendlyError(e2, kind) }); return; }
+        pipeRemoteMedia(req, res, u2, contentType, downloadFilename, () => {
+          respond(res, 502, { error: 'YouTube rechazó el stream' });
+        });
+      }, STREAM_RESOLVE_MS);
     });
-  };
-  intentar(false);
+  }, STREAM_RESOLVE_MS);
 }
 
 // ── streaming de archivo local con Range ─────────────────────────────
