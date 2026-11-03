@@ -738,57 +738,20 @@ export default function Buscar() {
         setError(res?.error || 'No se pudo transmitir al Chromecast.');
         return;
       }
-      // ── Retry automático si el TV nunca pidió el archivo ──────────────────
-      // Puede ocurrir en el PRIMER intento: el cliente Cast aún no terminó de
-      // iniciar el receiver cuando se llamó a loadMedia. Esperamos hasta 10 s y
-      // si hits === 0 volvemos a resolver con URL nueva y a cargar hasta 3 veces.
-      let reintentosCastHits = 0;
-      const maxReintentosCastHits = 3;
-      const esperarHits = async (): Promise<boolean> => {
-        for (let i = 0; i < 5; i++) {
-          if (cancelado) return false;
-          await new Promise((r) => setTimeout(r, 2000));
-          try {
-            const st: any = await (QpAudio as any)?.castStats?.();
-            if (Number(st?.hits) > 0) return true;
-          } catch (_) {}
-        }
-        return false;
-      };
-      let hitsOk = await esperarHits();
-      while (!hitsOk && reintentosCastHits < maxReintentosCastHits && !cancelado) {
-        reintentosCastHits++;
-        // URL fresca: la anterior puede haber caducado o el TV la rechazó.
-        try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
-        const nuevo = await resolverParaTv(actual, esAudio, true);
-        if (!nuevo?.url || cancelado) break;
-        await tv.transmitir(
-          {
-            id: actual.id,
-            title: actual.title,
-            channel: actual.channel,
-            thumb: actual.thumb,
-            url: nuevo.url,
-            contentType: nuevo.contentType,
-            duration: actual.duration,
-            startTime: 0,
-          },
-          () => resolverParaTv(actual, esAudio, true),
-          async () => (await pedidosTv()) > 0,
-        );
-        if (cancelado) break;
-        hitsOk = await esperarHits();
-      }
-      if (cancelado) return;
-      if (!hitsOk) {
-        // Después de todos los reintentos sigue sin hits: problema de red.
-        setError(
-          tvLocalErrorRef.current
-            ? 'No se pudo preparar el video en el teléfono: ' + tvLocalErrorRef.current
-            : 'El TV no llegó a pedirle el video al teléfono. Verificá que estén en la misma red Wi-Fi ' +
-              'y desactivá el "aislamiento de clientes" del router.',
-        );
-      }
+      // Verificación a los 5 segundos: si el TV nunca pidió el archivo, informar red/aislamiento
+      setTimeout(async () => {
+        if (cancelado) return;
+        try {
+          const st: any = await (QpAudio as any)?.castStats?.();
+          if (st && Number(st.hits) === 0) {
+            setError(
+              tvLocalErrorRef.current
+                ? 'No se pudo preparar el video en el teléfono: ' + tvLocalErrorRef.current
+                : 'El TV no llegó a pedirle el video al teléfono. Verificá que estén en la misma red Wi-Fi y desactivá "aislamiento de clientes" en el router.'
+            );
+          }
+        } catch (_) {}
+      }, 5000);
     })();
 
     return () => { cancelado = true; };
@@ -1510,10 +1473,14 @@ export default function Buscar() {
   }
 
   async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true) {
-    const isAudio = typeof audio === 'boolean' ? audio : audioRef.current;
+    // Si estamos en la pestaña Videos o el ítem es un video, se fuerza modo video
+    // y se desactiva la opción de audio por defecto automáticamente.
+    const esVideoItem = searchType === 'videos' || item?.kind === 'video';
+    const isAudio = esVideoItem ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     audioRef.current = isAudio;
     setSoloAudio(isAudio);
     setModo(isAudio ? 'audio' : 'video');
+    AsyncStorage.setItem('qp_soloAudio', isAudio ? '1' : '0').catch(() => {});
     autoPlayRef.current = autoPlay;
     setActual(item);
     guardarEnHistorial(item);
@@ -1731,7 +1698,9 @@ export default function Buscar() {
 
   function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current, autoExtender = false) {
     if (!lista.length) return;
-    const isAudio = typeof audio === 'boolean' ? audio : audioRef.current;
+    const targetItem = lista[idx] || lista[0];
+    const esVideoItem = searchType === 'videos' || targetItem?.kind === 'video';
+    const isAudio = esVideoItem ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     unlockWebAudio();
     autoPlayRef.current = true;
     autoExtenderRef.current = autoExtender;
@@ -1816,8 +1785,14 @@ export default function Buscar() {
     const pTitle = route.params?.autoPlayTitle || '';
     const pQueue: YtResult[] = route.params?.autoPlayQueue;
     const pIndex: number = typeof route.params?.autoPlayIndex === 'number' ? route.params?.autoPlayIndex : 0;
+    const pShuffle: boolean = Boolean(route.params?.autoShuffle);
 
     if (pId) {
+      if (pShuffle) {
+        setShuffle(true);
+        shuffleRef.current = true;
+        AsyncStorage.setItem('qp_shuffle', '1').catch(() => {});
+      }
       setPlayerVisible(true);
       const isAudio = audioRef.current;
       if (Array.isArray(pQueue) && pQueue.length > 0) {
@@ -1840,6 +1815,7 @@ export default function Buscar() {
         autoPlayTitle: undefined,
         autoPlayQueue: undefined,
         autoPlayIndex: undefined,
+        autoShuffle: undefined,
       });
     }
 

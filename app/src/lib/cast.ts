@@ -148,14 +148,13 @@ async function medioArranco(
     } catch (e) {
       sinEstado++;
     }
-    // Si la API no devuelve estado, el pedido del TV al teléfono sirve de
-    // prueba: si descargó bytes, el medio arrancó.
-    if (sinEstado >= 4 && confirmar) {
+    // Si el TV le pidió datos al teléfono (hits > 0), arrancó
+    if (confirmar) {
       try {
         if (await confirmar()) return true;
       } catch (e) {}
     }
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 350));
   }
   return false;
 }
@@ -169,12 +168,12 @@ export async function cargarEnTv(
   const l = getCast();
   if (!l || !media?.url) return { ok: false, error: 'Chromecast no disponible.' };
   try {
-    const sesion = await esperarCliente(15000);
+    const sesion = await esperarCliente(10000);
     if (!sesion?.client) return { ok: false, error: 'No hay ningún Chromecast conectado.' };
 
-    // La primera orden se pierde mientras el receptor termina de arrancar: por
-    // eso no alcanza con reintentar cuando loadMedia falla, hay que comprobar
-    // que el TV esté reproduciendo y volver a mandarla si quedó en el logo.
+    // Pausa breve de 1.2s para darle tiempo al receptor del TV de inicializarse
+    await new Promise((r) => setTimeout(r, 1200));
+
     let actual: TvMedia = media;
     let ultimoError: any = null;
     for (let intento = 0; intento < 4; intento++) {
@@ -215,19 +214,19 @@ export async function cargarEnTv(
         });
       } catch (e) {
         ultimoError = e;
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 800));
         continue;
       }
-      const arranco = await medioArranco(sesion, intento === 0 ? 18000 : 6000, confirmar);
+      const arranco = await medioArranco(sesion, 3200, confirmar);
       if (arranco) return { ok: true };
       ultimoError = null;
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 600));
     }
     return {
       ok: false,
       error: ultimoError
         ? mensajeError(ultimoError)
-        : 'El televisor no inició la reproducción. Probá de nuevo con el botón de Chromecast.',
+        : 'El televisor no inició la reproducción. Probá de nuevo con "🔎 Probar TV".',
     };
   } catch (e: any) {
     return { ok: false, error: mensajeError(e) };

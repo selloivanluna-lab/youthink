@@ -605,6 +605,53 @@ export default function Sesion() {
                         </View>
                       ) : (
                         <View style={{ gap: 8 }}>
+                          {itemsLista.length > 0 && (
+                            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+                              <Pressable
+                                style={{ flex: 1, backgroundColor: theme.colors.gold, borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = itemsLista.map((song) => ({
+                                    id: song.yt_id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                  }));
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[0]?.id,
+                                    autoPlayTitle: queue[0]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: 0,
+                                    autoShuffle: false,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: '#001b1f', fontWeight: '800', fontSize: 13 }}>▶ Reproducir todo</Text>
+                              </Pressable>
+                              <Pressable
+                                style={{ backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.gold, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = itemsLista.map((song) => ({
+                                    id: song.yt_id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                  }));
+                                  const rndIdx = Math.floor(Math.random() * queue.length);
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[rndIdx]?.id,
+                                    autoPlayTitle: queue[rndIdx]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: rndIdx,
+                                    autoShuffle: true,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: theme.colors.gold, fontWeight: '800', fontSize: 13 }}>🔀 Aleatorio</Text>
+                              </Pressable>
+                            </View>
+                          )}
                           {itemsLista.map((it, idx) => (
                             <Pressable
                               key={it.id}
@@ -723,6 +770,53 @@ export default function Sesion() {
                         <Text style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>Lista vacía.</Text>
                       ) : (
                         <View style={{ gap: 8 }}>
+                          {ytItems.length > 0 && (
+                            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+                              <Pressable
+                                style={{ flex: 1, backgroundColor: theme.colors.gold, borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = ytItems.map((song) => ({
+                                    id: song.id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                  }));
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[0]?.id,
+                                    autoPlayTitle: queue[0]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: 0,
+                                    autoShuffle: false,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: '#001b1f', fontWeight: '800', fontSize: 13 }}>▶ Reproducir todo</Text>
+                              </Pressable>
+                              <Pressable
+                                style={{ backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.gold, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = ytItems.map((song) => ({
+                                    id: song.id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                  }));
+                                  const rndIdx = Math.floor(Math.random() * queue.length);
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[rndIdx]?.id,
+                                    autoPlayTitle: queue[rndIdx]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: rndIdx,
+                                    autoShuffle: true,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: theme.colors.gold, fontWeight: '800', fontSize: 13 }}>🔀 Aleatorio</Text>
+                              </Pressable>
+                            </View>
+                          )}
                           {ytItems.map((it, idx) => (
                             <Pressable
                               key={it.id}
