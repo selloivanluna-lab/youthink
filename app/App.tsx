@@ -69,19 +69,12 @@ export default function App() {
           screenOptions={{
             headerStyle: { backgroundColor: theme.colors.surface },
             headerTitleStyle: { color: theme.colors.text },
-            tabBarPosition: 'left',
             tabBarStyle: {
               backgroundColor: theme.colors.surface,
               borderTopColor: theme.colors.border,
-              borderRightColor: theme.colors.border,
-              borderRightWidth: 1,
-              width: 80,
-              paddingTop: 20,
             },
             tabBarActiveTintColor: theme.colors.gold,
             tabBarInactiveTintColor: theme.colors.textDim,
-            tabBarLabelPosition: 'below-icon',
-            tabBarIconStyle: { marginBottom: 0 },
           }}
         >
           <Tab.Screen
