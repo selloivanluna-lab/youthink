@@ -125,10 +125,10 @@ class QpAudioModule : Module() {
     }
 
     // Reproduce un video por su id (resuelve la URL y suena en segundo plano).
-    AsyncFunction<Boolean, String, String>("play") { videoId, title ->
+    AsyncFunction<Boolean, String, String, String, String>("play") { videoId, title, artist, artworkUri ->
       val svc = ensureService()
       svc.applyEq(QpBridge.pendingGains)
-      svc.playVideo(videoId, title)
+      svc.playVideo(videoId, title, artist, artworkUri)
       true
     }
 

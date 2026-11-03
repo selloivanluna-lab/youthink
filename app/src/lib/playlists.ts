@@ -267,6 +267,18 @@ export async function removeFromPlaylist(playlistId: string, ytId: string): Prom
   } catch {}
 }
 
+export async function updatePlaylist(id: string, newNombre: string): Promise<void> {
+  // Actualizar en local
+  const locals = await getLocalPlaylists();
+  const updated = locals.map((p) => p.id === id ? { ...p, nombre: newNombre } : p);
+  await saveLocalPlaylists(updated);
+
+  // Actualizar en Supabase
+  try {
+    await supabase.from('youthink_playlists').update({ nombre: newNombre }).eq('id', id);
+  } catch {}
+}
+
 // ── Importar lista de YouTube por URL o ID (ej: https://www.youtube.com/playlist?list=PL...) ──
 export async function importarPlaylistPublicaYouTube(urlOId: string): Promise<Playlist> {
   let plId = urlOId.trim();

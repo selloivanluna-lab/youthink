@@ -2,8 +2,8 @@
   "expo": {
     "name": "YouThink",
     "slug": "youthink",
-    "version": "0.2.5",
-    "orientation": "landscape",
+    "version": "0.2.6",
+    "orientation": "default",
     "scheme": "youthink",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -24,8 +24,8 @@
     },
     "android": {
       "package": "com.quepensabas.youthink",
-      "versionCode": 16,
-      "orientation": "landscape",
+      "versionCode": 17,
+      "orientation": "default",
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0a",
         "foregroundImage": "./assets/android-icon-foreground.png",

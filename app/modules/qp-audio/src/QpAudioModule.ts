@@ -13,7 +13,7 @@ declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   /** Cuántas veces el TV pidió el medio (0 = nunca llegó al teléfono). */
   castStats(): Promise<CastStats>;
   castResetStats(): Promise<boolean>;
-  play(videoId: string, title: string): Promise<boolean>;
+  play(videoId: string, title: string, artist?: string, artworkUri?: string): Promise<boolean>;
   togglePlay(): Promise<boolean>;
   pause(): Promise<boolean>;
   resume(): Promise<boolean>;

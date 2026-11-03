@@ -15,7 +15,7 @@ export const theme = {
   radius: 12,
 };
 
-export const IS_TV_MODE = true; // forzar TV mode para proyector
+export const IS_TV_MODE = false;
 
 export const TV = {
   focusBorder: '#e5b21f',   // gold border en elemento enfocado

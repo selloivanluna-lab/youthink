@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -7,6 +7,7 @@ import {
   Image,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -26,7 +27,7 @@ const NativeWebView: any =
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
-import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/playlists';
+import { getPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
 import { useCast, CAST_ANDROID } from '../lib/cast';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { supabase } from '../lib/supabase';
@@ -89,49 +90,59 @@ const EQ_BANDS = [60, 170, 350, 1000, 3500, 10000];
 function Barra({ pos, dur, onSeek }: { pos: number; dur: number; onSeek: (t: number) => void }) {
   const [w, setW] = useState(0);
   const [seekingPos, setSeekingPos] = useState<number | null>(null);
+  const wRef = useRef(0);
+  const durRef = useRef(dur);
+  const viewRef = useRef<any>(null);
+  const pageXRef = useRef(0);
+  durRef.current = dur;
+
+  const calcFromPageX = (pageX: number) => {
+    const width = wRef.current;
+    if (width <= 0 || durRef.current <= 0) return null;
+    const x = Math.max(0, Math.min(pageX - pageXRef.current, width));
+    return (x / width) * durRef.current;
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: (e) => {
+        const t = calcFromPageX(e.nativeEvent.pageX);
+        if (t !== null) setSeekingPos(t);
+      },
+      onPanResponderMove: (e) => {
+        const t = calcFromPageX(e.nativeEvent.pageX);
+        if (t !== null) setSeekingPos(t);
+      },
+      onPanResponderRelease: (e) => {
+        const t = calcFromPageX(e.nativeEvent.pageX);
+        setSeekingPos(null);
+        if (t !== null) onSeek(t);
+      },
+      onPanResponderTerminate: () => setSeekingPos(null),
+    })
+  ).current;
 
   const currentPos = seekingPos != null ? seekingPos : pos;
   const pct = dur > 0 ? Math.min(1, Math.max(0, currentPos / dur)) : 0;
 
-  const handleTouch = (e: any, isRelease = false) => {
-    if (w <= 0 || dur <= 0) return;
-    const ne = e?.nativeEvent || e;
-    let clientX: number | undefined = ne.clientX;
-    if (clientX == null && ne.touches && ne.touches[0]) {
-      clientX = ne.touches[0].clientX;
-    }
-    if (clientX == null && ne.changedTouches && ne.changedTouches[0]) {
-      clientX = ne.changedTouches[0].clientX;
-    }
-
-    let x = ne.locationX ?? 0;
-    if (Platform.OS === 'web' && clientX != null && e.currentTarget?.getBoundingClientRect) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      x = clientX - rect.left;
-    }
-
-    const ratio = Math.max(0, Math.min(1, x / w));
-    const target = ratio * dur;
-
-    if (isRelease) {
-      setSeekingPos(null);
-      onSeek(target);
-    } else {
-      setSeekingPos(target);
-    }
-  };
-
   return (
     <View
+      ref={viewRef}
       style={s.barWrap}
       hitSlop={{ top: 20, bottom: 20, left: 10, right: 10 }}
-      onLayout={(e) => setW(e.nativeEvent.layout.width)}
-      onStartShouldSetResponder={() => true}
-      onMoveShouldSetResponder={() => true}
-      onResponderGrant={(e) => handleTouch(e, false)}
-      onResponderMove={(e) => handleTouch(e, false)}
-      onResponderRelease={(e) => handleTouch(e, true)}
-      onResponderTerminate={() => setSeekingPos(null)}
+      onLayout={(e) => {
+        wRef.current = e.nativeEvent.layout.width;
+        setW(e.nativeEvent.layout.width);
+        // Medir posición absoluta en pantalla
+        viewRef.current?.measure((_x: number, _y: number, _w: number, _h: number, px: number) => {
+          pageXRef.current = px;
+        });
+      }}
+      {...panResponder.panHandlers}
     >
       <View style={s.barTrack} pointerEvents="none">
         <View style={[s.barFill, { width: `${pct * 100}%` }]} pointerEvents="none" />
@@ -248,10 +259,57 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    const embed =
-      'https://www.youtube.com/embed/' + cleanId +
-      '?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&iv_load_policy=3&fs=1&enablejsapi=1&origin=https://www.youtube.com&widget_referrer=https://www.youtube.com';
-    setWebEmbedUri(embed);
+    // Embeber reproductor con HTML limpio y YouTube IFrame API oficial en WebView
+    const embedHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <style>
+          * { margin:0; padding:0; overflow:hidden; background:#000; width:100%; height:100%; }
+        </style>
+      </head>
+      <body>
+        <div id="player"></div>
+        <script>
+          var tag = document.createElement('script');
+          tag.src = "https://www.youtube.com/iframe_api";
+          var firstScriptTag = document.getElementsByTagName('script')[0];
+          firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+          var player;
+          function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+              videoId: '${cleanId}',
+              playerVars: {
+                'autoplay': 1,
+                'playsinline': 1,
+                'controls': 1,
+                'rel': 0,
+                'modestbranding': 1,
+                'iv_load_policy': 3,
+                'origin': 'https://www.youtube.com'
+              },
+              events: {
+                'onStateChange': onPlayerStateChange,
+                'onError': onPlayerError
+              }
+            });
+          }
+          function onPlayerError(e) {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ __qpErr: e.data }));
+            }
+          }
+          function onPlayerStateChange(e) {
+            if (e.data === 0 && window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ __qp: 1, e: true }));
+            }
+          }
+        </script>
+      </body>
+      </html>
+    `;
+    setWebEmbedUri(embedHtml);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
     setPos(0); posRef.current = 0;
@@ -267,6 +325,11 @@ export default function Buscar() {
   function onWebViewMessage(ev: any) {
     try {
       const d = JSON.parse(ev?.nativeEvent?.data || '{}');
+      if (d && d.__qpErr != null) {
+        // Error de YouTube detectado (101, 150, 152, 153, etc.) -> avanzar
+        setTimeout(() => avanzarPorFin(), 1200);
+        return;
+      }
       if (!d || d.__qp !== 1) return;
       if (isFinite(d.t) && d.t >= 0) { setPos(d.t); posRef.current = d.t; }
       if (isFinite(d.d) && d.d > 0) { setDur(d.d); durRef.current = d.d; }
@@ -474,6 +537,13 @@ export default function Buscar() {
   const [nuevaListaNombre, setNuevaListaNombre] = useState('');
   const [creandoLista, setCreandoLista] = useState(false);
   const [addingToPlaylist, setAddingToPlaylist] = useState(false);
+  const [managingPlaylist, setManagingPlaylist] = useState<Playlist | null>(null);
+  const [managingItems, setManagingItems] = useState<PlaylistItem[]>([]);
+  const [loadingManagingItems, setLoadingManagingItems] = useState(false);
+  const [deletingItem, setDeletingItem] = useState<string | null>(null);
+  // Renombrar playlist
+  const [renombrando, setRenombrando] = useState<Playlist | null>(null);
+  const [renombreTexto, setRenombreTexto] = useState('');
 
   // Descarga
   const [descargando, setDescargando] = useState(false);
@@ -629,7 +699,7 @@ export default function Buscar() {
             if (sourceRetryTimerRef.current) clearTimeout(sourceRetryTimerRef.current);
             sourceRetryTimerRef.current = setTimeout(async () => {
               try {
-                await native.play(itemToRetry.id, itemToRetry.title);
+                await native.play(itemToRetry.id, itemToRetry.title, itemToRetry.channel || '', itemToRetry.thumb || '');
               } catch (_) {}
             }, 800 * retryN); // backoff: 800ms, 1600ms, 2400ms
           } else {
@@ -1785,7 +1855,7 @@ export default function Buscar() {
           setMediaUri('native:' + item.id);
           setError(null);
           await native.setEq(eqRef.current);
-          if (autoPlay && !tvRef.current) await native.play(item.id, item.title);
+          if (autoPlay && !tvRef.current) await native.play(item.id, item.title, item.channel || '', item.thumb || '');
           if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
           return;
         }
@@ -2364,10 +2434,46 @@ export default function Buscar() {
     if (!nombre) return;
     setCreandoLista(true);
     try {
+      // Intentar crear también en YouTube si hay token
+      const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
+      let ytPlaylistId: string | null = null;
+      if (ytToken) {
+        try {
+          const res = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + ytToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              snippet: { title: nombre, description: 'Creada desde YouThink' },
+              status: { privacyStatus: 'private' },
+            }),
+          });
+          const data = await res.json();
+          if (data?.id) ytPlaylistId = data.id;
+        } catch {}
+      }
+
+      // Crear en Supabase/local
       const pl = await createPlaylist(nombre);
+
+      // Si se creó en YouTube, agregar la canción actual también ahí
+      if (actual && ytPlaylistId && ytToken) {
+        try {
+          await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + ytToken, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              snippet: {
+                playlistId: ytPlaylistId,
+                resourceId: { kind: 'youtube#video', videoId: actual.id },
+              },
+            }),
+          });
+        } catch {}
+      }
+
       if (actual) {
         await addToPlaylist(pl.id, actual);
-        Alert.alert('✅ Lista creada', `"${actual.title}" se añadió a "${nombre}"`);
+        Alert.alert('✅ Lista creada', `"${actual.title}" se añadió a "${nombre}"${ytPlaylistId ? ' (y en YouTube 🎵)' : ''}`);
       }
       setPlaylists((prev) => [pl, ...prev]);
       setPlaylistModalOpen(false);
@@ -2376,6 +2482,46 @@ export default function Buscar() {
       Alert.alert('Error', e?.message || 'No se pudo crear la lista');
     }
     setCreandoLista(false);
+  }
+
+  async function abrirGestionPlaylist(playlist: Playlist) {
+    setManagingPlaylist(playlist);
+    setLoadingManagingItems(true);
+    try {
+      const items = await getPlaylistItems(playlist.id, { force: true });
+      setManagingItems(items);
+    } catch {
+      setManagingItems([]);
+    }
+    setLoadingManagingItems(false);
+  }
+
+  async function borrarDePlaylist(ytId: string) {
+    if (!managingPlaylist) return;
+    setDeletingItem(ytId);
+    try {
+      await removeFromPlaylist(managingPlaylist.id, ytId);
+      setManagingItems((prev) => prev.filter((it) => it.yt_id !== ytId));
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'No se pudo borrar');
+    }
+    setDeletingItem(null);
+  }
+
+  function abrirRenombrar(playlist: Playlist) {
+    setRenombrando(playlist);
+    setRenombreTexto(playlist.nombre);
+  }
+
+  async function confirmarRenombrar() {
+    if (!renombrando || !renombreTexto.trim()) return;
+    try {
+      await updatePlaylist(renombrando.id, renombreTexto.trim());
+      setPlaylists((prev) => prev.map((p) => p.id === renombrando.id ? { ...p, nombre: renombreTexto.trim() } : p));
+      setRenombrando(null);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'No se pudo renombrar');
+    }
   }
 
   // ── Info IA: pide a Gemini un párrafo sobre el artista/canción ──
@@ -2459,12 +2605,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               {NativeWebView ? (
                 <NativeWebView
                   ref={webViewRef}
-                  source={{
-                    uri: webEmbedUri,
-                    headers: {
-                      Referer: 'https://www.youtube.com/',
-                    },
-                  }}
+                  source={
+                    webEmbedUri.startsWith('<')
+                      ? { html: webEmbedUri, baseUrl: 'https://www.youtube.com' }
+                      : { uri: webEmbedUri, headers: { Referer: 'https://www.youtube.com/' } }
+                  }
                   style={{ flex: 1, backgroundColor: '#000' }}
                   originWhitelist={['*']}
                   javaScriptEnabled
@@ -3326,24 +3471,116 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 renderItem={({ item }) => {
                   const esYT = item.id.startsWith('yt_');
                   return (
-                    <Pressable focusable={true}
-                      style={s.plItem}
-                      onPress={() => agregarALista(item)}
-                      disabled={addingToPlaylist}
-                    >
-                      <Text style={s.plItemIcon}>{esYT ? '▶️' : '🎵'}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.plItemText} numberOfLines={1}>{item.nombre}</Text>
-                        <Text style={{ color: theme.colors.textDim, fontSize: 11, marginTop: 1 }}>
-                          {esYT ? (item.items_count !== undefined ? `${item.items_count} temas · YouTube` : 'YouTube') : 'YouThink'}
-                        </Text>
-                      </View>
-                      {addingToPlaylist ? <ActivityIndicator color={theme.colors.gold} size="small" /> : <Text style={s.plItemArrow}>›</Text>}
-                    </Pressable>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Pressable focusable={true}
+                        style={[s.plItem, { flex: 1 }]}
+                        onPress={() => agregarALista(item)}
+                        disabled={addingToPlaylist}
+                      >
+                        <Text style={s.plItemIcon}>{esYT ? '▶️' : '🎵'}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.plItemText} numberOfLines={1}>{item.nombre}</Text>
+                          <Text style={{ color: theme.colors.textDim, fontSize: 11, marginTop: 1 }}>
+                            {esYT ? (item.items_count !== undefined ? `${item.items_count} temas · YouTube` : 'YouTube') : 'YouThink'}
+                          </Text>
+                        </View>
+                        {addingToPlaylist ? <ActivityIndicator color={theme.colors.gold} size="small" /> : <Text style={s.plItemArrow}>›</Text>}
+                      </Pressable>
+                      {/* Botón para ver y gestionar items */}
+                      <Pressable focusable={true}
+                        style={{ padding: 10, marginLeft: 4 }}
+                        onPress={() => { setPlaylistModalOpen(false); abrirGestionPlaylist(item); }}
+                      >
+                        <Text style={{ fontSize: 16 }}>📋</Text>
+                      </Pressable>
+                      {/* Botón para renombrar */}
+                      <Pressable focusable={true}
+                        style={{ padding: 10, marginLeft: 2 }}
+                        onPress={() => { setPlaylistModalOpen(false); abrirRenombrar(item); }}
+                      >
+                        <Text style={{ fontSize: 16 }}>✏️</Text>
+                      </Pressable>
+                    </View>
                   );
                 }}
               />
             )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Modal de gestión de items de playlist */}
+      <Modal visible={!!managingPlaylist} transparent animationType="fade" onRequestClose={() => setManagingPlaylist(null)}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setManagingPlaylist(null)}>
+          <Pressable focusable={true} style={[s.eqPanel, { maxHeight: '85%' }]} onPress={() => {}}>
+            <Text style={s.eqTitle} numberOfLines={1}>📋 {managingPlaylist?.nombre}</Text>
+            {loadingManagingItems ? (
+              <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 20 }} />
+            ) : managingItems.length === 0 ? (
+              <Text style={[s.eqFoot, { marginTop: 12 }]}>Esta lista está vacía.</Text>
+            ) : (
+              <FlatList
+                data={managingItems}
+                keyExtractor={(it) => it.yt_id}
+                style={{ maxHeight: 400 }}
+                renderItem={({ item }) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+                    {item.thumb ? (
+                      <Image source={{ uri: item.thumb }} style={{ width: 48, height: 36, borderRadius: 4, marginRight: 10 }} />
+                    ) : (
+                      <View style={{ width: 48, height: 36, backgroundColor: theme.colors.surface2, borderRadius: 4, marginRight: 10 }} />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.colors.text, fontSize: 13 }} numberOfLines={2}>{item.title}</Text>
+                      <Text style={{ color: theme.colors.textDim, fontSize: 11 }}>{item.channel}</Text>
+                    </View>
+                    <Pressable focusable={true}
+                      style={{ padding: 10 }}
+                      onPress={() => borrarDePlaylist(item.yt_id)}
+                      disabled={deletingItem === item.yt_id}
+                    >
+                      {deletingItem === item.yt_id
+                        ? <ActivityIndicator color={theme.colors.danger} size="small" />
+                        : <Text style={{ fontSize: 18 }}>🗑️</Text>
+                      }
+                    </Pressable>
+                  </View>
+                )}
+              />
+            )}
+            <Pressable focusable={true}
+              style={[s.plCreateBtn, { marginTop: 12, alignSelf: 'flex-end' }]}
+              onPress={() => setManagingPlaylist(null)}
+            >
+              <Text style={s.plCreateBtnText}>Cerrar</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Modal renombrar playlist */}
+      <Modal visible={!!renombrando} transparent animationType="fade" onRequestClose={() => setRenombrando(null)}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setRenombrando(null)}>
+          <Pressable focusable={true} style={[s.eqPanel, { gap: 12 }]} onPress={() => {}}>
+            <Text style={s.eqTitle}>✏️ Renombrar lista</Text>
+            <TextInput
+              style={[s.plInput, { width: '100%' }]}
+              value={renombreTexto}
+              onChangeText={setRenombreTexto}
+              autoFocus
+              autoCorrect={false}
+              placeholder="Nombre de la lista"
+              placeholderTextColor={theme.colors.textDim}
+              onSubmitEditing={confirmarRenombrar}
+            />
+            <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+              <Pressable focusable={true} style={[s.plCreateBtn, { backgroundColor: theme.colors.surface2 }]} onPress={() => setRenombrando(null)}>
+                <Text style={[s.plCreateBtnText, { color: theme.colors.textDim }]}>Cancelar</Text>
+              </Pressable>
+              <Pressable focusable={true} style={s.plCreateBtn} onPress={confirmarRenombrar}>
+                <Text style={s.plCreateBtnText}>Guardar</Text>
+              </Pressable>
+            </View>
           </Pressable>
         </Pressable>
       </Modal>
