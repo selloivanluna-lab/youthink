@@ -738,22 +738,57 @@ export default function Buscar() {
         setError(res?.error || 'No se pudo transmitir al Chromecast.');
         return;
       }
-      // A los 10 s: si el TV nunca pidió el archivo, es un problema de red
-      // (redes distintas o "aislamiento de clientes" en el router), no de la app.
-      setTimeout(async () => {
-        if (cancelado) return;
-        try {
-          const st: any = await (QpAudio as any)?.castStats?.();
-          if (st && Number(st.hits) === 0) {
-            setError(
-              tvLocalErrorRef.current
-                ? 'No se pudo preparar el video en el teléfono: ' + tvLocalErrorRef.current
-                : 'El TV no llegó a pedirle el video al teléfono. Verificá que estén en la misma red Wi-Fi ' +
-                  'y desactivá el "aislamiento de clientes" del router.'
-            );
-          }
-        } catch (_) {}
-      }, 10000);
+      // ── Retry automático si el TV nunca pidió el archivo ──────────────────
+      // Puede ocurrir en el PRIMER intento: el cliente Cast aún no terminó de
+      // iniciar el receiver cuando se llamó a loadMedia. Esperamos hasta 10 s y
+      // si hits === 0 volvemos a resolver con URL nueva y a cargar hasta 3 veces.
+      let reintentosCastHits = 0;
+      const maxReintentosCastHits = 3;
+      const esperarHits = async (): Promise<boolean> => {
+        for (let i = 0; i < 5; i++) {
+          if (cancelado) return false;
+          await new Promise((r) => setTimeout(r, 2000));
+          try {
+            const st: any = await (QpAudio as any)?.castStats?.();
+            if (Number(st?.hits) > 0) return true;
+          } catch (_) {}
+        }
+        return false;
+      };
+      let hitsOk = await esperarHits();
+      while (!hitsOk && reintentosCastHits < maxReintentosCastHits && !cancelado) {
+        reintentosCastHits++;
+        // URL fresca: la anterior puede haber caducado o el TV la rechazó.
+        try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
+        const nuevo = await resolverParaTv(actual, esAudio, true);
+        if (!nuevo?.url || cancelado) break;
+        await tv.transmitir(
+          {
+            id: actual.id,
+            title: actual.title,
+            channel: actual.channel,
+            thumb: actual.thumb,
+            url: nuevo.url,
+            contentType: nuevo.contentType,
+            duration: actual.duration,
+            startTime: 0,
+          },
+          () => resolverParaTv(actual, esAudio, true),
+          async () => (await pedidosTv()) > 0,
+        );
+        if (cancelado) break;
+        hitsOk = await esperarHits();
+      }
+      if (cancelado) return;
+      if (!hitsOk) {
+        // Después de todos los reintentos sigue sin hits: problema de red.
+        setError(
+          tvLocalErrorRef.current
+            ? 'No se pudo preparar el video en el teléfono: ' + tvLocalErrorRef.current
+            : 'El TV no llegó a pedirle el video al teléfono. Verificá que estén en la misma red Wi-Fi ' +
+              'y desactivá el "aislamiento de clientes" del router.',
+        );
+      }
     })();
 
     return () => { cancelado = true; };
@@ -768,24 +803,29 @@ export default function Buscar() {
 
   // Autoprueba del servidor local: dice si el teléfono puede servir el video y
   // si el TV llegó a pedirlo. Es la forma rápida de saber dónde está la falla.
+  // También sirve como REINTENTO MANUAL: resetea la clave de "ya se cargó" para
+  // que el efecto principal pueda volver a dispararse con URL nueva.
   async function probarTv() {
     if (!actual) return;
     const esAudio = actual.kind === 'song';
     try {
       // 1) ¿El teléfono puede servir el video? (resuelve y baja 64 KB)
       const r: any = await (QpAudio as any)?.castSelfTest?.(actual.id, esAudio ? 'audio' : 'video');
-      // 2) Reintento manual: volvemos a cargar el tema en el TV (URL nueva).
+      // 2) Reintento manual: forzamos recargar aunque la clave ya coincida.
       let recarga = 'No hay TV conectado.';
       if (tv.conectado) {
+        // Limpiar la clave guardada para que el reintento no se bloquee a sí mismo.
+        tvCargandoRef.current = '';
         try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
+        const urlFresh = await resolverParaTv(actual, esAudio, true);
         const res = await tv.transmitir(
           {
             id: actual.id,
             title: actual.title,
             channel: actual.channel,
             thumb: actual.thumb,
-            url: (await resolverParaTv(actual, esAudio, true))?.url || '',
-            contentType: esAudio ? 'audio/mp4' : 'video/mp4',
+            url: urlFresh?.url || (esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)),
+            contentType: urlFresh?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
             duration: actual.duration,
             startTime: 0,
           },
@@ -799,19 +839,19 @@ export default function Buscar() {
       const lineas = [
         r?.ok ? '✅ El teléfono sirve el video' : '❌ El teléfono NO pudo servir el video',
         '',
-        'URL: ' + (r?.url || '-'),
+        'URL del servidor: ' + (r?.url || '-'),
         'MIME: ' + (r?.mime || '-'),
-        'HTTP: ' + Number(r?.status || 0) + ' · ' + Number(r?.bytes || 0) + ' bytes · ' + Number(r?.ms || 0) + ' ms',
+        'HTTP ' + Number(r?.status || 0) + ' · ' + Number(r?.bytes || 0) + ' bytes · ' + Number(r?.ms || 0) + ' ms',
         r?.error ? 'Error: ' + r.error : null,
         '',
-        'Pedidos del TV: ' + hits,
+        'Pedidos del TV al teléfono: ' + hits,
         recarga,
         '',
         r?.ok && hits === 0
-          ? 'El TV nunca pidió el archivo. Están en redes distintas o el router tiene "aislamiento de clientes".'
+          ? '⚠️ El TV no llegó al teléfono. Verificá que estén en la misma red Wi-Fi y desactivá "aislamiento de clientes" en el router.'
           : null,
         r?.ok && hits > 0
-          ? 'El TV sí llegó al teléfono: el problema es el formato/receptor, no la red.'
+          ? '✅ El TV sí llegó al teléfono (la red funciona).'
           : null,
       ].filter((x) => x !== null) as string[];
       Alert.alert('Diagnóstico Chromecast', lineas.join('\n'));
