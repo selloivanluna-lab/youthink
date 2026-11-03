@@ -28,6 +28,7 @@ import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
 import { getPlaylists, createPlaylist, addToPlaylist, Playlist } from '../lib/playlists';
 import { useCast, CAST_ANDROID } from '../lib/cast';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
@@ -329,6 +330,39 @@ export default function Buscar() {
   const [velocidad, setVelocidad] = useState<number>(1);
   const velocidadRef = useRef<number>(1);
   const [velocidadOpen, setVelocidadOpen] = useState(false);
+
+  // Control de rotación de pantalla (modo horizontal / landscape para video)
+  const [esLandscape, setEsLandscape] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (Platform.OS !== 'web') {
+        ScreenOrientation.unlockAsync().catch(() => {});
+      }
+    };
+  }, []);
+
+  async function alternarRotacion() {
+    const next = !esLandscape;
+    setEsLandscape(next);
+    if (Platform.OS !== 'web') {
+      try {
+        if (next) {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        } else {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        }
+      } catch (_) {}
+    } else if (typeof window !== 'undefined') {
+      try {
+        if (next) {
+          (window.screen?.orientation as any)?.lock?.('landscape').catch(() => {});
+        } else {
+          (window.screen?.orientation as any)?.unlock?.();
+        }
+      } catch (_) {}
+    }
+  }
 
   // Cargar velocidad guardada al iniciar
   useEffect(() => {
@@ -2065,10 +2099,12 @@ export default function Buscar() {
     } catch (_) {}
   }
   function minimizar() {
+    if (esLandscape) alternarRotacion();
     setPlayerVisible(false);
   }
 
   function cerrar() {
+    if (esLandscape) alternarRotacion();
     if (usarNativoRef.current) native.stop();
     if (webEmbedUri) webViewCmd("var v=document.querySelector('video'); if(v){v.pause();}");
     player.pause();
@@ -2359,7 +2395,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
             modo === 'video' ? <View style={s.videoWeb} /> : null
           ) : Platform.OS !== 'web' && webEmbedUri ? (
-            <View style={[s.video, { overflow: 'hidden', marginBottom: 12 }]}>
+            <View style={[s.video, { overflow: 'hidden', marginBottom: 12, position: 'relative' }, esLandscape && { height: 320 }]}>
               {NativeWebView ? (
                 <NativeWebView
                   ref={webViewRef}
@@ -2378,16 +2414,56 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   onMessage={onWebViewMessage}
                 />
               ) : null}
+              <Pressable
+                onPress={alternarRotacion}
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  zIndex: 99,
+                  backgroundColor: 'rgba(0,0,0,0.65)',
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                  {esLandscape ? '📱 Vertical' : '🔄 Rotar'}
+                </Text>
+              </Pressable>
             </View>
           ) : Platform.OS !== 'web' && modo === 'video' ? (
-            <VideoView
-              player={player}
-              style={s.video}
-              nativeControls={true}
-              fullscreenOptions={{ enable: true }}
-              allowsPictureInPicture={true}
-              contentFit="contain"
-            />
+            <View style={{ position: 'relative', marginBottom: 12 }}>
+              <VideoView
+                player={player}
+                style={[s.video, esLandscape && { height: 320 }]}
+                nativeControls={true}
+                fullscreenOptions={{ enable: true }}
+                allowsPictureInPicture={true}
+                contentFit="contain"
+              />
+              <Pressable
+                onPress={alternarRotacion}
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  zIndex: 99,
+                  backgroundColor: 'rgba(0,0,0,0.65)',
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.25)',
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                  {esLandscape ? '📱 Vertical' : '🔄 Rotar'}
+                </Text>
+              </Pressable>
+            </View>
           ) : null}
 
           <View style={s.audioBox}>
@@ -2541,6 +2617,26 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
         </Pressable>
         <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
+        {(!soloAudio || modo === 'video') && (
+          <Pressable
+            onPress={alternarRotacion}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              marginRight: 8,
+              borderRadius: 8,
+              backgroundColor: esLandscape ? theme.colors.gold : 'rgba(255,255,255,0.08)',
+              borderWidth: 1,
+              borderColor: esLandscape ? theme.colors.gold : 'rgba(255,255,255,0.2)',
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: esLandscape ? '#001b1f' : '#fff' }}>
+              {esLandscape ? '📱 Vertical' : '🔄 Rotar'}
+            </Text>
+          </Pressable>
+        )}
         <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
       </View>
 
@@ -2549,6 +2645,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
           <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Modo Audio' : 'Modo Video'}</Text>
         </Pressable>
+        {(!soloAudio || modo === 'video') && (
+          <Pressable style={[s.tool, esLandscape && s.toolOn]} onPress={alternarRotacion}>
+            <Text style={[s.toolText, esLandscape && s.toolTextOn]}>
+              {esLandscape ? '📱 Pantalla Vertical' : '🔄 Rotar Pantalla'}
+            </Text>
+          </Pressable>
+        )}
         <Pressable style={[s.tool, velocidad !== 1 && s.toolOn]} onPress={() => setVelocidadOpen(true)}>
           <Text style={[s.toolText, velocidad !== 1 && s.toolTextOn]}>
             ⏱️ {velocidad !== 1 ? `${velocidad}x` : 'Velocidad'}
@@ -2955,6 +3058,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     bottom: 0,
                     zIndex: 5000,
                   } as any,
+                  esLandscape && { paddingTop: 16, padding: 8 },
                 ]}
               >
                 {actual?.thumb ? (
@@ -2998,7 +3102,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         )
       ) : Platform.OS !== 'web' ? (
         <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
-          <View style={s.modal}>
+          <View style={[s.modal, esLandscape && { paddingTop: 16, padding: 8 }]}>
             {actual?.thumb ? (
               <View pointerEvents="none" style={StyleSheet.absoluteFill}>
                 <Image

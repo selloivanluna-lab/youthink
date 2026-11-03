@@ -275,7 +275,8 @@ export function useCast() {
   const [esReconexion, setEsReconexion] = useState(false);
   const esReconexionRef = useRef(false);
 
-  const subsRef = useRef<Array<{ remove: () => void }>>([]);
+  const sessionSubsRef = useRef<Array<{ remove: () => void }>>([]);
+  const clientSubsRef = useRef<Array<{ remove: () => void }>>([]);
   const clienteRef = useRef<any>(null);
   const finCbRef = useRef<(() => void) | null>(null);
   const conectadoRef = useRef(false);
@@ -301,10 +302,10 @@ export function useCast() {
     let vivo = true;
 
     const limpiarCliente = () => {
-      subsRef.current.forEach((s) => {
+      clientSubsRef.current.forEach((s) => {
         try { s.remove(); } catch (e) {}
       });
-      subsRef.current = [];
+      clientSubsRef.current = [];
       clienteRef.current = null;
     };
 
@@ -314,7 +315,7 @@ export function useCast() {
       limpiarCliente();
       clienteRef.current = sesion.client;
       try {
-        subsRef.current.push(
+        clientSubsRef.current.push(
           sesion.client.onMediaStatusUpdated((st: any) => {
             if (!vivo) return;
             const estado = st?.playerState;
@@ -322,7 +323,7 @@ export function useCast() {
             if (isFinite(st?.streamPosition) && st.streamPosition >= 0) setPosTv(st.streamPosition);
           })
         );
-        subsRef.current.push(
+        clientSubsRef.current.push(
           sesion.client.onMediaPlaybackEnded(() => {
             if (!vivo) return;
             setSonando(false);
@@ -360,9 +361,9 @@ export function useCast() {
     try {
       const ctx = l.CastContext;
       const sm = ctx.getSessionManager();
-      subsRef.current.push(ctx.onCastStateChanged((estado: string) => {
+      sessionSubsRef.current.push(ctx.onCastStateChanged((estado: string) => {
         if (!vivo) return;
-        if (estado === 'connected') refrescar(false); // no sabemos si es reconexión aquí; onSessionStarted/Resumed es más preciso
+        if (estado === 'connected') refrescar(false);
         else if (estado === 'notConnected' || estado === 'noDevicesAvailable') {
           limpiarCliente();
           setConectado(false);
@@ -370,9 +371,9 @@ export function useCast() {
           setSonando(false);
         }
       }));
-      subsRef.current.push(sm.onSessionStarted(() => refrescar(false)));  // TV cargando la app receptora desde 0
-      subsRef.current.push(sm.onSessionResumed(() => refrescar(true)));   // TV ya tenía el receiver corriendo
-      subsRef.current.push(sm.onSessionEnded(() => {
+      sessionSubsRef.current.push(sm.onSessionStarted(() => refrescar(false)));  // TV cargando la app receptora desde 0
+      sessionSubsRef.current.push(sm.onSessionResumed(() => refrescar(true)));   // TV ya tenía el receiver corriendo
+      sessionSubsRef.current.push(sm.onSessionEnded(() => {
         if (!vivo) return;
         limpiarCliente();
         setConectado(false);
@@ -388,10 +389,10 @@ export function useCast() {
     return () => {
       vivo = false;
       limpiarCliente();
-      subsRef.current.forEach((s) => {
+      sessionSubsRef.current.forEach((s) => {
         try { s.remove(); } catch (e) {}
       });
-      subsRef.current = [];
+      sessionSubsRef.current = [];
     };
   }, []);
 
