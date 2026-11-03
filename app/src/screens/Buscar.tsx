@@ -712,6 +712,14 @@ export default function Buscar() {
 
     let cancelado = false;
     (async () => {
+      // PRIMER CONNECT: el receiver del TV tarda 5-20 s en cargar su app.
+      // Si mandamos loadMedia demasiado pronto, la orden se descarta y el TV
+      // queda en el logo. En reconexión el receiver ya está corriendo y no hay
+      // que esperar.
+      if (!tv.esReconexion) {
+        await new Promise((r) => setTimeout(r, 6500));
+      }
+      if (cancelado) return;
       const directo = await resolverParaTv(actual, esAudio);
       if (cancelado) return;
       // Contamos los pedidos del TV para detectar si llegó al teléfono.
@@ -2506,11 +2514,6 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={s.toolText}>💡 Info</Text>
         </Pressable>
       </View>
-      {CAST_ANDROID && CastButtonHost ? (
-        <View style={{ width: 1, height: 1, opacity: 0, overflow: 'hidden' }} pointerEvents="none">
-          <CastButtonHost style={{ width: 1, height: 1 }} tintColor={theme.colors.gold} />
-        </View>
-      ) : null}
       {tv.error ? <Text style={s.eqNote}>{tv.error}</Text> : null}
       {tv.conectado ? (
         <Text style={s.eqNote}>📺 Transmitiendo a {tv.nombre || 'Chromecast'} · el audio sale por el TV</Text>

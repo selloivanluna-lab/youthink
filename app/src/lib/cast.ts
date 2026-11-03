@@ -67,40 +67,18 @@ async function obtenerSesion(): Promise<any | null> {
 }
 
 /**
- * Espera a que la sesión tenga `client` listo.
+ * Espera a que la sesión tenga `client` (RemoteMediaClient) no-nulo.
  *
- * Justo después de elegir el dispositivo, el receptor todavía está arrancando
- * en el TV: la sesión existe pero `client` es null por unos cientos de ms. Si
- * cargamos el medio en ese momento, la orden se pierde y el TV queda en el logo
- * con el spinner (había que cerrar y abrir la app para que tome).
+ * En react-native-google-cast el client siempre existe una vez que la sesión
+ * está activa, así que este check termina rápido. El delay real que necesita
+ * el receiver del TV para cargar lo maneja el llamador con un timeout explícito.
  */
-/**
- * Espera a que el receiver en el TV esté listo para recibir comandos.
- *
- * En el PRIMER connect, `session.client` (RemoteMediaClient) existe en el
- * teléfono desde el inicio, pero el receiver app del TV tarda 5-20 s en
- * cargar. Si mandamos `loadMedia` antes de que el receiver responda, la
- * orden se descarta silenciosamente y el TV queda en el logo con el spinner.
- *
- * La forma de detectarlo: `getMediaStatus()` devuelve algo (aunque sea null)
- * cuando el receiver ya escucha. Si lanza excepción, todavía está cargando.
- */
-async function esperarCliente(ms = 20000): Promise<any | null> {
+async function esperarCliente(ms = 8000): Promise<any | null> {
   const limite = Date.now() + ms;
   while (Date.now() < limite) {
     const sesion = await obtenerSesion();
-    if (!sesion?.client) {
-      await new Promise((r) => setTimeout(r, 400));
-      continue;
-    }
-    // Ping: ¿el receiver ya responde a getMediaStatus?
-    try {
-      await sesion.client.getMediaStatus();
-      return sesion; // respondió (aunque devuelva null/IDLE): receiver listo
-    } catch (_) {
-      // Lanzó excepción: receiver todavía iniciando, esperamos e intentamos de nuevo
-    }
-    await new Promise((r) => setTimeout(r, 600));
+    if (sesion?.client) return sesion;
+    await new Promise((r) => setTimeout(r, 300));
   }
   return null;
 }
@@ -278,6 +256,13 @@ export function useCast() {
   const [posTv, setPosTv] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  /**
+   * `true` cuando la sesión se restauró (TV ya tenía la app receptora corriendo).
+   * `false` cuando es un connect nuevo (TV tiene que cargar la app receptora desde cero).
+   * Esto le dice a Buscar.tsx si debe esperar ~6 s antes de mandar loadMedia.
+   */
+  const [esReconexion, setEsReconexion] = useState(false);
+  const esReconexionRef = useRef(false);
 
   const subsRef = useRef<Array<{ remove: () => void }>>([]);
   const clienteRef = useRef<any>(null);
@@ -287,6 +272,10 @@ export function useCast() {
   useEffect(() => {
     conectadoRef.current = conectado;
   }, [conectado]);
+
+  useEffect(() => {
+    esReconexionRef.current = esReconexion;
+  }, [esReconexion]);
 
   useEffect(() => {
     if (!CAST_ANDROID) {
@@ -332,7 +321,7 @@ export function useCast() {
       } catch (e) {}
     };
 
-    const refrescar = async () => {
+    const refrescar = async (reconexion: boolean) => {
       try {
         const sesion = await obtenerSesion();
         if (!vivo) return;
@@ -343,25 +332,14 @@ export function useCast() {
           setSonando(false);
           return;
         }
-        // Esperar a que el client del receiver esté listo (hasta 15 s) antes de
-        // marcar como conectado: así el efecto de Buscar.tsx no dispara loadMedia
-        // mientras el TV todavía está cargando la app receptora.
-        const limite = Date.now() + 15000;
-        while (!sesion.client && Date.now() < limite && vivo) {
-          await new Promise((r) => setTimeout(r, 300));
-          // Refrescar la referencia de la sesión en cada vuelta
-          try {
-            const s2 = await obtenerSesion();
-            if (s2?.client) { (sesion as any).client = s2.client; break; }
-          } catch (_) {}
-        }
-        if (!vivo) return;
         let n: string | null = null;
         try {
           const dev = await sesion.getCastDevice();
           n = dev?.friendlyName || null;
         } catch (e) {}
         if (!vivo) return;
+        setEsReconexion(reconexion);
+        esReconexionRef.current = reconexion;
         setConectado(true);
         setNombre(n || 'Chromecast');
         engancharCliente(sesion);
@@ -373,7 +351,7 @@ export function useCast() {
       const sm = ctx.getSessionManager();
       subsRef.current.push(ctx.onCastStateChanged((estado: string) => {
         if (!vivo) return;
-        if (estado === 'connected') refrescar();
+        if (estado === 'connected') refrescar(false); // no sabemos si es reconexión aquí; onSessionStarted/Resumed es más preciso
         else if (estado === 'notConnected' || estado === 'noDevicesAvailable') {
           limpiarCliente();
           setConectado(false);
@@ -381,8 +359,8 @@ export function useCast() {
           setSonando(false);
         }
       }));
-      subsRef.current.push(sm.onSessionStarted(() => refrescar()));
-      subsRef.current.push(sm.onSessionResumed(() => refrescar()));
+      subsRef.current.push(sm.onSessionStarted(() => refrescar(false)));  // TV cargando la app receptora desde 0
+      subsRef.current.push(sm.onSessionResumed(() => refrescar(true)));   // TV ya tenía el receiver corriendo
       subsRef.current.push(sm.onSessionEnded(() => {
         if (!vivo) return;
         limpiarCliente();
@@ -394,7 +372,7 @@ export function useCast() {
       setDisponible(false);
     }
 
-    refrescar();
+    refrescar(true); // al arrancar la app puede ya haber una sesión activa (reconexión automática)
 
     return () => {
       vivo = false;
@@ -467,6 +445,7 @@ export function useCast() {
     posTv,
     error,
     ocupado,
+    esReconexion,
     conectar,
     transmitir,
     alternarTv,
