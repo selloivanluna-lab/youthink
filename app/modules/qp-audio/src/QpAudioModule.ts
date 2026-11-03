@@ -1,5 +1,5 @@
 import { NativeModule, requireOptionalNativeModule } from 'expo';
-import type { QpAudioEvents, ResolvedAudio, ResolvedVideo, CastSource } from './QpAudio.types';
+import type { QpAudioEvents, ResolvedAudio, ResolvedVideo, CastSource, CastSelfTest, CastStats } from './QpAudio.types';
 
 declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   resolveAudio(videoId: string): Promise<ResolvedAudio>;
@@ -8,6 +8,11 @@ declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   castUrl(videoId: string, kind: 'audio' | 'video'): Promise<CastSource>;
   /** Mantiene vivo el proceso/servidor mientras se transmite al TV. */
   castKeepAlive(activo: boolean): Promise<boolean>;
+  /** Autoprueba del servidor local (sin TV). */
+  castSelfTest(videoId: string, kind: 'audio' | 'video'): Promise<CastSelfTest>;
+  /** Cuántas veces el TV pidió el medio (0 = nunca llegó al teléfono). */
+  castStats(): Promise<CastStats>;
+  castResetStats(): Promise<boolean>;
   play(videoId: string, title: string): Promise<boolean>;
   togglePlay(): Promise<boolean>;
   pause(): Promise<boolean>;

@@ -22,6 +22,27 @@ export type CastSource = {
   ip: string;
 };
 
+export type CastSelfTest = {
+  ok: boolean;
+  url: string;
+  ip: string;
+  port: number;
+  mime: string;
+  status: number;
+  bytes: number;
+  contentType: string;
+  ms: number;
+  error: string;
+};
+
+export type CastStats = {
+  hits: number;
+  lastPath: string;
+  lastStatus: number;
+  port: number;
+  ip: string;
+};
+
 export type PlaybackState = {
   isPlaying: boolean;
   position: number;

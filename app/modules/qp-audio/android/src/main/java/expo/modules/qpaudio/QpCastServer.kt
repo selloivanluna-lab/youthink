@@ -38,6 +38,33 @@ object QpCastServer {
   var port: Int = 0
     private set
 
+  /** Cuántas veces el TV pidió el medio. Sirve para saber si llegó al teléfono. */
+  @Volatile
+  var hits: Int = 0
+    private set
+
+  @Volatile
+  var lastPath: String = ""
+    private set
+
+  @Volatile
+  var lastStatus: Int = 0
+    private set
+
+  fun resetStats() {
+    hits = 0
+    lastPath = ""
+    lastStatus = 0
+  }
+
+  fun stats(): Map<String, Any?> = mapOf(
+    "hits" to hits,
+    "lastPath" to lastPath,
+    "lastStatus" to lastStatus,
+    "port" to port,
+    "ip" to (lanIp() ?: ""),
+  )
+
   /** Arranca el servidor (idempotente) y devuelve el puerto. */
   fun ensureStarted(): Int {
     socket?.let { return port }
@@ -68,6 +95,63 @@ object QpCastServer {
       "mime" to st.mime,
       "port" to p,
       "ip" to ip,
+    )
+  }
+
+  /**
+   * Autoprueba: levanta el servidor, resuelve el video y descarga los primeros
+   * 64 KB a través de la URL local. Sirve para saber si el teléfono puede
+   * servir el medio (y con qué estado/MIME) sin depender del TV.
+   */
+  fun selfTest(videoId: String, kind: String): Map<String, Any?> {
+    val t0 = System.currentTimeMillis()
+    var status = 0
+    var bytes = 0
+    var ctype = ""
+    var err = ""
+    var url = ""
+    var mime = ""
+    var ip = ""
+    var p = 0
+    try {
+      val info = prepare(videoId, kind)
+      url = info["url"] as? String ?: ""
+      mime = info["mime"] as? String ?: ""
+      ip = info["ip"] as? String ?: ""
+      p = (info["port"] as? Int) ?: 0
+      val c = URL(url).openConnection() as HttpURLConnection
+      c.connectTimeout = 8000
+      c.readTimeout = 20000
+      c.setRequestProperty("Range", "bytes=0-65535")
+      status = c.responseCode
+      ctype = c.contentType ?: ""
+      val input = if (status >= 400) c.errorStream else c.inputStream
+      if (input != null) {
+        val buf = ByteArray(8192)
+        var total = 0
+        while (total < 65536) {
+          val n = input.read(buf)
+          if (n <= 0) break
+          total += n
+        }
+        bytes = total
+        input.close()
+      }
+      c.disconnect()
+    } catch (e: Throwable) {
+      err = e.message ?: e.toString()
+    }
+    return mapOf(
+      "ok" to (status in 200..299 && bytes > 0),
+      "url" to url,
+      "ip" to ip,
+      "port" to p,
+      "mime" to mime,
+      "status" to status,
+      "bytes" to bytes,
+      "contentType" to ctype,
+      "ms" to (System.currentTimeMillis() - t0),
+      "error" to err,
     )
   }
 
@@ -139,6 +223,8 @@ object QpCastServer {
       val kind = if (params["k"] == "audio") "audio" else "video"
       if (id.isEmpty()) { texto(s, "falta ?v=", 400); return }
 
+      hits += 1
+      lastPath = destino
       proxy(s, id, kind, range, metodo == "HEAD", false)
     } catch (e: Throwable) {
       try { s.close() } catch (_: Throwable) {}
@@ -189,7 +275,17 @@ object QpCastServer {
       }
 
       val out = BufferedOutputStream(s.getOutputStream())
-      val mime = (conn.contentType ?: st.mime).substringBefore(';').ifBlank { st.mime }
+      // Priorizamos el MIME que devolvió el extractor: si YouTube responde
+      // "application/octet-stream" el receptor no reconoce el archivo.
+      val delExtractor = st.mime
+      val delServidor = (conn.contentType ?: "").substringBefore(';').trim()
+      val mime = when {
+        delExtractor.startsWith("video/") || delExtractor.startsWith("audio/") -> delExtractor
+        delServidor.startsWith("video/") || delServidor.startsWith("audio/") -> delServidor
+        kind == "audio" -> "audio/mp4"
+        else -> "video/mp4"
+      }
+      lastStatus = code
       val estado = if (code == 206) "206 Partial Content" else "200 OK"
       val sb = StringBuilder()
       sb.append("HTTP/1.1 ").append(estado).append("\r\n")

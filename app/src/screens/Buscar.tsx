@@ -645,6 +645,9 @@ export default function Buscar() {
   // Al conectar o desconectar el TV hay que volver a cargar el tema.
   useEffect(() => { tvCargandoRef.current = ''; }, [tv.conectado]);
 
+  // Último error al preparar el medio local (para mostrarlo en vez de fallar en silencio).
+  const tvLocalErrorRef = useRef('');
+
   // ── Chromecast: servir el stream desde el teléfono ─────────────────────────
   // El receptor (Default Media Receiver) sólo reproduce archivos directos
   // (mp4/m4a). Mandarle una URL de googlevideo.com falla: esa URL está atada a
@@ -654,14 +657,15 @@ export default function Buscar() {
   // medio desde el teléfono (`http://192.168.x.x:PUERTO/cast?v=...`), que lo
   // reenvía con los headers correctos y soporte de Range (seek).
   async function resolverParaTv(item: YtResult, esAudio: boolean): Promise<{ url: string; contentType: string } | null> {
+    tvLocalErrorRef.current = '';
     if (QpAudio) {
       try {
         if (typeof (QpAudio as any).castUrl === 'function') {
           const r: any = await (QpAudio as any).castUrl(item.id, esAudio ? 'audio' : 'video');
           if (r?.url) return { url: r.url, contentType: r.mime || (esAudio ? 'audio/mp4' : 'video/mp4') };
         }
-      } catch (_) {
-        // Sin servidor local (ej. sin Wi-Fi): caemos a la URL directa.
+      } catch (e: any) {
+        tvLocalErrorRef.current = String(e?.message || e || 'no se pudo preparar el servidor local');
       }
       try {
         if (esAudio) {
@@ -695,6 +699,8 @@ export default function Buscar() {
     (async () => {
       const directo = await resolverParaTv(actual, esAudio);
       if (cancelado) return;
+      // Contamos los pedidos del TV para detectar si llegó al teléfono.
+      try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
       const res = await tv.transmitir({
         id: actual.id,
         title: actual.title,
@@ -708,7 +714,23 @@ export default function Buscar() {
       if (!res?.ok) {
         tvCargandoRef.current = '';
         setError(res?.error || 'No se pudo transmitir al Chromecast.');
+        return;
       }
+      // A los 10 s: si el TV nunca pidió el archivo, es un problema de red
+      // (redes distintas o "aislamiento de clientes" en el router), no de la app.
+      setTimeout(async () => {
+        try {
+          const st: any = await (QpAudio as any)?.castStats?.();
+          if (st && Number(st.hits) === 0) {
+            setError(
+              tvLocalErrorRef.current
+                ? 'No se pudo preparar el video en el teléfono: ' + tvLocalErrorRef.current
+                : 'El TV no llegó a pedirle el video al teléfono. Verificá que estén en la misma red Wi-Fi ' +
+                  'y desactivá el "aislamiento de clientes" del router.'
+            );
+          }
+        } catch (_) {}
+      }, 10000);
     })();
 
     return () => { cancelado = true; };
@@ -720,6 +742,38 @@ export default function Buscar() {
     if (!QpAudio || typeof (QpAudio as any).castKeepAlive !== 'function') return;
     try { (QpAudio as any).castKeepAlive(Boolean(tv.conectado)); } catch (_) {}
   }, [tv.conectado]);
+
+  // Autoprueba del servidor local: dice si el teléfono puede servir el video y
+  // si el TV llegó a pedirlo. Es la forma rápida de saber dónde está la falla.
+  async function probarTv() {
+    if (!actual) return;
+    const esAudio = actual.kind === 'song';
+    try {
+      const r: any = await (QpAudio as any)?.castSelfTest?.(actual.id, esAudio ? 'audio' : 'video');
+      const st: any = await (QpAudio as any)?.castStats?.();
+      const hits = Number(st?.hits || 0);
+      const lineas = [
+        r?.ok ? '✅ El teléfono sirve el video' : '❌ El teléfono NO pudo servir el video',
+        '',
+        'URL: ' + (r?.url || '-'),
+        'MIME: ' + (r?.mime || '-'),
+        'HTTP: ' + Number(r?.status || 0) + ' · ' + Number(r?.bytes || 0) + ' bytes · ' + Number(r?.ms || 0) + ' ms',
+        r?.error ? 'Error: ' + r.error : null,
+        '',
+        'Pedidos del TV: ' + hits,
+        '',
+        r?.ok && hits === 0
+          ? 'El TV nunca pidió el archivo. Están en redes distintas o el router tiene "aislamiento de clientes".'
+          : null,
+        r?.ok && hits > 0
+          ? 'El TV sí llegó al teléfono: el problema es el formato/receptor, no la red.'
+          : null,
+      ].filter((x) => x !== null) as string[];
+      Alert.alert('Diagnóstico Chromecast', lineas.join('\n'));
+    } catch (e: any) {
+      Alert.alert('Diagnóstico Chromecast', 'Error: ' + String(e?.message || e));
+    }
+  }
 
   // Fin natural en el TV: avanzar la cola (una sola vez, con el guard de fin).
   useEffect(() => {
@@ -2335,9 +2389,14 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
         {CAST_ANDROID ? (
           tv.conectado ? (
-            <Pressable style={[s.tool, s.toolOn]} onPress={() => { tv.cortar(); setReproduciendo(false); }}>
-              <Text style={[s.toolText, s.toolTextOn]}>📺 {tv.nombre || 'TV'} · Detener</Text>
-            </Pressable>
+            <>
+              <Pressable style={[s.tool, s.toolOn]} onPress={() => { tv.cortar(); setReproduciendo(false); }}>
+                <Text style={[s.toolText, s.toolTextOn]}>📺 {tv.nombre || 'TV'} · Detener</Text>
+              </Pressable>
+              <Pressable style={s.tool} onPress={probarTv}>
+                <Text style={s.toolText}>🔎 Probar TV</Text>
+              </Pressable>
+            </>
           ) : (
             <Pressable style={[s.tool, tv.ocupado && s.toolOn]} onPress={() => tv.conectar()} disabled={tv.ocupado}>
               <Text style={[s.toolText, tv.ocupado && s.toolTextOn]}>

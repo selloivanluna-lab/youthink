@@ -92,6 +92,21 @@ class QpAudioModule : Module() {
       QpCastServer.prepare(videoId, if (kind == "audio") "audio" else "video")
     }
 
+    // Autoprueba del servidor local (sin TV): resuelve y descarga 64 KB.
+    AsyncFunction<Map<String, Any?>, String, String>("castSelfTest") { videoId, kind ->
+      QpCastServer.selfTest(videoId, if (kind == "audio") "audio" else "video")
+    }
+
+    // Estadísticas: cuántas veces el TV pidió el medio (0 = no llegó al teléfono).
+    AsyncFunction<Map<String, Any?>>("castStats") {
+      QpCastServer.stats()
+    }
+
+    AsyncFunction<Boolean>("castResetStats") {
+      QpCastServer.resetStats()
+      true
+    }
+
     // Mantiene el proceso vivo mientras se transmite al TV (servicio en primer
     // plano), así el servidor HTTP local sigue sirviendo aunque se apague la
     // pantalla del teléfono.
