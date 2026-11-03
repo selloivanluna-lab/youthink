@@ -74,12 +74,33 @@ async function obtenerSesion(): Promise<any | null> {
  * cargamos el medio en ese momento, la orden se pierde y el TV queda en el logo
  * con el spinner (había que cerrar y abrir la app para que tome).
  */
-async function esperarCliente(ms = 15000): Promise<any | null> {
+/**
+ * Espera a que el receiver en el TV esté listo para recibir comandos.
+ *
+ * En el PRIMER connect, `session.client` (RemoteMediaClient) existe en el
+ * teléfono desde el inicio, pero el receiver app del TV tarda 5-20 s en
+ * cargar. Si mandamos `loadMedia` antes de que el receiver responda, la
+ * orden se descarta silenciosamente y el TV queda en el logo con el spinner.
+ *
+ * La forma de detectarlo: `getMediaStatus()` devuelve algo (aunque sea null)
+ * cuando el receiver ya escucha. Si lanza excepción, todavía está cargando.
+ */
+async function esperarCliente(ms = 20000): Promise<any | null> {
   const limite = Date.now() + ms;
   while (Date.now() < limite) {
     const sesion = await obtenerSesion();
-    if (sesion?.client) return sesion;
-    await new Promise((r) => setTimeout(r, 250));
+    if (!sesion?.client) {
+      await new Promise((r) => setTimeout(r, 400));
+      continue;
+    }
+    // Ping: ¿el receiver ya responde a getMediaStatus?
+    try {
+      await sesion.client.getMediaStatus();
+      return sesion; // respondió (aunque devuelva null/IDLE): receiver listo
+    } catch (_) {
+      // Lanzó excepción: receiver todavía iniciando, esperamos e intentamos de nuevo
+    }
+    await new Promise((r) => setTimeout(r, 600));
   }
   return null;
 }

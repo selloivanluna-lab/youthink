@@ -2639,9 +2639,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {loading ? <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 24 }} /> : null}
 
       <FlatList data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
-        renderItem={({ item, index }) => (
+        renderItem={({ item, index }) => {
+          // En la pestaña Videos siempre reproducir en modo video (independiente del switch global).
+          // En Canciones siempre audio. En Todo: respetar el switch.
+          const modoItem = searchType === 'videos' ? false : searchType === 'songs' ? true : soloAudio;
+          return (
           <View style={[s.row, qIdx === index && cola[qIdx]?.id === item.id ? s.rowActiva : null]}>
-            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, soloAudio)}>
+            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, modoItem)}>
               <Image source={{ uri: item.thumb }} style={s.thumb} />
               <View style={{ flex: 1 }}>
                 <Text style={s.title} numberOfLines={2}>
@@ -2660,12 +2664,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
                 </Pressable>
               ) : null}
-              <Pressable onPress={() => reproducir(results, index, soloAudio)} style={{ padding: 6 }}>
-                <Text style={s.play}>{qIdx === index && cola[qIdx]?.id === item.id ? '🔊' : soloAudio ? '🔊' : '▶'}</Text>
+              <Pressable onPress={() => reproducir(results, index, modoItem)} style={{ padding: 6 }}>
+                <Text style={s.play}>{qIdx === index && cola[qIdx]?.id === item.id ? '🔊' : modoItem ? '🔊' : '▶'}</Text>
               </Pressable>
             </View>
           </View>
-        )}
+          );
+        }}
         ListFooterComponent={
           results.length > 0 && nextPage ? (
             <Pressable
