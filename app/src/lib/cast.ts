@@ -66,6 +66,24 @@ async function obtenerSesion(): Promise<any | null> {
   }
 }
 
+/**
+ * Espera a que la sesión tenga `client` listo.
+ *
+ * Justo después de elegir el dispositivo, el receptor todavía está arrancando
+ * en el TV: la sesión existe pero `client` es null por unos cientos de ms. Si
+ * cargamos el medio en ese momento, la orden se pierde y el TV queda en el logo
+ * con el spinner (había que cerrar y abrir la app para que tome).
+ */
+async function esperarCliente(ms = 9000): Promise<any | null> {
+  const limite = Date.now() + ms;
+  while (Date.now() < limite) {
+    const sesion = await obtenerSesion();
+    if (sesion?.client) return sesion;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return null;
+}
+
 /** Abre el diálogo nativo para elegir el dispositivo Chromecast. */
 export async function mostrarDialogoCast(): Promise<{ ok: boolean; error?: string }> {
   const l = getCast();
@@ -85,39 +103,111 @@ export async function mostrarDialogoCast(): Promise<{ ok: boolean; error?: strin
   }
 }
 
+/**
+ * ¿El receptor arrancó de verdad?
+ *
+ * `loadMedia` puede responder OK y el TV descartar la orden igual: el receptor
+ * todavía está levantando su app cuando llega el pedido. Mirar el estado real
+ * del medio es la única forma de saberlo, porque el error no vuelve por la API.
+ */
+async function medioArranco(
+  sesion: any,
+  ms: number,
+  confirmar?: () => Promise<boolean>,
+): Promise<boolean> {
+  const limite = Date.now() + ms;
+  let sinEstado = 0;
+  while (Date.now() < limite) {
+    try {
+      const st = await sesion.client.getMediaStatus();
+      const ps = String(st?.playerState || '');
+      if (ps === 'playing' || ps === 'buffering' || ps === 'paused') return true;
+      if (isFinite(st?.streamPosition) && st.streamPosition > 0) return true;
+      if (!st) sinEstado++;
+    } catch (e) {
+      sinEstado++;
+    }
+    // Si la API no devuelve estado, el pedido del TV al teléfono sirve de
+    // prueba: si descargó bytes, el medio arrancó.
+    if (sinEstado >= 4 && confirmar) {
+      try {
+        if (await confirmar()) return true;
+      } catch (e) {}
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return false;
+}
+
 /** Carga (o recarga) un tema en el Chromecast conectado. */
-export async function cargarEnTv(media: TvMedia): Promise<{ ok: boolean; error?: string }> {
+export async function cargarEnTv(
+  media: TvMedia,
+  reResolve?: () => Promise<{ url: string; contentType: string } | null>,
+  confirmar?: () => Promise<boolean>,
+): Promise<{ ok: boolean; error?: string }> {
   const l = getCast();
   if (!l || !media?.url) return { ok: false, error: 'Chromecast no disponible.' };
   try {
-    const sesion = await obtenerSesion();
+    const sesion = await esperarCliente(9000);
     if (!sesion?.client) return { ok: false, error: 'No hay ningún Chromecast conectado.' };
-    const esAudio = (media.contentType || '').startsWith('audio');
-    await sesion.client.loadMedia({
-      autoplay: true,
-      startTime: Math.max(0, media.startTime || 0),
-      mediaInfo: {
-        contentUrl: media.url,
-        contentType: media.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+
+    // La primera orden se pierde mientras el receptor termina de arrancar: por
+    // eso no alcanza con reintentar cuando loadMedia falla, hay que comprobar
+    // que el TV esté reproduciendo y volver a mandarla si quedó en el logo.
+    let actual: TvMedia = media;
+    let ultimoError: any = null;
+    for (let intento = 0; intento < 3; intento++) {
+      if (intento > 0 && reResolve) {
+        // URL nueva: la anterior puede haber quedado atada a una sesión que el
+        // receptor ya descartó.
+        try {
+          const nuevo = await reResolve();
+          if (nuevo?.url) actual = { ...actual, url: nuevo.url, contentType: nuevo.contentType };
+        } catch (e) {}
+      }
+      const esAudio = (actual.contentType || '').startsWith('audio');
+      const mediaInfo = {
+        contentUrl: actual.url,
+        contentType: actual.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
         streamType: 'buffered',
-        streamDuration: media.duration && media.duration > 0 ? media.duration : undefined,
+        streamDuration: actual.duration && actual.duration > 0 ? actual.duration : undefined,
         metadata: esAudio
           ? {
               type: 'musicTrack',
-              title: media.title,
-              artist: media.channel || 'YouThink',
+              title: actual.title,
+              artist: actual.channel || 'YouThink',
               albumName: 'YouThink',
-              images: media.thumb ? [{ url: media.thumb }] : undefined,
+              images: actual.thumb ? [{ url: actual.thumb }] : undefined,
             }
           : {
               type: 'movie',
-              title: media.title,
-              subtitle: media.channel || 'YouThink',
-              images: media.thumb ? [{ url: media.thumb }] : undefined,
+              title: actual.title,
+              subtitle: actual.channel || 'YouThink',
+              images: actual.thumb ? [{ url: actual.thumb }] : undefined,
             },
-      },
-    });
-    return { ok: true };
+      };
+      try {
+        await sesion.client.loadMedia({
+          autoplay: true,
+          startTime: Math.max(0, actual.startTime || 0),
+          mediaInfo,
+        });
+      } catch (e) {
+        ultimoError = e;
+        await new Promise((r) => setTimeout(r, 900));
+        continue;
+      }
+      const arranco = await medioArranco(sesion, intento === 0 ? 6000 : 4500, confirmar);
+      if (arranco) return { ok: true };
+      ultimoError = null;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    return {
+      ok: false,
+      error: ultimoError
+        ? mensajeError(ultimoError)
+        : 'El televisor no inició la reproducción. Probá de nuevo con el botón de Chromecast.',
+    };
   } catch (e: any) {
     return { ok: false, error: mensajeError(e) };
   }
@@ -295,10 +385,14 @@ export function useCast() {
     }
   }
 
-  async function transmitir(media: TvMedia) {
+  async function transmitir(
+    media: TvMedia,
+    reResolve?: () => Promise<{ url: string; contentType: string } | null>,
+    confirmar?: () => Promise<boolean>,
+  ) {
     setError(null);
     try {
-      const res = await cargarEnTv(media);
+      const res = await cargarEnTv(media, reResolve, confirmar);
       if (!res.ok) setError(res.error || 'No se pudo transmitir.');
       return res;
     } finally {

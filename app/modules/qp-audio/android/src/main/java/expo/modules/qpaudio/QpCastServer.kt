@@ -85,10 +85,13 @@ object QpCastServer {
    * Prepara la URL local que se le manda al Chromecast.
    * Resuelve el stream ahora para conocer el MIME real (el TV lo exige).
    */
-  fun prepare(videoId: String, kind: String): Map<String, Any?> {
+  fun prepare(videoId: String, kind: String, fresh: Boolean = false): Map<String, Any?> {
     val p = ensureStarted()
     val ip = lanIp()
       ?: throw IllegalStateException("Conectá el teléfono a la misma red Wi-Fi que el Chromecast.")
+    // En un reintento pedimos una URL nueva a YouTube: la anterior puede haber
+    // quedado atada a una sesión que el receptor ya descartó.
+    if (fresh) cache.remove("$kind:$videoId")
     val st = resolve(videoId, kind)
     return mapOf(
       "url" to "http://$ip:$p/cast?v=$videoId&k=$kind",

@@ -506,16 +506,20 @@ export default function Buscar() {
         const itemActual = actual;
         (async () => {
           const directo = await resolverParaTv(itemActual, esAudio);
-          tv.transmitir({
-            id: itemActual.id,
-            title: itemActual.title,
-            channel: itemActual.channel,
-            thumb: itemActual.thumb,
-            url: directo?.url || (esAudio ? api.audioClipUrl(itemActual.id) : api.clipUrl(itemActual.id)),
-            contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
-            duration: itemActual.duration,
-            startTime: 0,
-          });
+          tv.transmitir(
+            {
+              id: itemActual.id,
+              title: itemActual.title,
+              channel: itemActual.channel,
+              thumb: itemActual.thumb,
+              url: directo?.url || (esAudio ? api.audioClipUrl(itemActual.id) : api.clipUrl(itemActual.id)),
+              contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+              duration: itemActual.duration,
+              startTime: 0,
+            },
+            () => resolverParaTv(itemActual, esAudio, true),
+            async () => (await pedidosTv()) > 0,
+          );
         })();
       }
       setReproduciendo(true);
@@ -656,17 +660,28 @@ export default function Buscar() {
   // Ahora el teléfono abre un servidor HTTP en la red Wi-Fi y el TV descarga el
   // medio desde el teléfono (`http://192.168.x.x:PUERTO/cast?v=...`), que lo
   // reenvía con los headers correctos y soporte de Range (seek).
-  async function resolverParaTv(item: YtResult, esAudio: boolean): Promise<{ url: string; contentType: string } | null> {
+  // Cuántas veces el TV pidió el archivo al teléfono (-1 = sin módulo nativo).
+  async function pedidosTv(): Promise<number> {
+    try {
+      const st: any = await (QpAudio as any)?.castStats?.();
+      return Number(st?.hits ?? -1);
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  async function resolverParaTv(item: YtResult, esAudio: boolean, fresh = false): Promise<{ url: string; contentType: string } | null> {
     tvLocalErrorRef.current = '';
     if (QpAudio) {
       try {
         if (typeof (QpAudio as any).castUrl === 'function') {
-          const r: any = await (QpAudio as any).castUrl(item.id, esAudio ? 'audio' : 'video');
+          const r: any = await (QpAudio as any).castUrl(item.id, esAudio ? 'audio' : 'video', fresh);
           if (r?.url) return { url: r.url, contentType: r.mime || (esAudio ? 'audio/mp4' : 'video/mp4') };
         }
       } catch (e: any) {
         tvLocalErrorRef.current = String(e?.message || e || 'no se pudo preparar el servidor local');
       }
+      if (fresh) return null;
       try {
         if (esAudio) {
           const r: any = await QpAudio.resolveAudio(item.id);
@@ -701,16 +716,23 @@ export default function Buscar() {
       if (cancelado) return;
       // Contamos los pedidos del TV para detectar si llegó al teléfono.
       try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
-      const res = await tv.transmitir({
-        id: actual.id,
-        title: actual.title,
-        channel: actual.channel,
-        thumb: actual.thumb,
-        url: directo?.url || (esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)),
-        contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
-        duration: actual.duration,
-        startTime: 0,
-      });
+      const res = await tv.transmitir(
+        {
+          id: actual.id,
+          title: actual.title,
+          channel: actual.channel,
+          thumb: actual.thumb,
+          url: directo?.url || (esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)),
+          contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+          duration: actual.duration,
+          startTime: 0,
+        },
+        // En los reintentos el teléfono resuelve una URL nueva: YouTube vence
+        // las viejas y el receptor se queda en el logo.
+        () => resolverParaTv(actual, esAudio, true),
+        async () => (await pedidosTv()) > 0,
+      );
+      if (cancelado) return;
       if (!res?.ok) {
         tvCargandoRef.current = '';
         setError(res?.error || 'No se pudo transmitir al Chromecast.');
@@ -719,6 +741,7 @@ export default function Buscar() {
       // A los 10 s: si el TV nunca pidió el archivo, es un problema de red
       // (redes distintas o "aislamiento de clientes" en el router), no de la app.
       setTimeout(async () => {
+        if (cancelado) return;
         try {
           const st: any = await (QpAudio as any)?.castStats?.();
           if (st && Number(st.hits) === 0) {
@@ -749,7 +772,28 @@ export default function Buscar() {
     if (!actual) return;
     const esAudio = actual.kind === 'song';
     try {
+      // 1) ¿El teléfono puede servir el video? (resuelve y baja 64 KB)
       const r: any = await (QpAudio as any)?.castSelfTest?.(actual.id, esAudio ? 'audio' : 'video');
+      // 2) Reintento manual: volvemos a cargar el tema en el TV (URL nueva).
+      let recarga = 'No hay TV conectado.';
+      if (tv.conectado) {
+        try { await (QpAudio as any)?.castResetStats?.(); } catch (_) {}
+        const res = await tv.transmitir(
+          {
+            id: actual.id,
+            title: actual.title,
+            channel: actual.channel,
+            thumb: actual.thumb,
+            url: (await resolverParaTv(actual, esAudio, true))?.url || '',
+            contentType: esAudio ? 'audio/mp4' : 'video/mp4',
+            duration: actual.duration,
+            startTime: 0,
+          },
+          () => resolverParaTv(actual, esAudio, true),
+          async () => (await pedidosTv()) > 0,
+        );
+        recarga = res?.ok ? '✅ Se volvió a cargar el tema en el TV' : '❌ No se pudo recargar: ' + (res?.error || '');
+      }
       const st: any = await (QpAudio as any)?.castStats?.();
       const hits = Number(st?.hits || 0);
       const lineas = [
@@ -761,6 +805,7 @@ export default function Buscar() {
         r?.error ? 'Error: ' + r.error : null,
         '',
         'Pedidos del TV: ' + hits,
+        recarga,
         '',
         r?.ok && hits === 0
           ? 'El TV nunca pidió el archivo. Están en redes distintas o el router tiene "aislamiento de clientes".'

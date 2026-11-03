@@ -88,8 +88,8 @@ class QpAudioModule : Module() {
     // URL local (LAN) para el Chromecast. El TV le pide el stream al teléfono y
     // el teléfono lo reenvía: evita que el receptor choque con el bloqueo de
     // YouTube a la IP/headers del teléfono (eso dejaba el logo y el spinner).
-    AsyncFunction<Map<String, Any?>, String, String>("castUrl") { videoId, kind ->
-      QpCastServer.prepare(videoId, if (kind == "audio") "audio" else "video")
+    AsyncFunction<Map<String, Any?>, String, String, Boolean>("castUrl") { videoId, kind, fresh ->
+      QpCastServer.prepare(videoId, if (kind == "audio") "audio" else "video", fresh == true)
     }
 
     // Autoprueba del servidor local (sin TV): resuelve y descarga 64 KB.

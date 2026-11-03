@@ -5,7 +5,7 @@ declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   resolveAudio(videoId: string): Promise<ResolvedAudio>;
   resolveVideo(videoId: string): Promise<ResolvedVideo>;
   /** URL local (LAN) que el Chromecast descarga del propio teléfono. */
-  castUrl(videoId: string, kind: 'audio' | 'video'): Promise<CastSource>;
+  castUrl(videoId: string, kind: 'audio' | 'video', fresh?: boolean): Promise<CastSource>;
   /** Mantiene vivo el proceso/servidor mientras se transmite al TV. */
   castKeepAlive(activo: boolean): Promise<boolean>;
   /** Autoprueba del servidor local (sin TV). */
