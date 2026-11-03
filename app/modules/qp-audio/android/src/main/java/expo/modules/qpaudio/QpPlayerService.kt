@@ -343,6 +343,23 @@ class QpPlayerService : MediaSessionService() {
 
   fun applyEq(gains: IntArray) { main.post { applyEqInternal(gains) } }
 
+  // Cambia el texto de la notificación: mientras se castea, el servicio sigue
+  // en primer plano para que el servidor local del teléfono no se congele.
+  fun setCastMode(activo: Boolean) {
+    try {
+      val notif = NotificationCompat.Builder(this, "qp_audio")
+        .setSmallIcon(android.R.drawable.ic_media_play)
+        .setContentTitle("YouThink")
+        .setContentText(if (activo) "Transmitiendo al TV" else "Reproduciendo audio")
+        .setOngoing(true)
+        .setPriority(NotificationCompat.PRIORITY_LOW)
+        .build()
+      val nm = getSystemService(NotificationManager::class.java)
+      nm?.notify(1001, notif)
+    } catch (_: Throwable) {
+    }
+  }
+
   private fun applyEqInternal(gains: IntArray) {
     val eq = equalizer ?: return
     try {

@@ -85,6 +85,30 @@ class QpAudioModule : Module() {
       )
     }
 
+    // URL local (LAN) para el Chromecast. El TV le pide el stream al teléfono y
+    // el teléfono lo reenvía: evita que el receptor choque con el bloqueo de
+    // YouTube a la IP/headers del teléfono (eso dejaba el logo y el spinner).
+    AsyncFunction<Map<String, Any?>, String, String>("castUrl") { videoId, kind ->
+      QpCastServer.prepare(videoId, if (kind == "audio") "audio" else "video")
+    }
+
+    // Mantiene el proceso vivo mientras se transmite al TV (servicio en primer
+    // plano), así el servidor HTTP local sigue sirviendo aunque se apague la
+    // pantalla del teléfono.
+    AsyncFunction<Boolean, Boolean>("castKeepAlive") { activo ->
+      try {
+        if (activo) {
+          val svc = ensureService()
+          svc.setCastMode(true)
+        } else {
+          QpBridge.service?.setCastMode(false)
+        }
+        true
+      } catch (_: Throwable) {
+        false
+      }
+    }
+
     // Reproduce un video por su id (resuelve la URL y suena en segundo plano).
     AsyncFunction<Boolean, String, String>("play") { videoId, title ->
       val svc = ensureService()

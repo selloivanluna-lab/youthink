@@ -1,9 +1,13 @@
 import { NativeModule, requireOptionalNativeModule } from 'expo';
-import type { QpAudioEvents, ResolvedAudio, ResolvedVideo } from './QpAudio.types';
+import type { QpAudioEvents, ResolvedAudio, ResolvedVideo, CastSource } from './QpAudio.types';
 
 declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   resolveAudio(videoId: string): Promise<ResolvedAudio>;
   resolveVideo(videoId: string): Promise<ResolvedVideo>;
+  /** URL local (LAN) que el Chromecast descarga del propio teléfono. */
+  castUrl(videoId: string, kind: 'audio' | 'video'): Promise<CastSource>;
+  /** Mantiene vivo el proceso/servidor mientras se transmite al TV. */
+  castKeepAlive(activo: boolean): Promise<boolean>;
   play(videoId: string, title: string): Promise<boolean>;
   togglePlay(): Promise<boolean>;
   pause(): Promise<boolean>;

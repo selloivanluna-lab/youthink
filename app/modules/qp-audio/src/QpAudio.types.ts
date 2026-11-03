@@ -14,6 +14,14 @@ export type ResolvedVideo = {
   userAgent: string;
 };
 
+/** Medio servido por el teléfono para el Chromecast (red local). */
+export type CastSource = {
+  url: string;
+  mime: string;
+  port: number;
+  ip: string;
+};
+
 export type PlaybackState = {
   isPlaying: boolean;
   position: number;

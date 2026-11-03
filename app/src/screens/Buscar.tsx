@@ -645,13 +645,24 @@ export default function Buscar() {
   // Al conectar o desconectar el TV hay que volver a cargar el tema.
   useEffect(() => { tvCargandoRef.current = ''; }, [tv.conectado]);
 
-  // ── Chromecast: resolver el stream EN EL TELÉFONO ──────────────────────────
+  // ── Chromecast: servir el stream desde el teléfono ─────────────────────────
   // El receptor (Default Media Receiver) sólo reproduce archivos directos
-  // (mp4/m4a). Si le mandamos el endpoint del backend, YouTube lo bloquea y el
-  // TV se queda en el logo. NewPipe resuelve la URL desde el celular (misma IP
-  // pública que el Chromecast, así que el enlace es válido para el TV).
+  // (mp4/m4a). Mandarle una URL de googlevideo.com falla: esa URL está atada a
+  // la IP y a los headers con los que se resolvió, así que el TV se quedaba en
+  // el logo con el spinner girando.
+  // Ahora el teléfono abre un servidor HTTP en la red Wi-Fi y el TV descarga el
+  // medio desde el teléfono (`http://192.168.x.x:PUERTO/cast?v=...`), que lo
+  // reenvía con los headers correctos y soporte de Range (seek).
   async function resolverParaTv(item: YtResult, esAudio: boolean): Promise<{ url: string; contentType: string } | null> {
     if (QpAudio) {
+      try {
+        if (typeof (QpAudio as any).castUrl === 'function') {
+          const r: any = await (QpAudio as any).castUrl(item.id, esAudio ? 'audio' : 'video');
+          if (r?.url) return { url: r.url, contentType: r.mime || (esAudio ? 'audio/mp4' : 'video/mp4') };
+        }
+      } catch (_) {
+        // Sin servidor local (ej. sin Wi-Fi): caemos a la URL directa.
+      }
       try {
         if (esAudio) {
           const r: any = await QpAudio.resolveAudio(item.id);
@@ -701,7 +712,14 @@ export default function Buscar() {
     })();
 
     return () => { cancelado = true; };
-  }, [tv.conectado, actual?.id, soloAudio]);
+  }, [tv.conectado, actual?.id, actual?.kind]);
+
+  // Mientras hay sesión de TV, el teléfono mantiene el servicio en primer plano:
+  // así el servidor HTTP local sigue sirviendo el video aunque se apague la pantalla.
+  useEffect(() => {
+    if (!QpAudio || typeof (QpAudio as any).castKeepAlive !== 'function') return;
+    try { (QpAudio as any).castKeepAlive(Boolean(tv.conectado)); } catch (_) {}
+  }, [tv.conectado]);
 
   // Fin natural en el TV: avanzar la cola (una sola vez, con el guard de fin).
   useEffect(() => {
