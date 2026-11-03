@@ -24,8 +24,9 @@
     },
     "android": {
       "package": "com.quepensabas.youthink",
-      "versionCode": 17,
+      "versionCode": 18,
       "orientation": "default",
+      "largeHeap": true,
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0a",
         "foregroundImage": "./assets/android-icon-foreground.png",

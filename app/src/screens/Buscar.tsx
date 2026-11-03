@@ -29,6 +29,7 @@ import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
 import { getPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
 import { useCast, CAST_ANDROID } from '../lib/cast';
+import { TvPressable } from '../lib/useTvFocus';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
@@ -2983,13 +2984,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       <View style={s.searchRow}>
         <TextInput style={s.input} placeholder="Buscar música y videos…" placeholderTextColor={theme.colors.textDim}
           value={query} onChangeText={setQuery} onSubmitEditing={buscarDesdeInput} returnKeyType="search" autoCorrect={false} />
-        <Pressable focusable={true} style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></Pressable>
+        <TvPressable style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></TvPressable>
       </View>
       <View style={{ flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4 }}>
         {(['all', 'videos', 'songs'] as const).map((t) => {
           const activo = t === searchType;
           return (
-            <Pressable focusable={true}
+            <TvPressable
               key={t}
               onPress={() => buscarConTipo(t)}
               style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14,
@@ -2999,7 +3000,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <Text style={{ color: activo ? theme.colors.gold : theme.colors.textDim, fontSize: 12, fontWeight: activo ? '700' : '400' }}>
                 {t === 'all' ? '🌐 Todo' : t === 'videos' ? '▶️ Videos' : '🎵 Canciones'}
               </Text>
-            </Pressable>
+            </TvPressable>
           );
         })}
       </View>
@@ -3012,9 +3013,22 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Text style={s.toggleLabel}>⏭️ Avanzar solo a la siguiente</Text>
         <Switch value={autoSiguiente} onValueChange={setAuto} trackColor={{ true: theme.colors.gold, false: theme.colors.border }} />
       </View>
-      <Pressable focusable={true} style={s.updateBtn} onPress={actualizarApp}>
-        <Text style={s.updateBtnText}>🔄 Actualizar app</Text>
-      </Pressable>
+      {/* Acceso directo a listas de reproducción */}
+      <View style={{ flexDirection: 'row', gap: 8, marginVertical: 6 }}>
+        <TvPressable
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, borderRadius: 10, backgroundColor: theme.colors.surface2, borderWidth: 1, borderColor: theme.colors.border }}
+          onPress={abrirModalPlaylists}
+        >
+          <Text style={{ fontSize: 16 }}>📋</Text>
+          <Text style={{ color: theme.colors.gold, fontWeight: '700', fontSize: 13 }}>Mis Playlists / Editar</Text>
+        </TvPressable>
+        <TvPressable
+          style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, backgroundColor: theme.colors.surface2, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}
+          onPress={actualizarApp}
+        >
+          <Text style={{ color: theme.colors.textDim, fontWeight: '700', fontSize: 12 }}>🔄 Actualizar</Text>
+        </TvPressable>
+      </View>
 
       {results.length > 0 ? (
         <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -3049,7 +3063,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           const modoItem = searchType === 'videos' ? false : searchType === 'songs' ? true : soloAudio;
           return (
           <View style={[s.row, qIdx === index && cola[qIdx]?.id === item.id ? s.rowActiva : null]}>
-            <Pressable focusable={true} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, modoItem)}>
+            <TvPressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, padding: 4, borderRadius: 8 }} onPress={() => reproducir(results, index, modoItem)}>
               <Image source={{ uri: item.thumb }} style={s.thumb} />
               <View style={{ flex: 1 }}>
                 <Text style={s.title} numberOfLines={2}>
@@ -3058,19 +3072,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 </Text>
                 <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}{item.live ? ' · 🔴 EN VIVO' : ''}</Text>
               </View>
-            </Pressable>
+            </TvPressable>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
               {actual ? (
-                <Pressable focusable={true}
+                <TvPressable
                   style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
                   onPress={() => encolarCancion(item)}
                 >
                   <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
-                </Pressable>
+                </TvPressable>
               ) : null}
-              <Pressable focusable={true} onPress={() => reproducir(results, index, modoItem)} style={{ padding: 6 }}>
+              <TvPressable onPress={() => reproducir(results, index, modoItem)} style={{ padding: 8, borderRadius: 8 }}>
                 <Text style={s.play}>{qIdx === index && cola[qIdx]?.id === item.id ? '🔊' : modoItem ? '🔊' : '▶'}</Text>
-              </Pressable>
+              </TvPressable>
             </View>
           </View>
           );
