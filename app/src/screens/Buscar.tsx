@@ -1450,6 +1450,19 @@ export default function Buscar() {
 
   function buscarConTipo(tipo: 'all' | 'videos' | 'songs') {
     setSearchType(tipo);
+    // Al filtrar por Videos, cambiar automáticamente a modo video.
+    // Al filtrar por Canciones o Todo, volver a audio (por defecto).
+    if (tipo === 'videos') {
+      setSoloAudio(false);
+      setModo('video');
+      audioRef.current = false;
+      AsyncStorage.setItem('qp_soloAudio', '0').catch(() => {});
+    } else if (tipo === 'songs') {
+      setSoloAudio(true);
+      setModo('audio');
+      audioRef.current = true;
+      AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
+    }
     buscar(tipo);
   }
 
@@ -2600,9 +2613,26 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       </Pressable>
 
       {results.length > 0 ? (
-        <Pressable style={s.playAll} onPress={() => reproducir(results, 0, soloAudio)}>
-          <Text style={s.playAllText}>▶ Reproducir todo ({results.length})</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Pressable style={[s.playAll, { flex: 1 }]} onPress={() => reproducir(results, 0, searchType === 'videos' ? false : soloAudio)}>
+            <Text style={s.playAllText}>▶ Reproducir todo ({results.length})</Text>
+          </Pressable>
+          <Pressable
+            style={[s.playAll, { flex: 0, paddingHorizontal: 16, backgroundColor: shuffle ? theme.colors.gold : theme.colors.surface2 }]}
+            onPress={() => {
+              const nuevo = !shuffle;
+              setShuffle(nuevo);
+              shuffleRef.current = nuevo;
+              AsyncStorage.setItem('qp_shuffle', nuevo ? '1' : '0').catch(() => {});
+              if (results.length > 0) {
+                const idx = Math.floor(Math.random() * results.length);
+                reproducir(results, idx, searchType === 'videos' ? false : soloAudio);
+              }
+            }}
+          >
+            <Text style={[s.playAllText, { color: shuffle ? '#001b1f' : theme.colors.gold }]}>🔀</Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {error ? <Text style={s.error}>{error}</Text> : null}

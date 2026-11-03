@@ -74,7 +74,7 @@ async function obtenerSesion(): Promise<any | null> {
  * cargamos el medio en ese momento, la orden se pierde y el TV queda en el logo
  * con el spinner (había que cerrar y abrir la app para que tome).
  */
-async function esperarCliente(ms = 9000): Promise<any | null> {
+async function esperarCliente(ms = 15000): Promise<any | null> {
   const limite = Date.now() + ms;
   while (Date.now() < limite) {
     const sesion = await obtenerSesion();
@@ -148,7 +148,7 @@ export async function cargarEnTv(
   const l = getCast();
   if (!l || !media?.url) return { ok: false, error: 'Chromecast no disponible.' };
   try {
-    const sesion = await esperarCliente(9000);
+    const sesion = await esperarCliente(15000);
     if (!sesion?.client) return { ok: false, error: 'No hay ningún Chromecast conectado.' };
 
     // La primera orden se pierde mientras el receptor termina de arrancar: por
@@ -156,7 +156,7 @@ export async function cargarEnTv(
     // que el TV esté reproduciendo y volver a mandarla si quedó en el logo.
     let actual: TvMedia = media;
     let ultimoError: any = null;
-    for (let intento = 0; intento < 3; intento++) {
+    for (let intento = 0; intento < 4; intento++) {
       if (intento > 0 && reResolve) {
         // URL nueva: la anterior puede haber quedado atada a una sesión que el
         // receptor ya descartó.
@@ -194,13 +194,13 @@ export async function cargarEnTv(
         });
       } catch (e) {
         ultimoError = e;
-        await new Promise((r) => setTimeout(r, 900));
+        await new Promise((r) => setTimeout(r, 1200));
         continue;
       }
-      const arranco = await medioArranco(sesion, intento === 0 ? 6000 : 4500, confirmar);
+      const arranco = await medioArranco(sesion, intento === 0 ? 18000 : 6000, confirmar);
       if (arranco) return { ok: true };
       ultimoError = null;
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, 1500));
     }
     return {
       ok: false,
@@ -323,6 +323,19 @@ export function useCast() {
           setSonando(false);
           return;
         }
+        // Esperar a que el client del receiver esté listo (hasta 15 s) antes de
+        // marcar como conectado: así el efecto de Buscar.tsx no dispara loadMedia
+        // mientras el TV todavía está cargando la app receptora.
+        const limite = Date.now() + 15000;
+        while (!sesion.client && Date.now() < limite && vivo) {
+          await new Promise((r) => setTimeout(r, 300));
+          // Refrescar la referencia de la sesión en cada vuelta
+          try {
+            const s2 = await obtenerSesion();
+            if (s2?.client) { (sesion as any).client = s2.client; break; }
+          } catch (_) {}
+        }
+        if (!vivo) return;
         let n: string | null = null;
         try {
           const dev = await sesion.getCastDevice();

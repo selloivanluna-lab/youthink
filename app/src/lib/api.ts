@@ -155,35 +155,56 @@ export const api = {
   // -- Crew Vault (Cloudflare R2) -------------------------------------------
 
   // Upload completo proxeado por el server (sin CORS issues en web/iPhone)
-  crewUpload: (params: { fileUri: string; filename: string; contentType: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string; onProgress?: (pct: number) => void }) =>
-    withRetry(async () => {
-      const { fileUri, filename, contentType, title, artist = '', crew_id = 'main', uploaded_by = '', onProgress } = params;
-      const form = new FormData();
-      // En web, fileUri es un blob URL o data URL — fetch lo resuelve a Blob
+  crewUpload: async (params: { fileUri: string; filename: string; contentType: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string; onProgress?: (pct: number) => void }) => {
+    const { fileUri, filename, contentType, title, artist = '', crew_id = 'main', uploaded_by = '', onProgress } = params;
+    onProgress?.(5);
+    // Resolver el archivo: en Android puede ser content:// URI
+    let blob: Blob;
+    try {
       const fileResp = await fetch(fileUri);
-      const blob = await fileResp.blob();
-      onProgress?.(20);
-      form.append('file', blob, filename);
-      form.append('title', title);
-      form.append('artist', artist);
-      form.append('crew_id', crew_id);
-      form.append('uploaded_by', uploaded_by);
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 180000); // 3 min para archivos grandes
-      try {
-        const r = await fetch(API_URL + '/api/crew/upload', {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + QP_TOKEN }, // sin Content-Type: fetch pone el boundary solo
-          body: form,
-          signal: ctrl.signal,
-        });
+      blob = await fileResp.blob();
+    } catch (e: any) {
+      throw new Error('No se pudo leer el archivo: ' + (e?.message || e));
+    }
+    onProgress?.(15);
+    const form = new FormData();
+    form.append('file', blob, filename);
+    form.append('title', title);
+    form.append('artist', artist);
+    form.append('crew_id', crew_id);
+    form.append('uploaded_by', uploaded_by);
+
+    // Usar XHR para tener progreso de subida real en vez de saltar de 15% a 95%
+    return new Promise<{ ok: boolean; track: CrewTrack }>((resolve, reject) => {
+      const xhr = new (globalThis as any).XMLHttpRequest();
+      xhr.open('POST', API_URL + '/api/crew/upload');
+      xhr.setRequestHeader('Authorization', 'Bearer ' + QP_TOKEN);
+      xhr.timeout = 300000; // 5 min
+      xhr.upload.onprogress = (e: any) => {
+        if (e.lengthComputable) {
+          // 15% a 92%: progreso real de subida
+          onProgress?.(15 + Math.round((e.loaded / e.total) * 77));
+        }
+      };
+      xhr.onload = () => {
         onProgress?.(95);
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error((data as any)?.error || 'HTTP ' + r.status);
-        onProgress?.(100);
-        return data as { ok: boolean; track: CrewTrack };
-      } finally { clearTimeout(t); }
-    }, 2, 2000),
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && data?.ok) {
+            onProgress?.(100);
+            resolve(data as { ok: boolean; track: CrewTrack });
+          } else {
+            reject(new Error(data?.error || 'HTTP ' + xhr.status));
+          }
+        } catch (e) {
+          reject(new Error('Respuesta inválida del servidor'));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Error de red al subir el archivo'));
+      xhr.ontimeout = () => reject(new Error('Tiempo agotado al subir (>5 min)'));
+      xhr.send(form);
+    });
+  },
 
   crewGetUploadUrl: (params: { filename: string; contentType?: string; title: string; artist?: string; crew_id?: string; uploaded_by?: string }) =>
     withRetry(() => postJson<{ ok: boolean; uploadUrl: string; key: string; contentType: string }>('/api/crew/upload-url', params)),
