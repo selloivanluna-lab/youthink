@@ -269,7 +269,13 @@ export default function Buscar() {
       if (isFinite(d.t) && d.t >= 0) { setPos(d.t); posRef.current = d.t; }
       if (isFinite(d.d) && d.d > 0) { setDur(d.d); durRef.current = d.d; }
       setReproduciendo(Boolean(d.p));
-      if (d.e) avanzarPorFin();
+      if (d.e) {
+        // Igual que en nativo: sólo avanzamos si terminó de verdad (evita
+        // saltear temas cuando el embed falla al instante).
+        const t = Number(d.t || 0);
+        const dd = Number(d.d || 0);
+        if ((dd > 0 && t >= dd - 6) || t > 15) avanzarPorFin();
+      }
     } catch (_) {}
   }
 
@@ -497,16 +503,20 @@ export default function Buscar() {
       if (actual) {
         tvCargandoRef.current = '';
         const esAudio = soloAudio;
-        tv.transmitir({
-          id: actual.id,
-          title: actual.title,
-          channel: actual.channel,
-          thumb: actual.thumb,
-          url: esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id),
-          contentType: esAudio ? 'audio/mp4' : 'video/mp4',
-          duration: actual.duration,
-          startTime: 0,
-        });
+        const itemActual = actual;
+        (async () => {
+          const directo = await resolverParaTv(itemActual, esAudio);
+          tv.transmitir({
+            id: itemActual.id,
+            title: itemActual.title,
+            channel: itemActual.channel,
+            thumb: itemActual.thumb,
+            url: directo?.url || (esAudio ? api.audioClipUrl(itemActual.id) : api.clipUrl(itemActual.id)),
+            contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+            duration: itemActual.duration,
+            startTime: 0,
+          });
+        })();
       }
       setReproduciendo(true);
       return;
@@ -585,11 +595,32 @@ export default function Buscar() {
             }, 800 * retryN); // backoff: 800ms, 1600ms, 2400ms
           } else {
             setError(st.error);
+            // Si el reproductor nativo no puede con este tema, seguimos con el
+            // embed de YouTube en el WebView en vez de dejar el error en pantalla.
+            const tr = actualRetryRef.current;
+            if (tr && !tvRef.current) {
+              setTimeout(() => { try { usarWebView(tr); } catch (_) {} }, 600);
+            }
           }
         }
         // Fin natural de la pista: NO adelantamos por "crossover" (cortaba el
         // último segundo). ExoPlayer avisa `ended` cuando termina de verdad.
-        if (st.ended) avanzarPorFin(evId);
+        // Guard: algunos streams inválidos pasan a ENDED sin haber sonado; en ese
+        // caso NO salteamos el tema (era el "carga pero se saltea sola"), usamos
+        // el fallback de WebView.
+        if (st.ended) {
+          const ppos = Number(st.position || 0);
+          const pdur = Number(st.duration || 0);
+          const terminoDeVerdad = (pdur > 0 && ppos >= pdur - 6) || ppos > 15;
+          if (terminoDeVerdad) {
+            avanzarPorFin(evId);
+          } else {
+            const tr = actualRetryRef.current;
+            if (tr && !tvRef.current) {
+              setTimeout(() => { try { usarWebView(tr); } catch (_) {} }, 300);
+            }
+          }
+        }
       });
       return () => {
         try { sub?.remove?.(); } catch (_) {}
@@ -614,6 +645,28 @@ export default function Buscar() {
   // Al conectar o desconectar el TV hay que volver a cargar el tema.
   useEffect(() => { tvCargandoRef.current = ''; }, [tv.conectado]);
 
+  // ── Chromecast: resolver el stream EN EL TELÉFONO ──────────────────────────
+  // El receptor (Default Media Receiver) sólo reproduce archivos directos
+  // (mp4/m4a). Si le mandamos el endpoint del backend, YouTube lo bloquea y el
+  // TV se queda en el logo. NewPipe resuelve la URL desde el celular (misma IP
+  // pública que el Chromecast, así que el enlace es válido para el TV).
+  async function resolverParaTv(item: YtResult, esAudio: boolean): Promise<{ url: string; contentType: string } | null> {
+    if (QpAudio) {
+      try {
+        if (esAudio) {
+          const r: any = await QpAudio.resolveAudio(item.id);
+          if (r?.url) return { url: r.url, contentType: r.mime || 'audio/mp4' };
+        } else {
+          const r: any = await QpAudio.resolveVideo(item.id);
+          if (r?.url) return { url: r.url, contentType: r.mime || 'video/mp4' };
+        }
+      } catch (_) {
+        // Sin módulo nativo o NewPipe no pudo: probamos el backend de siempre.
+      }
+    }
+    return null;
+  }
+
   useEffect(() => {
     if (!tv.conectado || !actual) return;
     const esAudio = soloAudio;
@@ -624,21 +677,28 @@ export default function Buscar() {
     try { if (usarNativoRef.current) native.pause(); } catch (_) {}
     try { player.pause(); } catch (_) {}
     setReproduciendo(true);
-    tv.transmitir({
-      id: actual.id,
-      title: actual.title,
-      channel: actual.channel,
-      thumb: actual.thumb,
-      url: esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id),
-      contentType: esAudio ? 'audio/mp4' : 'video/mp4',
-      duration: actual.duration,
-      startTime: 0,
-    }).then((res: any) => {
+
+    let cancelado = false;
+    (async () => {
+      const directo = await resolverParaTv(actual, esAudio);
+      if (cancelado) return;
+      const res = await tv.transmitir({
+        id: actual.id,
+        title: actual.title,
+        channel: actual.channel,
+        thumb: actual.thumb,
+        url: directo?.url || (esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)),
+        contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+        duration: actual.duration,
+        startTime: 0,
+      });
       if (!res?.ok) {
         tvCargandoRef.current = '';
         setError(res?.error || 'No se pudo transmitir al Chromecast.');
       }
-    });
+    })();
+
+    return () => { cancelado = true; };
   }, [tv.conectado, actual?.id, soloAudio]);
 
   // Fin natural en el TV: avanzar la cola (una sola vez, con el guard de fin).
