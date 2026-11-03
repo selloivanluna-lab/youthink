@@ -247,9 +247,10 @@ export default function Buscar() {
   }
 
   function usarWebView(item: YtResult) {
+    const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
     const embed =
-      'https://www.youtube.com/embed/' + item.id +
-      '?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&iv_load_policy=3&fs=1&enablejsapi=1';
+      'https://www.youtube.com/embed/' + cleanId +
+      '?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&iv_load_policy=3&fs=1&enablejsapi=1&origin=https://www.youtube.com&widget_referrer=https://www.youtube.com';
     setWebEmbedUri(embed);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
@@ -996,6 +997,7 @@ export default function Buscar() {
   async function iniciarRadioDesdeActual(track: YtResult) {
     if (!track) return;
     setIniciandoRadio(true);
+    autoExtenderRef.current = true;
     // Reproducir inmediatamente el tema seleccionado para que la música empiece ya mismo sin esperar
     reproducir([track], 0, soloAudio, true);
     try {
@@ -1029,6 +1031,76 @@ export default function Buscar() {
       }
     } catch (e) {
       console.warn('[Iniciar Radio]', e);
+    } finally {
+      setIniciandoRadio(false);
+    }
+  }
+
+  // Iniciar estación de radio a partir de una playlist completa (mezclando recomendaciones de sus artistas)
+  async function iniciarRadioDesdePlaylist(seed: YtResult, queue?: YtResult[]) {
+    if (!seed) return;
+    setIniciandoRadio(true);
+    autoExtenderRef.current = true;
+    setShuffle(false);
+    shuffleRef.current = false;
+    // Arrancar la reproducción con el tema semilla de inmediato
+    reproducir([seed], 0, soloAudio, true);
+
+    try {
+      let tracksRadio: YtResult[] = [];
+      // 1) Consultar api.radio con la canción semilla
+      try {
+        const res = await api.radio(seed.id, 25);
+        if (res.ok && res.tracks && res.tracks.length > 0) {
+          tracksRadio = res.tracks;
+        }
+      } catch (_) {}
+
+      // 2) Extraer artistas de la playlist para enriquecer la radio con variedad
+      if (Array.isArray(queue) && queue.length > 1) {
+        const otrosArtistas = Array.from(new Set(
+          queue
+            .map((q) => q.channel)
+            .filter((ch) => ch && ch !== seed.channel && !ch.toLowerCase().includes('topic'))
+        )).slice(0, 3);
+
+        for (const art of otrosArtistas) {
+          try {
+            const busq = await api.search(`${art} mix`, 8);
+            if (busq.ok && busq.results && busq.results.length > 0) {
+              tracksRadio = [...tracksRadio, ...busq.results];
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 3) Fallback si api.radio no devolvió tracks
+      if (tracksRadio.length === 0) {
+        const q = (seed.channel && !seed.channel.toLowerCase().includes('topic'))
+          ? `${seed.channel} mix`
+          : `${seed.title.replace(/\[.*?\]|\(.*?\)|official|video|audio|remix|lyric/gi, '').trim()} mix`;
+        try {
+          const busq = await api.search(q, 25);
+          if (busq.ok && busq.results && busq.results.length > 0) {
+            tracksRadio = busq.results;
+          }
+        } catch (_) {}
+      }
+
+      // 4) Descartar duplicados y armar la cola de la radio
+      const idsVistos = new Set<string>([seed.id]);
+      const nuevos = tracksRadio.filter((t) => {
+        if (!t?.id || idsVistos.has(t.id)) return false;
+        idsVistos.add(t.id);
+        return true;
+      });
+
+      if (nuevos.length > 0) {
+        setCola([seed, ...nuevos]);
+        colaRef.current = [seed, ...nuevos];
+      }
+    } catch (e) {
+      console.warn('[Radio Playlist]', e);
     } finally {
       setIniciandoRadio(false);
     }
@@ -1329,6 +1401,16 @@ export default function Buscar() {
             }
           }
         }
+        if (data.event === 'onError') {
+          const errCode = Number(data.info ?? data.data);
+          console.warn('[YouTube Player Error]', errCode);
+          if (errCode === 101 || errCode === 150 || errCode === 153 || errCode === 100 || errCode === 2 || errCode === 5) {
+            setError(`Tema bloqueado para reproducción embebida en YouTube (Error ${errCode}). Pasando al siguiente…`);
+            setTimeout(() => {
+              avanzarPorFin(msgVideoId);
+            }, 1200);
+          }
+        }
       } catch (_) {}
     };
     window.addEventListener('message', onMsg);
@@ -1596,7 +1678,10 @@ export default function Buscar() {
       finDisparadoRef.current = false;
       crossoverFadingRef.current = false;
       trackStartTimeRef.current = Date.now();
-      const embedUrl = `https://www.youtube.com/embed/${item.id}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(window.location?.origin || '')}`;
+      const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+      const originUrl = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://www.youtube.com';
+      const currentHref = typeof window !== 'undefined' && window.location?.href ? window.location.href : originUrl;
+      const embedUrl = `https://www.youtube.com/embed/${cleanId}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(originUrl)}&widget_referrer=${encodeURIComponent(currentHref)}`;
       setMediaUri(embedUrl);
       mediaUriRef.current = embedUrl;
       setReproduciendo(true);
@@ -1882,46 +1967,21 @@ export default function Buscar() {
       setPlayerVisible(true);
       const isAudio = audioRef.current;
       if (pRadio) {
-        // Iniciar estación de radio a partir de la lista
-        if (Array.isArray(pQueue) && pQueue.length > 0) {
-          reproducir(pQueue, 0, isAudio, true);
-          const seed = pQueue[0];
-          (async () => {
-            try {
-              let extras: YtResult[] = [];
-              try {
-                const res = await api.radio(seed.id, 25);
-                if (res.ok && res.tracks && res.tracks.length > 0) extras = res.tracks;
-              } catch (_) {}
-              if (extras.length === 0) {
-                const q = (seed.channel && !seed.channel.toLowerCase().includes('topic'))
-                  ? `${seed.channel} mix`
-                  : `${seed.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()} mix`;
-                const busq = await api.search(q, 20);
-                if (busq.ok && busq.results && busq.results.length > 0) extras = busq.results;
-              }
-              if (extras.length > 0) {
-                const idsExistentes = new Set(pQueue.map((item) => item.id));
-                const filtrados = extras.filter((r) => !idsExistentes.has(r.id));
-                if (filtrados.length > 0) {
-                  setCola((prev) => [...prev, ...filtrados]);
-                  colaRef.current = [...colaRef.current, ...filtrados];
-                }
-              }
-            } catch (_) {}
-          })();
-        } else {
-          const seedItem: YtResult = {
-            id: pId,
-            title: pTitle,
-            url: `https://www.youtube.com/watch?v=${pId}`,
-            channel: '',
-            duration: 0,
-            thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
-            kind: 'song',
-          };
-          iniciarRadioDesdeActual(seedItem);
-        }
+        // Iniciar estación de radio a partir de la lista (canciones nuevas y afines a sus artistas)
+        setShuffle(false);
+        shuffleRef.current = false;
+        autoExtenderRef.current = true;
+        const seed = (Array.isArray(pQueue) && pQueue.length > 0) ? pQueue[0] : null;
+        const seedItem: YtResult = seed || {
+          id: pId,
+          title: pTitle,
+          url: `https://www.youtube.com/watch?v=${pId}`,
+          channel: '',
+          duration: 0,
+          thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
+          kind: 'song',
+        };
+        iniciarRadioDesdePlaylist(seedItem, pQueue);
       } else if (Array.isArray(pQueue) && pQueue.length > 0) {
         // Cargar toda la lista de canciones en la cola y arrancar desde la canción tocada
         reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), isAudio);
@@ -2399,7 +2459,12 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               {NativeWebView ? (
                 <NativeWebView
                   ref={webViewRef}
-                  source={{ uri: webEmbedUri }}
+                  source={{
+                    uri: webEmbedUri,
+                    headers: {
+                      Referer: 'https://www.youtube.com/',
+                    },
+                  }}
                   style={{ flex: 1, backgroundColor: '#000' }}
                   originWhitelist={['*']}
                   javaScriptEnabled
