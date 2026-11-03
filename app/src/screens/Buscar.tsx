@@ -3325,18 +3325,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           document.body
         )
       ) : Platform.OS !== 'web' ? (
-        <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
-          <View style={[s.modal, esLandscape && { paddingTop: 16, padding: 8 }]}>
-            {actual?.thumb ? (
-              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <Image
-                  source={{ uri: actual.thumb }}
-                  style={[s.modalBg, { opacity: 0.35, transform: [{ scale: 1.15 }] }]}
-                  blurRadius={24}
-                  resizeMode="cover"
-                />
-              </View>
-            ) : null}
+        <Modal visible={Boolean(actual && playerVisible)} animationType="none" onRequestClose={minimizar} statusBarTranslucent>
+          <View style={[s.modal, { backgroundColor: '#0a0a0a' }, esLandscape && { paddingTop: 16, padding: 8 }]}>
             {renderPlayerContent()}
           </View>
         </Modal>

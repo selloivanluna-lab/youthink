@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "YouThink",
+    "name": "YouThink TV",
     "slug": "youthink",
-    "version": "0.2.6",
+    "version": "0.2.6-tv",
     "orientation": "default",
     "scheme": "youthink",
     "icon": "./assets/icon.png",
