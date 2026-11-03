@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -190,7 +190,7 @@ export default function LibraryCrew() {
     const isPlaying = playingId === item.id;
     return (
       <View style={s.trackRow}>
-        <Pressable style={s.trackInfo} onPress={() => reproducir(item)}>
+        <Pressable focusable={true} style={s.trackInfo} onPress={() => reproducir(item)}>
           <View style={s.trackIcon}>
             <Text style={s.trackIconText}>{isPlaying ? '▶️' : '🎵'}</Text>
           </View>
@@ -204,7 +204,7 @@ export default function LibraryCrew() {
             ) : null}
           </View>
         </Pressable>
-        <Pressable style={s.deleteBtn} onPress={() => eliminar(item)} hitSlop={8}>
+        <Pressable focusable={true} style={s.deleteBtn} onPress={() => eliminar(item)} hitSlop={8}>
           <Text style={s.deleteBtnText}>🗑</Text>
         </Pressable>
       </View>
@@ -221,10 +221,10 @@ export default function LibraryCrew() {
 
       {/* Barra de acciones */}
       <View style={s.actionRow}>
-        <Pressable style={s.uploadBtn} onPress={() => setUploadOpen(true)}>
+        <Pressable focusable={true} style={s.uploadBtn} onPress={() => setUploadOpen(true)}>
           <Text style={s.uploadBtnText}>⬆️  Subir track</Text>
         </Pressable>
-        <Pressable style={s.refreshBtn} onPress={cargar} disabled={loading}>
+        <Pressable focusable={true} style={s.refreshBtn} onPress={cargar} disabled={loading}>
           <Text style={s.refreshBtnText}>{loading ? '…' : '↻'}</Text>
         </Pressable>
       </View>
@@ -233,7 +233,7 @@ export default function LibraryCrew() {
       {error ? (
         <View style={s.errorBox}>
           <Text style={s.errorText}>{error}</Text>
-          <Pressable onPress={cargar}><Text style={s.retryText}>Reintentar</Text></Pressable>
+          <Pressable focusable={true} onPress={cargar}><Text style={s.retryText}>Reintentar</Text></Pressable>
         </View>
       ) : null}
 
@@ -262,7 +262,7 @@ export default function LibraryCrew() {
           <View style={s.modalBox}>
             <Text style={s.modalTitle}>⬆️ Subir a Library Crew</Text>
 
-            <Pressable style={s.filePicker} onPress={elegirArchivo} disabled={uploading}>
+            <Pressable focusable={true} style={s.filePicker} onPress={elegirArchivo} disabled={uploading}>
               <Text style={s.filePickerText}>
                 {uFile ? `📂 ${uFile.name}` : '📂 Elegir archivo de audio…'}
               </Text>
@@ -295,10 +295,10 @@ export default function LibraryCrew() {
             ) : null}
 
             <View style={s.modalBtns}>
-              <Pressable style={s.cancelBtn} onPress={() => setUploadOpen(false)} disabled={uploading}>
+              <Pressable focusable={true} style={s.cancelBtn} onPress={() => setUploadOpen(false)} disabled={uploading}>
                 <Text style={s.cancelBtnText}>Cancelar</Text>
               </Pressable>
-              <Pressable style={[s.confirmBtn, (!uFile || !uTitle || uploading) && s.btnDisabled]} onPress={subirArchivo} disabled={!uFile || !uTitle || uploading}>
+              <Pressable focusable={true} style={[s.confirmBtn, (!uFile || !uTitle || uploading) && s.btnDisabled]} onPress={subirArchivo} disabled={!uFile || !uTitle || uploading}>
                 {uploading
                   ? <ActivityIndicator color="#000" size="small" />
                   : <Text style={s.confirmBtnText}>Subir</Text>

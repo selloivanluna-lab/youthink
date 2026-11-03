@@ -14,3 +14,13 @@ export const theme = {
   },
   radius: 12,
 };
+
+export const IS_TV_MODE = true; // forzar TV mode para proyector
+
+export const TV = {
+  focusBorder: '#e5b21f',   // gold border en elemento enfocado
+  focusBg: 'rgba(229,178,31,0.15)',
+  itemHeight: 64,            // items más grandes para ver desde lejos
+  fontSize: 18,              // fuente más grande
+  iconSize: 28,
+};

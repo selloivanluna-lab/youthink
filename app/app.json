@@ -3,7 +3,7 @@
     "name": "YouThink",
     "slug": "youthink",
     "version": "0.2.5",
-    "orientation": "portrait",
+    "orientation": "landscape",
     "scheme": "youthink",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -25,6 +25,7 @@
     "android": {
       "package": "com.quepensabas.youthink",
       "versionCode": 16,
+      "orientation": "landscape",
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0a",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -43,7 +44,7 @@
       "themeColor": "#0a0a0a",
       "backgroundColor": "#0a0a0a",
       "display": "standalone",
-      "orientation": "portrait"
+      "orientation": "landscape"
     },
     "platforms": [
       "ios",

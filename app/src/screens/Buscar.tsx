@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -2479,7 +2479,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   onMessage={onWebViewMessage}
                 />
               ) : null}
-              <Pressable
+              <Pressable focusable={true}
                 onPress={alternarRotacion}
                 style={{
                   position: 'absolute',
@@ -2509,7 +2509,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 allowsPictureInPicture={true}
                 contentFit="contain"
               />
-              <Pressable
+              <Pressable focusable={true}
                 onPress={alternarRotacion}
                 style={{
                   position: 'absolute',
@@ -2562,7 +2562,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <View style={{ alignItems: 'center', gap: 10, marginTop: 10 }}>
                   <Text style={s.audioErr}>{error || 'Tiempo de espera agotado'}</Text>
                   {actual ? (
-                    <Pressable
+                    <Pressable focusable={true}
                       style={[s.updateBtn, { paddingHorizontal: 16 }]}
                       onPress={() => { setError(null); setMediaUri(null); setAudioTimeout(false); if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; } aplicar(actual, soloAudio, idxRef.current, true); }}
                     >
@@ -2575,24 +2575,24 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
             <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
             <View style={s.ctrlRow}>
-              <Pressable style={s.ctrlBtn} onPress={() => anterior()} disabled={!enCola || qIdx <= 0}>
+              <Pressable focusable={true} style={s.ctrlBtn} onPress={() => anterior()} disabled={!enCola || qIdx <= 0}>
                 <Text style={[s.ctrl, (!enCola || qIdx <= 0) && s.ctrlOff]}>⏮</Text>
               </Pressable>
-              <Pressable style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
-              <Pressable style={s.playBtnCenter} onPress={togglePlay}>
+              <Pressable focusable={true} style={s.ctrlBtn} onPress={() => saltar(pos - 15)}><Text style={s.ctrl}>⏪</Text></Pressable>
+              <Pressable focusable={true} style={s.playBtnCenter} onPress={togglePlay}>
                 <Text style={[s.playBtnCenterIcon, !estaSonando && { marginLeft: 3 }]}>
                   {estaSonando ? '⏸' : '▶'}
                 </Text>
               </Pressable>
-              <Pressable style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
-              <Pressable style={s.ctrlBtn} onPress={() => siguiente()} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
+              <Pressable focusable={true} style={s.ctrlBtn} onPress={() => saltar(pos + 15)}><Text style={s.ctrl}>⏩</Text></Pressable>
+              <Pressable focusable={true} style={s.ctrlBtn} onPress={() => siguiente()} disabled={!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')}>
                 <Text style={[s.ctrl, (!enCola || (qIdx >= listaActiva.length - 1 && repeat !== 'all')) && s.ctrlOff]}>⏭</Text>
               </Pressable>
             </View>
 
             {/* ── Botones de Descarga y Lista ── */}
             <View style={s.actionRow}>
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.actionBtn, descargando && { opacity: 0.5 }]}
                 onPress={descargar}
                 disabled={!mediaUri || descargando}
@@ -2600,7 +2600,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Text style={s.actionBtnIcon}>⬇️</Text>
                 <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
               </Pressable>
-              <Pressable
+              <Pressable focusable={true}
                 style={s.actionBtn}
                 onPress={abrirModalPlaylists}
                 disabled={addingToPlaylist}
@@ -2608,7 +2608,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Text style={s.actionBtnIcon}>➕</Text>
                 <Text style={s.actionBtnText}>Añadir a lista</Text>
               </Pressable>
-              <Pressable style={s.actionBtn} onPress={() => abrirEnYoutube()}>
+              <Pressable focusable={true} style={s.actionBtn} onPress={() => abrirEnYoutube()}>
                 <Text style={s.actionBtnIcon}>▶️</Text>
                 <Text style={s.actionBtnText}>YouTube</Text>
               </Pressable>
@@ -2626,7 +2626,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
         return (
           <View style={s.qRow}>
-            <Pressable
+            <Pressable focusable={true}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}
               onPress={() => aplicar(item, soloAudio, realIdx, true)}
             >
@@ -2642,21 +2642,21 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             {/* Controles de orden de cola si está en la cola activa y es un tema próximo */}
             {isUpcoming ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }}>
-                <Pressable
+                <Pressable focusable={true}
                   style={[s.qActionBtn, !canMoveUp && { opacity: 0.25 }]}
                   disabled={!canMoveUp}
                   onPress={() => moverEnCola(realIdx, realIdx - 1)}
                 >
                   <Text style={s.qActionText}>▲</Text>
                 </Pressable>
-                <Pressable
+                <Pressable focusable={true}
                   style={[s.qActionBtn, !canMoveDown && { opacity: 0.25 }]}
                   disabled={!canMoveDown}
                   onPress={() => moverEnCola(realIdx, realIdx + 1)}
                 >
                   <Text style={s.qActionText}>▼</Text>
                 </Pressable>
-                <Pressable
+                <Pressable focusable={true}
                   style={[s.qActionBtn, { backgroundColor: 'rgba(255, 60, 60, 0.15)' }]}
                   onPress={() => quitarDeCola(realIdx)}
                 >
@@ -2664,7 +2664,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 </Pressable>
               </View>
             ) : (
-              <Pressable onPress={() => aplicar(item, soloAudio, realIdx, true)} style={{ padding: 6 }}>
+              <Pressable focusable={true} onPress={() => aplicar(item, soloAudio, realIdx, true)} style={{ padding: 6 }}>
                 <Text style={s.play}>▶</Text>
               </Pressable>
             )}
@@ -2678,12 +2678,12 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
   const renderPlayerContent = () => (
     <View style={s.modalContent}>
       <View style={s.modalHead}>
-        <Pressable onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
+        <Pressable focusable={true} onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
           <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
         </Pressable>
         <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
         {(!soloAudio || modo === 'video') && (
-          <Pressable
+          <Pressable focusable={true}
             onPress={alternarRotacion}
             style={{
               paddingHorizontal: 10,
@@ -2702,38 +2702,38 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </Text>
           </Pressable>
         )}
-        <Pressable onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
+        <Pressable focusable={true} onPress={cerrar} style={s.closeBtn}><Text style={s.closeText}>✕</Text></Pressable>
       </View>
 
       {/* Herramientas: Solo audio · Velocidad · Aleatorio · Repetir · Ecualizador · Listas · Info */}
       <View style={s.toolsRow}>
-        <Pressable style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
+        <Pressable focusable={true} style={[s.tool, soloAudio && s.toolOn]} onPress={() => setAudio(!soloAudio)}>
           <Text style={[s.toolText, soloAudio && s.toolTextOn]}>🔊 {soloAudio ? 'Modo Audio' : 'Modo Video'}</Text>
         </Pressable>
         {(!soloAudio || modo === 'video') && (
-          <Pressable style={[s.tool, esLandscape && s.toolOn]} onPress={alternarRotacion}>
+          <Pressable focusable={true} style={[s.tool, esLandscape && s.toolOn]} onPress={alternarRotacion}>
             <Text style={[s.toolText, esLandscape && s.toolTextOn]}>
               {esLandscape ? '📱 Pantalla Vertical' : '🔄 Rotar Pantalla'}
             </Text>
           </Pressable>
         )}
-        <Pressable style={[s.tool, velocidad !== 1 && s.toolOn]} onPress={() => setVelocidadOpen(true)}>
+        <Pressable focusable={true} style={[s.tool, velocidad !== 1 && s.toolOn]} onPress={() => setVelocidadOpen(true)}>
           <Text style={[s.toolText, velocidad !== 1 && s.toolTextOn]}>
             ⏱️ {velocidad !== 1 ? `${velocidad}x` : 'Velocidad'}
           </Text>
         </Pressable>
-        <Pressable style={[s.tool, shuffle && s.toolOn]} onPress={toggleShuffle}>
+        <Pressable focusable={true} style={[s.tool, shuffle && s.toolOn]} onPress={toggleShuffle}>
           <Text style={[s.toolText, shuffle && s.toolTextOn]}>🔀 Aleatorio</Text>
         </Pressable>
-        <Pressable style={[s.tool, repeat !== 'off' && s.toolOn]} onPress={ciclarRepeat}>
+        <Pressable focusable={true} style={[s.tool, repeat !== 'off' && s.toolOn]} onPress={ciclarRepeat}>
           <Text style={[s.toolText, repeat !== 'off' && s.toolTextOn]}>
             {repeat === 'one' ? '🔂 Repetir 1' : repeat === 'all' ? '🔁 Repetir todo' : '🔁 Repetir'}
           </Text>
         </Pressable>
-        <Pressable style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
+        <Pressable focusable={true} style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
           <Text style={[s.toolText, eq !== 'flat' && s.toolTextOn]}>🎚️ EQ</Text>
         </Pressable>
-        <Pressable
+        <Pressable focusable={true}
           style={[s.tool, crossover && s.toolOn]}
           onPress={() => {
             const nuevo = !crossover;
@@ -2747,22 +2747,22 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         {CAST_ANDROID ? (
           tv.conectado ? (
             <>
-              <Pressable style={[s.tool, s.toolOn]} onPress={() => { tv.cortar(); setReproduciendo(false); }}>
+              <Pressable focusable={true} style={[s.tool, s.toolOn]} onPress={() => { tv.cortar(); setReproduciendo(false); }}>
                 <Text style={[s.toolText, s.toolTextOn]}>📺 {tv.nombre || 'TV'} · Detener</Text>
               </Pressable>
-              <Pressable style={s.tool} onPress={probarTv}>
+              <Pressable focusable={true} style={s.tool} onPress={probarTv}>
                 <Text style={s.toolText}>🔎 Probar TV</Text>
               </Pressable>
             </>
           ) : (
-            <Pressable style={[s.tool, tv.ocupado && s.toolOn]} onPress={() => tv.conectar()} disabled={tv.ocupado}>
+            <Pressable focusable={true} style={[s.tool, tv.ocupado && s.toolOn]} onPress={() => tv.conectar()} disabled={tv.ocupado}>
               <Text style={[s.toolText, tv.ocupado && s.toolTextOn]}>
                 {tv.ocupado ? '⏳ Buscando TV…' : '📺 Chromecast'}
               </Text>
             </Pressable>
           )
         ) : null}
-        <Pressable
+        <Pressable focusable={true}
           style={[s.tool, lyricsOpen && s.toolOn]}
           onPress={() => {
             setLyricsOpen(true);
@@ -2773,7 +2773,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         >
           <Text style={[s.toolText, lyricsOpen && s.toolTextOn]}>🎤 Letras</Text>
         </Pressable>
-        <Pressable
+        <Pressable focusable={true}
           style={[s.tool, iniciandoRadio && s.toolOn]}
           onPress={() => actual && iniciarRadioDesdeActual(actual)}
           disabled={iniciandoRadio || !actual}
@@ -2782,10 +2782,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             {iniciandoRadio ? '⏳ Sintonizando…' : '📻 Iniciar Radio'}
           </Text>
         </Pressable>
-        <Pressable style={s.tool} onPress={abrirModalPlaylists}>
+        <Pressable focusable={true} style={s.tool} onPress={abrirModalPlaylists}>
           <Text style={s.toolText}>📋 Listas</Text>
         </Pressable>
-        <Pressable style={s.tool} onPress={() => actual && fetchInfo(actual)}>
+        <Pressable focusable={true} style={s.tool} onPress={() => actual && fetchInfo(actual)}>
           <Text style={s.toolText}>💡 Info</Text>
         </Pressable>
       </View>
@@ -2812,7 +2812,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
   return (
     <View style={s.container}>
       {esIosSafari ? (
-        <Pressable style={s.iosBanner} onPress={() => setIosInstallOpen(true)}>
+        <Pressable focusable={true} style={s.iosBanner} onPress={() => setIosInstallOpen(true)}>
           <Text style={s.iosBannerIcon}>📲</Text>
           <View style={{ flex: 1 }}>
             <Text style={s.iosBannerTitle}>Instalar YouThink en este iPhone</Text>
@@ -2838,13 +2838,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       <View style={s.searchRow}>
         <TextInput style={s.input} placeholder="Buscar música y videos…" placeholderTextColor={theme.colors.textDim}
           value={query} onChangeText={setQuery} onSubmitEditing={buscarDesdeInput} returnKeyType="search" autoCorrect={false} />
-        <Pressable style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></Pressable>
+        <Pressable focusable={true} style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></Pressable>
       </View>
       <View style={{ flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4 }}>
         {(['all', 'videos', 'songs'] as const).map((t) => {
           const activo = t === searchType;
           return (
-            <Pressable
+            <Pressable focusable={true}
               key={t}
               onPress={() => buscarConTipo(t)}
               style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14,
@@ -2867,16 +2867,16 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Text style={s.toggleLabel}>⏭️ Avanzar solo a la siguiente</Text>
         <Switch value={autoSiguiente} onValueChange={setAuto} trackColor={{ true: theme.colors.gold, false: theme.colors.border }} />
       </View>
-      <Pressable style={s.updateBtn} onPress={actualizarApp}>
+      <Pressable focusable={true} style={s.updateBtn} onPress={actualizarApp}>
         <Text style={s.updateBtnText}>🔄 Actualizar app</Text>
       </Pressable>
 
       {results.length > 0 ? (
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Pressable style={[s.playAll, { flex: 1 }]} onPress={() => reproducir(results, 0, searchType === 'videos' ? false : soloAudio)}>
+          <Pressable focusable={true} style={[s.playAll, { flex: 1 }]} onPress={() => reproducir(results, 0, searchType === 'videos' ? false : soloAudio)}>
             <Text style={s.playAllText}>▶ Reproducir todo ({results.length})</Text>
           </Pressable>
-          <Pressable
+          <Pressable focusable={true}
             style={[s.playAll, { flex: 0, paddingHorizontal: 16, backgroundColor: shuffle ? theme.colors.gold : theme.colors.surface2 }]}
             onPress={() => {
               const nuevo = !shuffle;
@@ -2904,7 +2904,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           const modoItem = searchType === 'videos' ? false : searchType === 'songs' ? true : soloAudio;
           return (
           <View style={[s.row, qIdx === index && cola[qIdx]?.id === item.id ? s.rowActiva : null]}>
-            <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, modoItem)}>
+            <Pressable focusable={true} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(results, index, modoItem)}>
               <Image source={{ uri: item.thumb }} style={s.thumb} />
               <View style={{ flex: 1 }}>
                 <Text style={s.title} numberOfLines={2}>
@@ -2916,14 +2916,14 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </Pressable>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
               {actual ? (
-                <Pressable
+                <Pressable focusable={true}
                   style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
                   onPress={() => encolarCancion(item)}
                 >
                   <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
                 </Pressable>
               ) : null}
-              <Pressable onPress={() => reproducir(results, index, modoItem)} style={{ padding: 6 }}>
+              <Pressable focusable={true} onPress={() => reproducir(results, index, modoItem)} style={{ padding: 6 }}>
                 <Text style={s.play}>{qIdx === index && cola[qIdx]?.id === item.id ? '🔊' : modoItem ? '🔊' : '▶'}</Text>
               </Pressable>
             </View>
@@ -2932,7 +2932,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         }}
         ListFooterComponent={
           results.length > 0 && nextPage ? (
-            <Pressable
+            <Pressable focusable={true}
               style={{ marginTop: 12, marginBottom: 8, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
                 backgroundColor: theme.colors.surface2, borderWidth: 1, borderColor: theme.colors.border }}
               onPress={cargarMas}
@@ -2955,13 +2955,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
                         🕒 Escuchados recientemente
                       </Text>
-                      <Pressable onPress={limpiarHistorial} style={{ padding: 4 }}>
+                      <Pressable focusable={true} onPress={limpiarHistorial} style={{ padding: 4 }}>
                         <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🗑️ Borrar</Text>
                       </Pressable>
                     </View>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
                       {historial.map((item, index) => (
-                        <Pressable
+                        <Pressable focusable={true}
                           key={'hist-' + item.id}
                           style={{
                             width: 130,
@@ -3000,7 +3000,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       <Text style={{ fontSize: 16, fontWeight: '800', color: theme.colors.gold }}>
                         {historial.length > 0 ? '🔥 Recomendados para vos' : '🔥 Tendencias & Recomendados'}
                       </Text>
-                      <Pressable onPress={() => cargarRecomendaciones()} style={{ padding: 4 }}>
+                      <Pressable focusable={true} onPress={() => cargarRecomendaciones()} style={{ padding: 4 }}>
                         <Text style={{ color: theme.colors.textDim, fontSize: 12 }}>🔄 Actualizar</Text>
                       </Pressable>
                     </View>
@@ -3009,7 +3009,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     ) : (
                       recomendaciones.map((it, idx) => (
                         <View key={'rec-' + it.id} style={[s.row, { marginBottom: 10 }]}>
-                          <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
+                          <Pressable focusable={true} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
                             <Image source={{ uri: it.thumb }} style={s.thumb} />
                             <View style={{ flex: 1 }}>
                               <Text style={s.title} numberOfLines={2}>{it.title}</Text>
@@ -3020,14 +3020,14 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                           </Pressable>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
                             {actual ? (
-                              <Pressable
+                              <Pressable focusable={true}
                                 style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
                                 onPress={() => encolarCancion(it)}
                               >
                                 <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
                               </Pressable>
                             ) : null}
-                            <Pressable onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
+                            <Pressable focusable={true} onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
                               <Text style={s.play}>▶</Text>
                             </Pressable>
                           </View>
@@ -3046,7 +3046,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Mini-reproductor flotante para móvil nativo (en Web se gestiona en el portal persistente) */}
       {actual && !playerVisible && Platform.OS !== 'web' ? (
-        <Pressable
+        <Pressable focusable={true}
           style={s.miniPlayer}
           onPress={() => setPlayerVisible(true)}
         >
@@ -3055,10 +3055,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
             <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
           </View>
-          <Pressable onPress={togglePlay} style={{ padding: 8 }}>
+          <Pressable focusable={true} onPress={togglePlay} style={{ padding: 8 }}>
             <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
           </Pressable>
-          <Pressable onPress={cerrar} style={{ padding: 8 }}>
+          <Pressable focusable={true} onPress={cerrar} style={{ padding: 8 }}>
             <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
           </Pressable>
         </Pressable>
@@ -3145,7 +3145,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
             {/* 3. Mini Player Web (visible cuando playerVisible === false) */}
             {!playerVisible && actual ? (
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.miniPlayer, { position: 'fixed' as any, zIndex: 5001 }]}
                 onPress={() => setPlayerVisible(true)}
               >
@@ -3154,10 +3154,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
                   <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
                 </View>
-                <Pressable onPress={togglePlay} style={{ padding: 8 }}>
+                <Pressable focusable={true} onPress={togglePlay} style={{ padding: 8 }}>
                   <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
                 </Pressable>
-                <Pressable onPress={cerrar} style={{ padding: 8 }}>
+                <Pressable focusable={true} onPress={cerrar} style={{ padding: 8 }}>
                   <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
                 </Pressable>
               </Pressable>
@@ -3185,12 +3185,12 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Panel de Ecualizador */}
       <Modal visible={eqOpen} transparent animationType="fade" onRequestClose={() => setEqOpen(false)}>
-        <Pressable style={s.eqBackdrop} onPress={() => setEqOpen(false)}>
-          <Pressable style={s.eqPanel} onPress={() => {}}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setEqOpen(false)}>
+          <Pressable focusable={true} style={s.eqPanel} onPress={() => {}}>
             <Text style={s.eqTitle}>🎚️ Ecualizador</Text>
             <View style={s.eqGrid}>
               {Object.keys(EQ_PRESETS).map((k) => (
-                <Pressable key={k} style={[s.eqItem, eq === k && s.eqItemOn]} onPress={() => aplicarEQ(k)}>
+                <Pressable focusable={true} key={k} style={[s.eqItem, eq === k && s.eqItemOn]} onPress={() => aplicarEQ(k)}>
                   <Text style={[s.eqItemText, eq === k && s.toolTextOn]}>{EQ_PRESETS[k].label}</Text>
                 </Pressable>
               ))}
@@ -3208,8 +3208,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Panel de Modificador de Velocidad / Tempo */}
       <Modal visible={velocidadOpen} transparent animationType="fade" onRequestClose={() => setVelocidadOpen(false)}>
-        <Pressable style={s.eqBackdrop} onPress={() => setVelocidadOpen(false)}>
-          <Pressable style={s.eqPanel} onPress={() => {}}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setVelocidadOpen(false)}>
+          <Pressable focusable={true} style={s.eqPanel} onPress={() => {}}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={s.eqTitle}>⏱️ Velocidad de Reproducción</Text>
               <Text style={{ color: theme.colors.gold, fontSize: 22, fontWeight: '900' }}>{velocidad}x</Text>
@@ -3220,7 +3220,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               {[0.5, 0.75, 0.85, 0.9, 1.0, 1.1, 1.15, 1.25, 1.5, 1.75, 2.0].map((rate) => {
                 const activo = velocidad === rate;
                 return (
-                  <Pressable
+                  <Pressable focusable={true}
                     key={rate}
                     style={[s.eqItem, activo && s.eqItemOn]}
                     onPress={() => aplicarVelocidad(rate)}
@@ -3235,19 +3235,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
             {/* Ajuste fino (+ / -) */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 14 }}>
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
                 onPress={() => aplicarVelocidad(velocidad - 0.05)}
               >
                 <Text style={s.eqItemText}>-0.05x</Text>
               </Pressable>
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10, backgroundColor: theme.colors.surface2 }]}
                 onPress={() => aplicarVelocidad(1.0)}
               >
                 <Text style={[s.eqItemText, { color: theme.colors.gold }]}>Restablecer (1x)</Text>
               </Pressable>
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
                 onPress={() => aplicarVelocidad(velocidad + 0.05)}
               >
@@ -3256,7 +3256,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </View>
 
             {/* Atajo hacia Tap Tempo */}
-            <Pressable
+            <Pressable focusable={true}
               style={{
                 marginTop: 16,
                 backgroundColor: 'rgba(229, 178, 31, 0.15)',
@@ -3286,8 +3286,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Modal de Listas de Reproducción */}
       <Modal visible={playlistModalOpen} transparent animationType="fade" onRequestClose={() => setPlaylistModalOpen(false)}>
-        <Pressable style={s.eqBackdrop} onPress={() => setPlaylistModalOpen(false)}>
-          <Pressable style={[s.eqPanel, { maxHeight: '80%' }]} onPress={() => {}}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setPlaylistModalOpen(false)}>
+          <Pressable focusable={true} style={[s.eqPanel, { maxHeight: '80%' }]} onPress={() => {}}>
             <Text style={s.eqTitle}>➕ Añadir a lista</Text>
 
             {/* Nueva lista */}
@@ -3300,7 +3300,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 onChangeText={setNuevaListaNombre}
                 autoCorrect={false}
               />
-              <Pressable
+              <Pressable focusable={true}
                 style={[s.plCreateBtn, !nuevaListaNombre.trim() && { opacity: 0.4 }]}
                 onPress={crearYAgregar}
                 disabled={!nuevaListaNombre.trim() || creandoLista}
@@ -3326,7 +3326,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 renderItem={({ item }) => {
                   const esYT = item.id.startsWith('yt_');
                   return (
-                    <Pressable
+                    <Pressable focusable={true}
                       style={s.plItem}
                       onPress={() => agregarALista(item)}
                       disabled={addingToPlaylist}
@@ -3350,8 +3350,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Modal de Info IA */}
       <Modal visible={infoOpen} transparent animationType="fade" onRequestClose={() => setInfoOpen(false)}>
-        <Pressable style={s.eqBackdrop} onPress={() => setInfoOpen(false)}>
-          <Pressable style={s.eqPanel} onPress={() => {}}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setInfoOpen(false)}>
+          <Pressable focusable={true} style={s.eqPanel} onPress={() => {}}>
             {/* Cabecera con miniatura */}
             <View style={s.infoHead}>
               {actual?.thumb ? (
@@ -3378,7 +3378,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
             <View style={s.infoFoot}>
               <Text style={s.infoFootLabel}>✨ Gemini</Text>
-              <Pressable
+              <Pressable focusable={true}
                 style={s.infoRefreshBtn}
                 onPress={() => actual && fetchInfo(actual)}
                 disabled={infoLoading}
@@ -3392,8 +3392,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       {/* Modal de instrucciones de instalación para iPhone */}
       <Modal visible={iosInstallOpen} transparent animationType="fade" onRequestClose={() => setIosInstallOpen(false)}>
-        <Pressable style={s.eqBackdrop} onPress={() => setIosInstallOpen(false)}>
-          <Pressable style={s.eqPanel} onPress={() => {}}>
+        <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setIosInstallOpen(false)}>
+          <Pressable focusable={true} style={s.eqPanel} onPress={() => {}}>
             <Text style={s.eqTitle}>📲 Instalar en tu iPhone</Text>
             <Text style={[s.eqFoot, { textAlign: 'left', marginBottom: 14, color: theme.colors.text }]}>
               Instalalo en 5 segundos para usarlo a pantalla completa sin barras de Safari:
@@ -3428,7 +3428,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               </Text>
             </View>
 
-            <Pressable
+            <Pressable focusable={true}
               style={[s.btn, { backgroundColor: theme.colors.gold, marginTop: 14, width: '100%' }]}
               onPress={() => setIosInstallOpen(false)}
             >
@@ -3446,20 +3446,20 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <Text style={s.lyricsTitle} numberOfLines={1}>{actual?.title}</Text>
               <Text style={s.lyricsArtist} numberOfLines={1}>{lyricsData?.artist || actual?.channel}</Text>
             </View>
-            <Pressable onPress={() => setLyricsOpen(false)} style={s.closeBtn}>
+            <Pressable focusable={true} onPress={() => setLyricsOpen(false)} style={s.closeBtn}>
               <Text style={s.closeText}>✕</Text>
             </Pressable>
           </View>
 
           {/* Selector de modo de idioma: Original | Traducida | Bilingüe */}
           <View style={s.lyricsTabs}>
-            <Pressable style={[s.lyricsTab, modoLetra === 'original' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('original')}>
+            <Pressable focusable={true} style={[s.lyricsTab, modoLetra === 'original' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('original')}>
               <Text style={[s.lyricsTabText, modoLetra === 'original' && s.lyricsTabTextOn]}>🔤 Original</Text>
             </Pressable>
-            <Pressable style={[s.lyricsTab, modoLetra === 'traducida' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('traducida')}>
+            <Pressable focusable={true} style={[s.lyricsTab, modoLetra === 'traducida' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('traducida')}>
               <Text style={[s.lyricsTabText, modoLetra === 'traducida' && s.lyricsTabTextOn]}>🌐 Español</Text>
             </Pressable>
-            <Pressable style={[s.lyricsTab, modoLetra === 'bilingue' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('bilingue')}>
+            <Pressable focusable={true} style={[s.lyricsTab, modoLetra === 'bilingue' && s.lyricsTabOn]} onPress={() => cambiarModoLetra('bilingue')}>
               <Text style={[s.lyricsTabText, modoLetra === 'bilingue' && s.lyricsTabTextOn]}>👥 Bilingüe</Text>
             </Pressable>
           </View>
@@ -3481,7 +3481,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <Text style={{ fontSize: 44, marginBottom: 12 }}>🎵</Text>
               <Text style={s.empty}>No se encontró letra disponible para esta canción.</Text>
               {actual ? (
-                <Pressable style={[s.btn, { marginTop: 16, paddingVertical: 10, paddingHorizontal: 16 }]} onPress={() => cargarLyrics(actual)}>
+                <Pressable focusable={true} style={[s.btn, { marginTop: 16, paddingVertical: 10, paddingHorizontal: 16 }]} onPress={() => cargarLyrics(actual)}>
                   <Text style={{ fontWeight: '700', color: '#111' }}>🔄 Reintentar búsqueda</Text>
                 </Pressable>
               ) : null}
@@ -3501,7 +3501,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     : item.text;
 
                 return (
-                  <Pressable
+                  <Pressable focusable={true}
                     style={[s.lyricRow, activo && s.lyricRowActivo]}
                     onPress={() => {
                       if (item.time != null && isFinite(item.time)) {
@@ -3533,13 +3533,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text>
               </View>
             </View>
-            <Pressable style={s.lyricsPlayBtn} onPress={togglePlay}>
+            <Pressable focusable={true} style={s.lyricsPlayBtn} onPress={togglePlay}>
               <Text style={[s.lyricsPlayIcon, !estaSonando && { marginLeft: 2 }]}>
                 {estaSonando ? '⏸' : '▶'}
               </Text>
             </Pressable>
             {!autoScrollLyrics && (
-              <Pressable style={s.lyricsResumeBtn} onPress={() => setAutoScrollLyrics(true)}>
+              <Pressable focusable={true} style={s.lyricsResumeBtn} onPress={() => setAutoScrollLyrics(true)}>
                 <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: '700' }}>⬇ Seguir</Text>
               </Pressable>
             )}
