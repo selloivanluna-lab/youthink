@@ -40,10 +40,25 @@ export default function Radio() {
     setError(null);
     setEstacionActual(nombreVisible);
     try {
-      const res = await api.radio(seed, 30);
-      if (res.ok && res.tracks && res.tracks.length > 0) {
-        setTracks(res.tracks);
-        // Si el usuario toca una estación, también podemos iniciarla directamente
+      let tracksRadio: YtResult[] = [];
+      try {
+        const res = await api.radio(seed, 30);
+        if (res.ok && res.tracks && res.tracks.length > 0) {
+          tracksRadio = res.tracks;
+        }
+      } catch (_) {}
+
+      if (tracksRadio.length === 0) {
+        try {
+          const busq = await api.search(`${seed} mix`, 25);
+          if (busq.ok && busq.results && busq.results.length > 0) {
+            tracksRadio = busq.results;
+          }
+        } catch (_) {}
+      }
+
+      if (tracksRadio.length > 0) {
+        setTracks(tracksRadio);
       } else {
         setError('No se pudieron obtener temas para esta estación.');
       }

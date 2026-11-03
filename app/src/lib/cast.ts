@@ -146,23 +146,22 @@ export async function cargarEnTv(
   const l = getCast();
   if (!l || !media?.url) return { ok: false, error: 'Chromecast no disponible.' };
   try {
-    const sesion = await esperarCliente(10000);
+    const sesion = await esperarCliente(12000);
     if (!sesion?.client) return { ok: false, error: 'No hay ningún Chromecast conectado.' };
-
-    // Pausa breve de 1.2s para darle tiempo al receptor del TV de inicializarse
-    await new Promise((r) => setTimeout(r, 1200));
 
     let actual: TvMedia = media;
     let ultimoError: any = null;
-    for (let intento = 0; intento < 4; intento++) {
-      if (intento > 0 && reResolve) {
-        // URL nueva: la anterior puede haber quedado atada a una sesión que el
-        // receptor ya descartó.
-        try {
-          const nuevo = await reResolve();
-          if (nuevo?.url) actual = { ...actual, url: nuevo.url, contentType: nuevo.contentType };
-        } catch (e) {}
+    // Hasta 35s: en el primer connect, el receptor del TV puede tardar de 5 a 20 s en
+    // cargar su app web (logo azul). Reintentamos de forma continua hasta que acepte.
+    const limiteTotal = Date.now() + 35000;
+
+    while (Date.now() < limiteTotal) {
+      const s = await obtenerSesion();
+      if (!s?.client) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
       }
+
       const esAudio = (actual.contentType || '').startsWith('audio');
       const mediaInfo = {
         contentUrl: actual.url,
@@ -184,22 +183,34 @@ export async function cargarEnTv(
               images: actual.thumb ? [{ url: actual.thumb }] : undefined,
             },
       };
+
       try {
-        await sesion.client.loadMedia({
+        await s.client.loadMedia({
           autoplay: true,
           startTime: Math.max(0, actual.startTime || 0),
           mediaInfo,
         });
+
+        // loadMedia no lanzó error: la orden fue recibida por el receptor.
+        // Verificamos si empezó a reproducir o si el TV le pidió datos al teléfono.
+        const arranco = await medioArranco(s, 4500, confirmar);
+        if (arranco) return { ok: true };
       } catch (e) {
+        // El receptor del TV todavía está cargando (logo azul/spinner)
         ultimoError = e;
-        await new Promise((r) => setTimeout(r, 800));
-        continue;
       }
-      const arranco = await medioArranco(sesion, 3200, confirmar);
-      if (arranco) return { ok: true };
-      ultimoError = null;
-      await new Promise((r) => setTimeout(r, 600));
+
+      // Si aún no arrancó, esperar 1.5s antes del próximo intento
+      await new Promise((r) => setTimeout(r, 1500));
+
+      if (reResolve) {
+        try {
+          const nuevo = await reResolve();
+          if (nuevo?.url) actual = { ...actual, url: nuevo.url, contentType: nuevo.contentType };
+        } catch (_) {}
+      }
     }
+
     return {
       ok: false,
       error: ultimoError

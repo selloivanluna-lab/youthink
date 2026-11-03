@@ -712,14 +712,6 @@ export default function Buscar() {
 
     let cancelado = false;
     (async () => {
-      // PRIMER CONNECT: el receiver del TV tarda 5-20 s en cargar su app.
-      // Si mandamos loadMedia demasiado pronto, la orden se descarta y el TV
-      // queda en el logo. En reconexión el receiver ya está corriendo y no hay
-      // que esperar.
-      if (!tv.esReconexion) {
-        await new Promise((r) => setTimeout(r, 6500));
-      }
-      if (cancelado) return;
       const directo = await resolverParaTv(actual, esAudio);
       if (cancelado) return;
       // Contamos los pedidos del TV para detectar si llegó al teléfono.
@@ -970,17 +962,36 @@ export default function Buscar() {
   async function iniciarRadioDesdeActual(track: YtResult) {
     if (!track) return;
     setIniciandoRadio(true);
+    // Reproducir inmediatamente el tema seleccionado para que la música empiece ya mismo sin esperar
+    reproducir([track], 0, soloAudio, true);
     try {
-      const res = await api.radio(track.id, 25);
-      if (res.ok && res.tracks && res.tracks.length > 0) {
-        // Encolar y reproducir (la radio sí se auto-extiende)
-        reproducir(res.tracks, 0, soloAudio, true);
-      } else {
-        // Fallback: búsqueda de temas del mismo artista o canal
-        const busq = await api.search(track.channel || track.title, 15);
-        if (busq.ok && busq.results && busq.results.length > 0) {
-          reproducir(busq.results, 0, soloAudio, true);
+      let tracksRadio: YtResult[] = [];
+      try {
+        const res = await api.radio(track.id, 25);
+        if (res.ok && res.tracks && res.tracks.length > 0) {
+          tracksRadio = res.tracks;
         }
+      } catch (_) {
+        // Render backend /api/radio puede fallar si YouTube bloquea IP de datacenter
+      }
+
+      if (tracksRadio.length === 0) {
+        // Fallback por búsqueda de YouTube (scraping directo / NewPipe sin 502)
+        const q = (track.channel && !track.channel.toLowerCase().includes('topic'))
+          ? `${track.channel} mix`
+          : `${track.title.replace(/\[.*?\]|\(.*?\)|official|video|audio|remix|lyric/gi, '').trim()} mix`;
+        try {
+          const busq = await api.search(q, 20);
+          if (busq.ok && busq.results && busq.results.length > 0) {
+            tracksRadio = busq.results.filter((r) => r.id !== track.id);
+          }
+        } catch (_) {}
+      }
+
+      if (tracksRadio.length > 0) {
+        // Encolar los temas de la estación después de la canción que ya está sonando
+        setCola([track, ...tracksRadio]);
+        colaRef.current = [track, ...tracksRadio];
       }
     } catch (e) {
       console.warn('[Iniciar Radio]', e);
@@ -1751,19 +1762,40 @@ export default function Buscar() {
     // Extender la "estación" solo si la cola fue generada automáticamente
     // (radio/recomendados). Una lista del usuario se respeta tal cual.
     if (autoExtenderRef.current && i >= c.length - 2 && c[i]?.id) {
-      api.radio(c[i].id, 20).then((res) => {
-        if (res.ok && res.tracks && res.tracks.length > 0) {
+      const cur = c[i];
+      (async () => {
+        let nuevos: YtResult[] = [];
+        try {
+          const res = await api.radio(cur.id, 20);
+          if (res.ok && res.tracks && res.tracks.length > 0) {
+            nuevos = res.tracks;
+          }
+        } catch (_) {}
+
+        if (nuevos.length === 0) {
+          try {
+            const q = (cur.channel && !cur.channel.toLowerCase().includes('topic'))
+              ? `${cur.channel} mix`
+              : `${cur.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()} mix`;
+            const busq = await api.search(q, 15);
+            if (busq.ok && busq.results && busq.results.length > 0) {
+              nuevos = busq.results;
+            }
+          } catch (_) {}
+        }
+
+        if (nuevos.length > 0) {
           const idsExistentes = new Set(colaRef.current.map((t) => t.id));
-          const nuevos = res.tracks.filter((t) => !idsExistentes.has(t.id));
-          if (nuevos.length > 0) {
+          const filtrados = nuevos.filter((t) => !idsExistentes.has(t.id));
+          if (filtrados.length > 0) {
             setCola((prev) => {
-              const actualizada = [...prev, ...nuevos];
+              const actualizada = [...prev, ...filtrados];
               colaRef.current = actualizada;
               return actualizada;
             });
           }
         }
-      }).catch(() => {});
+      })();
     }
 
     if (i + 1 < c.length) {
@@ -1816,11 +1848,46 @@ export default function Buscar() {
       setPlayerVisible(true);
       const isAudio = audioRef.current;
       if (pRadio) {
-        // Iniciar estación de radio desde el primer tema de la lista
-        const seedItem: YtResult = Array.isArray(pQueue) && pQueue.length > 0
-          ? pQueue[0]
-          : { id: pId, title: pTitle, url: `https://www.youtube.com/watch?v=${pId}`, channel: '', duration: 0, thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg` };
-        iniciarRadioDesdeActual(seedItem);
+        // Iniciar estación de radio a partir de la lista
+        if (Array.isArray(pQueue) && pQueue.length > 0) {
+          reproducir(pQueue, 0, isAudio, true);
+          const seed = pQueue[0];
+          (async () => {
+            try {
+              let extras: YtResult[] = [];
+              try {
+                const res = await api.radio(seed.id, 25);
+                if (res.ok && res.tracks && res.tracks.length > 0) extras = res.tracks;
+              } catch (_) {}
+              if (extras.length === 0) {
+                const q = (seed.channel && !seed.channel.toLowerCase().includes('topic'))
+                  ? `${seed.channel} mix`
+                  : `${seed.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()} mix`;
+                const busq = await api.search(q, 20);
+                if (busq.ok && busq.results && busq.results.length > 0) extras = busq.results;
+              }
+              if (extras.length > 0) {
+                const idsExistentes = new Set(pQueue.map((item) => item.id));
+                const filtrados = extras.filter((r) => !idsExistentes.has(r.id));
+                if (filtrados.length > 0) {
+                  setCola((prev) => [...prev, ...filtrados]);
+                  colaRef.current = [...colaRef.current, ...filtrados];
+                }
+              }
+            } catch (_) {}
+          })();
+        } else {
+          const seedItem: YtResult = {
+            id: pId,
+            title: pTitle,
+            url: `https://www.youtube.com/watch?v=${pId}`,
+            channel: '',
+            duration: 0,
+            thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
+            kind: 'song',
+          };
+          iniciarRadioDesdeActual(seedItem);
+        }
       } else if (Array.isArray(pQueue) && pQueue.length > 0) {
         // Cargar toda la lista de canciones en la cola y arrancar desde la canción tocada
         reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), isAudio);
@@ -1891,6 +1958,27 @@ export default function Buscar() {
   async function togglePlay() {
     // Con Chromecast conectado, play/pausa controla el TV (el reproductor local está pausado).
     if (tvRef.current) {
+      if (!tv.sonando && actual) {
+        tvCargandoRef.current = '';
+        const esAudio = actual.kind === 'song';
+        const directo = await resolverParaTv(actual, esAudio, true);
+        tv.transmitir(
+          {
+            id: actual.id,
+            title: actual.title,
+            channel: actual.channel,
+            thumb: actual.thumb,
+            url: directo?.url || (esAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)),
+            contentType: directo?.contentType || (esAudio ? 'audio/mp4' : 'video/mp4'),
+            duration: actual.duration,
+            startTime: 0,
+          },
+          () => resolverParaTv(actual, esAudio, true),
+          async () => (await pedidosTv()) > 0,
+        );
+        setReproduciendo(true);
+        return;
+      }
       const quiereSonar = !tv.sonando;
       await tv.alternarTv(quiereSonar);
       setReproduciendo(quiereSonar);
