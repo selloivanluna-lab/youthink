@@ -502,7 +502,7 @@ export default function Buscar() {
     if (tvRef.current) {
       if (actual) {
         tvCargandoRef.current = '';
-        const esAudio = soloAudio;
+        const esAudio = actual.kind === 'song';
         const itemActual = actual;
         (async () => {
           const directo = await resolverParaTv(itemActual, esAudio);
@@ -669,7 +669,9 @@ export default function Buscar() {
 
   useEffect(() => {
     if (!tv.conectado || !actual) return;
-    const esAudio = soloAudio;
+    // En el TV priorizamos VIDEO (el usuario castea para ver el contenido).
+    // Sólo los temas de YouTube Music se mandan como audio.
+    const esAudio = actual.kind === 'song';
     const clave = actual.id + '|' + (esAudio ? 'a' : 'v');
     if (tvCargandoRef.current === clave) return;
     tvCargandoRef.current = clave;
