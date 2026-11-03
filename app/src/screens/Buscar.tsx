@@ -1663,6 +1663,17 @@ export default function Buscar() {
           const v = await QpAudio.resolveVideo(item.id);
           if (v && v.url) {
             setMediaUri(v.url);
+            mediaUriRef.current = v.url;
+            setWebEmbedUri(null);
+            try { player.replace({ uri: v.url }); } catch (_) {}
+            if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
+            if (autoPlay) { try { player.play(); } catch (_) {} }
+            setReproduciendo(autoPlay);
+            reproduciendoRef.current = autoPlay;
+            setError(null);
+            setPos(0); posRef.current = 0;
+            const initialDur = item.duration || 0;
+            setDur(initialDur); durRef.current = initialDur;
             return;
           }
         } catch (_) {
@@ -1794,6 +1805,7 @@ export default function Buscar() {
     const pQueue: YtResult[] = route.params?.autoPlayQueue;
     const pIndex: number = typeof route.params?.autoPlayIndex === 'number' ? route.params?.autoPlayIndex : 0;
     const pShuffle: boolean = Boolean(route.params?.autoShuffle);
+    const pRadio: boolean = Boolean(route.params?.autoRadio);
 
     if (pId) {
       if (pShuffle) {
@@ -1803,7 +1815,13 @@ export default function Buscar() {
       }
       setPlayerVisible(true);
       const isAudio = audioRef.current;
-      if (Array.isArray(pQueue) && pQueue.length > 0) {
+      if (pRadio) {
+        // Iniciar estación de radio desde el primer tema de la lista
+        const seedItem: YtResult = Array.isArray(pQueue) && pQueue.length > 0
+          ? pQueue[0]
+          : { id: pId, title: pTitle, url: `https://www.youtube.com/watch?v=${pId}`, channel: '', duration: 0, thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg` };
+        iniciarRadioDesdeActual(seedItem);
+      } else if (Array.isArray(pQueue) && pQueue.length > 0) {
         // Cargar toda la lista de canciones en la cola y arrancar desde la canción tocada
         reproducir(pQueue, Math.max(0, Math.min(pIndex, pQueue.length - 1)), isAudio);
       } else {
@@ -1824,6 +1842,7 @@ export default function Buscar() {
         autoPlayQueue: undefined,
         autoPlayIndex: undefined,
         autoShuffle: undefined,
+        autoRadio: undefined,
       });
     }
 
@@ -2514,6 +2533,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={s.toolText}>💡 Info</Text>
         </Pressable>
       </View>
+      {CAST_ANDROID && CastButtonHost ? (
+        <View style={{ width: 1, height: 1, opacity: 0, overflow: 'hidden', position: 'absolute' }} pointerEvents="none">
+          <CastButtonHost style={{ width: 1, height: 1 }} tintColor={theme.colors.gold} />
+        </View>
+      ) : null}
       {tv.error ? <Text style={s.eqNote}>{tv.error}</Text> : null}
       {tv.conectado ? (
         <Text style={s.eqNote}>📺 Transmitiendo a {tv.nombre || 'Chromecast'} · el audio sale por el TV</Text>

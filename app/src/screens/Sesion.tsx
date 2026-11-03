@@ -616,6 +616,7 @@ export default function Sesion() {
                                     channel: song.channel,
                                     thumb: song.thumb,
                                     duration: song.duration || 0,
+                                    kind: 'song' as const,
                                   }));
                                   (navigation.navigate as any)('Play', {
                                     autoPlayId: queue[0]?.id,
@@ -637,6 +638,7 @@ export default function Sesion() {
                                     channel: song.channel,
                                     thumb: song.thumb,
                                     duration: song.duration || 0,
+                                    kind: 'song' as const,
                                   }));
                                   const rndIdx = Math.floor(Math.random() * queue.length);
                                   (navigation.navigate as any)('Play', {
@@ -649,6 +651,28 @@ export default function Sesion() {
                                 }}
                               >
                                 <Text style={{ color: theme.colors.gold, fontWeight: '800', fontSize: 13 }}>🔀 Aleatorio</Text>
+                              </Pressable>
+                              <Pressable
+                                style={{ backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: '#4CAF50', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = itemsLista.map((song) => ({
+                                    id: song.yt_id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                    kind: 'song' as const,
+                                  }));
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[0]?.id,
+                                    autoPlayTitle: queue[0]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: 0,
+                                    autoRadio: true,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: '#4CAF50', fontWeight: '800', fontSize: 13 }}>📻 Radio</Text>
                               </Pressable>
                             </View>
                           )}
@@ -663,6 +687,7 @@ export default function Sesion() {
                                   channel: song.channel,
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
+                                    kind: 'song' as const,
                                 }));
                                 (navigation.navigate as any)('Play', {
                                   autoPlayId: it.yt_id,
@@ -781,6 +806,7 @@ export default function Sesion() {
                                     channel: song.channel,
                                     thumb: song.thumb,
                                     duration: song.duration || 0,
+                                    kind: 'song' as const,
                                   }));
                                   (navigation.navigate as any)('Play', {
                                     autoPlayId: queue[0]?.id,
@@ -802,6 +828,7 @@ export default function Sesion() {
                                     channel: song.channel,
                                     thumb: song.thumb,
                                     duration: song.duration || 0,
+                                    kind: 'song' as const,
                                   }));
                                   const rndIdx = Math.floor(Math.random() * queue.length);
                                   (navigation.navigate as any)('Play', {
@@ -814,6 +841,28 @@ export default function Sesion() {
                                 }}
                               >
                                 <Text style={{ color: theme.colors.gold, fontWeight: '800', fontSize: 13 }}>🔀 Aleatorio</Text>
+                              </Pressable>
+                              <Pressable
+                                style={{ backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: '#4CAF50', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, alignItems: 'center' }}
+                                onPress={() => {
+                                  const queue = ytItems.map((song) => ({
+                                    id: song.id,
+                                    title: song.title,
+                                    channel: song.channel,
+                                    thumb: song.thumb,
+                                    duration: song.duration || 0,
+                                    kind: 'song' as const,
+                                  }));
+                                  (navigation.navigate as any)('Play', {
+                                    autoPlayId: queue[0]?.id,
+                                    autoPlayTitle: queue[0]?.title,
+                                    autoPlayQueue: queue,
+                                    autoPlayIndex: 0,
+                                    autoRadio: true,
+                                  });
+                                }}
+                              >
+                                <Text style={{ color: '#4CAF50', fontWeight: '800', fontSize: 13 }}>📻 Radio</Text>
                               </Pressable>
                             </View>
                           )}
@@ -828,6 +877,7 @@ export default function Sesion() {
                                   channel: song.channel,
                                   thumb: song.thumb,
                                   duration: song.duration || 0,
+                                    kind: 'song' as const,
                                 }));
                                 (navigation.navigate as any)('Play', {
                                   autoPlayId: it.id,
