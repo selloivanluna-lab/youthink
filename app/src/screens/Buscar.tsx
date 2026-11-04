@@ -240,7 +240,7 @@ export default function Buscar() {
         style.innerHTML = [
           '.ytp-chrome-top, .ytp-watermark, .ytp-pause-overlay { display: none !important; }',
           '.ytp-ce-element, .ytp-share-button, .ytp-show-cards-title { display: none !important; }',
-          '.ytp-subtitles-button, .ytp-caption-window-rollup, .caption-window { display: none !important; }',
+          '.ytp-subtitles-button, .ytp-caption-window-rollup, .caption-window, .ytp-caption-segment { display: none !important; opacity: 0 !important; visibility: hidden !important; }',
           '.video-ads, .ytp-ad-module, .ytp-ad-overlay-container { display: none !important; }',
           '.ytp-ad-text, .ytp-ad-player-overlay { display: none !important; }',
           'body, html { background: #000 !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; }',
@@ -248,6 +248,38 @@ export default function Buscar() {
         ].join(' ');
         (document.head || document.documentElement).appendChild(style);
       } catch (e) {}
+
+      // Forzar desactivación de subtítulos y resolución 360p en el reproductor interno de YouTube
+      function configurarPlayerYT() {
+        try {
+          var player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+          if (player) {
+            // Desactivar subtítulos si la API está disponible
+            if (typeof player.unloadModule === 'function') {
+              try { player.unloadModule('captions'); } catch (_) {}
+              try { player.unloadModule('cc'); } catch (_) {}
+            }
+            if (typeof player.setOption === 'function') {
+              try { player.setOption('captions', 'track', {}); } catch (_) {}
+              try { player.setOption('cc', 'track', {}); } catch (_) {}
+            }
+            // Forzar resolución a 360p (medium)
+            if (typeof player.setPlaybackQualityRange === 'function') {
+              player.setPlaybackQualityRange('medium', 'medium');
+            }
+            if (typeof player.setPlaybackQuality === 'function') {
+              player.setPlaybackQuality('medium');
+            }
+          }
+          // También apagar el botón visual de CC si estuviera activo
+          var ccBtn = document.querySelector('.ytp-subtitles-button[aria-pressed="true"]');
+          if (ccBtn) {
+            ccBtn.click();
+          }
+        } catch (_) {}
+      }
+
+      setInterval(configurarPlayerYT, 1000);
 
       // 2. Saltador de anuncios REACTIVO con MutationObserver
       // Sin setInterval: solo reacciona cuando el DOM cambia, cero CPU en idle.
@@ -322,8 +354,9 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    // cc_load_policy=0 desactiva subtítulos forzados; iv_load_policy=3 desactiva tarjetas pesadas; modestbranding=1 sin logo
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&hl=es&vq=small`;
+    // cc_load_policy=0 y cc_lang_pref=none desactivan subtítulos
+    // vq=medium fija 360p en la API de YouTube embed (small es 240p y YouTube lo ignora si no está disponible, medium es 360p estándar)
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&cc_lang_pref=none&iv_load_policy=3&hl=es&vq=medium`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;

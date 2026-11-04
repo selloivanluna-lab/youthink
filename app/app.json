@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.quepensabas.youthink",
-      "versionCode": 34,
+      "versionCode": 35,
       "orientation": "default",
       "largeHeap": true,
       "adaptiveIcon": {
