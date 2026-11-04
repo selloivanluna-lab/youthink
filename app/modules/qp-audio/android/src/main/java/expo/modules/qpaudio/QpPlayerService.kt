@@ -73,7 +73,11 @@ class QpPlayerService : MediaSessionService() {
     super.onCreate()
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = NotificationChannel("qp_audio", "YouThink Audio", NotificationManager.IMPORTANCE_LOW)
+      val channel = NotificationChannel("qp_audio", "YouThink Audio", NotificationManager.IMPORTANCE_DEFAULT).apply {
+        description = "Controles de reproducción YouThink"
+        setShowBadge(false)
+        setSound(null, null)
+      }
       val nm = getSystemService(NotificationManager::class.java)
       nm?.createNotificationChannel(channel)
     }
@@ -82,7 +86,8 @@ class QpPlayerService : MediaSessionService() {
       .setContentTitle("YouThink")
       .setContentText("Reproduciendo audio")
       .setOngoing(true)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .build()
     try {
       if (Build.VERSION.SDK_INT >= 34) {

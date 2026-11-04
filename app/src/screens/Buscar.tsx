@@ -27,7 +27,7 @@ const NativeWebView: any =
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
-import { getPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { getPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, deletePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
 import { useCast, CAST_ANDROID } from '../lib/cast';
 import { TvPressable } from '../lib/useTvFocus';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -2525,6 +2525,28 @@ export default function Buscar() {
     }
   }
 
+  function eliminarLista(playlist: Playlist) {
+    Alert.alert(
+      '🗑️ Eliminar lista',
+      `¿Seguro que querés borrar la lista "${playlist.nombre}"?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePlaylist(playlist.id);
+              setPlaylists((prev) => prev.filter((p) => p.id !== playlist.id));
+            } catch (e: any) {
+              Alert.alert('Error', e?.message || 'No se pudo eliminar la lista');
+            }
+          },
+        },
+      ]
+    );
+  }
+
   // ── Info IA: pide a Gemini un párrafo sobre el artista/canción ──
   async function fetchInfo(item: YtResult) {
     setInfoOpen(true);
@@ -3513,6 +3535,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                         onPress={() => { setPlaylistModalOpen(false); abrirRenombrar(item); }}
                       >
                         <Text style={{ fontSize: 16 }}>✏️</Text>
+                      </Pressable>
+                      {/* Botón para borrar playlist completa */}
+                      <Pressable focusable={true}
+                        style={{ padding: 10, marginLeft: 2 }}
+                        onPress={() => eliminarLista(item)}
+                      >
+                        <Text style={{ fontSize: 16 }}>🗑️</Text>
                       </Pressable>
                     </View>
                   );

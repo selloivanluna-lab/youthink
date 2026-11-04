@@ -2,7 +2,7 @@
   "expo": {
     "name": "YouThink",
     "slug": "youthink",
-    "version": "0.2.6",
+    "version": "0.2.7",
     "orientation": "default",
     "scheme": "youthink",
     "icon": "./assets/icon.png",
@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "com.quepensabas.youthink",
-      "versionCode": 18,
+      "versionCode": 19,
       "orientation": "default",
       "largeHeap": true,
       "adaptiveIcon": {
@@ -35,7 +35,10 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
