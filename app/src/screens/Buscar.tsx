@@ -1190,8 +1190,7 @@ export default function Buscar() {
     const t = setInterval(() => {
       try {
         // Fallback WebView: la posición la reporta el propio WebView (onMessage).
-        if (Platform.OS !== 'web' && mediaUriRef.current?.startsWith('webview:')) return;
-        // En Web con iframe de YouTube embed: progreso suave SOLO visual + fade de
+        if (Platform.OS !== 'web' && mediaUriRef.current?.startsWith('webview:')) return;        // En Web con iframe de YouTube embed: progreso suave SOLO visual + fade de
         // crossover. El avance de pista lo dispara el evento real del reproductor
         // (playerState 0), nunca este temporizador: antes iba "adelantado" y cortaba
         // la canción antes de que terminara.
@@ -1222,8 +1221,9 @@ export default function Buscar() {
         }
 
         if (!usarNativoRef.current) {
+          // TV: en modo video nativo (expo-video), leer posición más espaciado para no cargar el JS thread
           const ct = player.currentTime;
-          if (ct != null && isFinite(ct)) setPos(ct);
+          if (ct != null && isFinite(ct) && ct > 0) setPos(ct);
           const d = player.duration;
           if (d != null && isFinite(d) && d > 0) setDur(d);
         }
@@ -1238,12 +1238,14 @@ export default function Buscar() {
           }
         }
       } catch (e) {}
-    }, 400);
+    }, 1000);  // TV: 1s suficiente — 400ms antes cargaba mucho el JS thread del proyector
     return () => clearInterval(t);
   }, [player]);
 
-  // Keepalive: despierta y mantiene el server Fly despierto para que el audio cargue al instante.
+  // Keepalive: despierta el server Fly para que el audio cargue al instante.
+  // En TV (proyector) no hace falta: solo añade tráfico de red innecesario.
   useEffect(() => {
+    if (Platform.isTV) return;  // TV: sin ping — libera red y CPU
     const ping = () => {
       try {
         const ctrl = new AbortController();
@@ -1814,10 +1816,15 @@ export default function Buscar() {
         try {
           const v = await QpAudio.resolveVideo(item.id);
           if (v && v.url) {
+            // TV: liberar RAM — detener servicio de audio y limpiar lista de resultados
+            try { native.stop(); } catch (_) {}
+            setResults([]);
             setMediaUri(v.url);
             mediaUriRef.current = v.url;
             setWebEmbedUri(null);
-            try { player.replace({ uri: v.url }); } catch (_) {}
+            // Pasar User-Agent para que ExoPlayer no sea throttleado por YouTube CDN
+            const headers = (v as any).userAgent ? { 'User-Agent': (v as any).userAgent } : undefined;
+            try { player.replace(headers ? { uri: v.url, headers } : { uri: v.url }); } catch (_) {}
             if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
             if (autoPlay) { try { player.play(); } catch (_) {} }
             setReproduciendo(autoPlay);
@@ -1828,18 +1835,20 @@ export default function Buscar() {
             setDur(initialDur); durRef.current = initialDur;
             return;
           }
-        } catch (_) {
-          // Si NewPipe no puede resolver este video, seguimos con el WebView.
+        } catch (resolveErr: any) {
+          // TV: si NewPipe falló mostrar error claro — NO usar WebView (mata el proyector con 1GB RAM)
+          setError('No se pudo cargar el video. Intentá de nuevo.');
+          setReproduciendo(false);
+          return;
         }
       }
 
-      // 2) Sin módulo nativo (o NewPipe falló): WebView con el embed oficial de
-      //    YouTube. Nunca usamos /api/audio ni /api/clip para reproducir: el
-      //    backend en la nube está bloqueado por YouTube y colgaba la app.
+      // 2) Sin módulo nativo: WebView con el embed oficial de YouTube.
+      //    En TV (proyector) esto no debería llegar porque NATIVE_AUDIO = true.
       usarWebView(item);
     } catch (e: any) {
-      // Último recurso: WebView con el embed de YouTube.
-      usarWebView(item);
+      setError('Error al reproducir. Intentá de nuevo.');
+      setReproduciendo(false);
     }
   }
 
