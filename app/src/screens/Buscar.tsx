@@ -323,7 +323,7 @@ export default function Buscar() {
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
     // cc_load_policy=0 desactiva subtítulos forzados; iv_load_policy=3 desactiva tarjetas pesadas; modestbranding=1 sin logo
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&hl=es&vq=medium`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&hl=es&vq=small`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
@@ -3031,7 +3031,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           }}
           style={{
             position: 'absolute',
-            top: 16,
+            top: 70,
             right: 16,
             zIndex: 9999,
             backgroundColor: 'rgba(0,0,0,0.7)',
@@ -3470,7 +3470,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               onPress={minimizar}
               style={{
                 position: 'absolute',
-                top: 16,
+                top: 70,
                 right: 16,
                 zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.7)',
