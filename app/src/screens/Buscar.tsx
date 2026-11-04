@@ -226,24 +226,21 @@ export default function Buscar() {
     (function () {
       if (window.__qpMonitor) return;
       window.__qpMonitor = true;
-      var last = -1;
-      function tick() {
-        try {
-          var v = document.querySelector('video');
-          if (v && window.ReactNativeWebView) {
-            var t = v.currentTime || 0;
-            var d = v.duration || 0;
-            if (Math.abs(t - last) >= 0.25 || v.paused) {
-              last = t;
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                __qp: 1, t: t, d: d, p: !v.paused, e: !!v.ended
-              }));
-            }
+      function attach() {
+        var v = document.querySelector('video');
+        if (!v) { setTimeout(attach, 1000); return; }
+        v.addEventListener('ended', function () {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ __qp: 1, e: true }));
           }
-        } catch (e) {}
+        });
+        v.addEventListener('error', function () {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ __qpErr: 1 }));
+          }
+        });
       }
-      setInterval(tick, 500);
-      tick();
+      attach();
     })();
     true;
   `;
@@ -287,11 +284,7 @@ export default function Buscar() {
       if (isFinite(d.d) && d.d > 0) { setDur(d.d); durRef.current = d.d; }
       setReproduciendo(Boolean(d.p));
       if (d.e) {
-        // Igual que en nativo: sólo avanzamos si terminó de verdad (evita
-        // saltear temas cuando el embed falla al instante).
-        const t = Number(d.t || 0);
-        const dd = Number(d.d || 0);
-        if ((dd > 0 && t >= dd - 6) || t > 15) avanzarPorFin();
+        avanzarPorFin();
       }
     } catch (_) {}
   }
@@ -2533,7 +2526,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           {/* Slot de Video (Placeholder en Web para preservar espacio; iframe vive persistente en el portal) */}
           {Platform.OS === 'web' && mediaUri?.includes('/embed/') ? (
             modo === 'video' ? <View style={s.videoWeb} /> : null
-          ) : Platform.OS !== 'web' && webEmbedUri ? (
+          ) : Platform.OS !== 'web' && webEmbedUri && !playerVisible ? (
             <View style={[s.video, { overflow: 'hidden', marginBottom: 12, position: 'relative' }, esLandscape && { height: 320 }]}>
               {NativeWebView ? (
                 <NativeWebView
@@ -3281,6 +3274,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 androidLayerType="hardware"
                 cacheEnabled={true}
                 cacheMode="LOAD_DEFAULT"
+                injectedJavaScript={WEBVIEW_MONITOR}
+                onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
                 onMessage={onWebViewMessage}
               />
             ) : mediaUri && mediaUri.startsWith('http') ? (
