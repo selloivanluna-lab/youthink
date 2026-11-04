@@ -260,7 +260,7 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&vq=medium`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
@@ -3297,6 +3297,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 setSupportMultipleWindows={false}
                 mixedContentMode="always"
                 androidHardwareAccelerationDisabled={false}
+                cacheEnabled={true}
+                cacheMode="LOAD_DEFAULT"
                 onMessage={onWebViewMessage}
               />
             ) : mediaUri && mediaUri.startsWith('http') ? (

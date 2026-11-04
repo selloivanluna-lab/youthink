@@ -63,7 +63,12 @@ object QpResolver {
     // Buscamos streams de video con audio integrado (muxed videoStreams, p.ej. 360p / 720p mp4)
     val best = extractor.videoStreams
       .filter { it.content.isNotEmpty() }
-      .sortedByDescending { it.resolution }
+      .sortedWith(
+        compareBy {
+          val res = it.resolution ?: ""
+          if (res.contains("360")) 0 else if (res.contains("480")) 1 else if (res.contains("720")) 2 else 3
+        }
+      )
       .firstOrNull()
 
     if (best != null) {
