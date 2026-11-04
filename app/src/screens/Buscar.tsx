@@ -1813,38 +1813,10 @@ export default function Buscar() {
           if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
           return;
         }
-        try {
-          const v = await QpAudio.resolveVideo(item.id);
-          if (v && v.url) {
-            // TV: liberar RAM — detener servicio de audio y limpiar lista de resultados
-            try { native.stop(); } catch (_) {}
-            setResults([]);
-            setMediaUri(v.url);
-            mediaUriRef.current = v.url;
-            setWebEmbedUri(null);
-            // Pasar User-Agent para que ExoPlayer no sea throttleado por YouTube CDN
-            const headers = (v as any).userAgent ? { 'User-Agent': (v as any).userAgent } : undefined;
-            try { player.replace(headers ? { uri: v.url, headers } : { uri: v.url }); } catch (_) {}
-            if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-            if (autoPlay) { try { player.play(); } catch (_) {} }
-            setReproduciendo(autoPlay);
-            reproduciendoRef.current = autoPlay;
-            setError(null);
-            setPos(0); posRef.current = 0;
-            const initialDur = item.duration || 0;
-            setDur(initialDur); durRef.current = initialDur;
-            return;
-          }
-        } catch (resolveErr: any) {
-          // TV: si NewPipe falló mostrar error claro — NO usar WebView (mata el proyector con 1GB RAM)
-          setError('No se pudo cargar el video. Intentá de nuevo.');
-          setReproduciendo(false);
-          return;
-        }
       }
 
-      // 2) Sin módulo nativo: WebView con el embed oficial de YouTube.
-      //    En TV (proyector) esto no debería llegar porque NATIVE_AUDIO = true.
+      // 2) Modo Video: Reproducir directo vía WebView oficial con aceleración por GPU
+      try { native.stop(); } catch (_) {}
       usarWebView(item);
     } catch (e: any) {
       setError('Error al reproducir. Intentá de nuevo.');
@@ -2579,8 +2551,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   allowsFullscreenVideo
                   setSupportMultipleWindows={false}
                   mixedContentMode="always"
-                  androidHardwareAccelerationDisabled={true}
-                  androidLayerType="software"
+                  androidHardwareAccelerationDisabled={false}
+                  androidLayerType="hardware"
                   injectedJavaScript={WEBVIEW_MONITOR}
                   onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
                   onMessage={onWebViewMessage}
@@ -3306,6 +3278,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 setSupportMultipleWindows={false}
                 mixedContentMode="always"
                 androidHardwareAccelerationDisabled={false}
+                androidLayerType="hardware"
                 cacheEnabled={true}
                 cacheMode="LOAD_DEFAULT"
                 onMessage={onWebViewMessage}
