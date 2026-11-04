@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   FlatList,
   Image,
   Linking,
@@ -11,6 +12,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -178,6 +180,7 @@ export default function Buscar() {
   // Fallback Android: si no hay módulo nativo, el video de YouTube se reproduce
   // dentro de un WebView (usa la IP del teléfono, no depende del backend).
   const [webEmbedUri, setWebEmbedUri] = useState<string | null>(null);
+  const [modoCine, setModoCine] = useState(false);
   const webViewRef = useRef<any>(null);
   const [modo, setModo] = useState<Modo>('audio');
   const [soloAudio, setSoloAudio] = useState(true);
@@ -393,6 +396,20 @@ export default function Buscar() {
 
   // Control de rotación de pantalla (modo horizontal / landscape para video)
   const [esLandscape, setEsLandscape] = useState(false);
+
+  // BackHandler: captura el botón Atrás del control remoto de TV en Modo Cine
+  // para salir limpiamente sin que Android mate la app.
+  useEffect(() => {
+    if (!modoCine || Platform.OS === 'web') return;
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      setModoCine(false);
+      setWebEmbedUri(null);
+      setPlayerVisible(false);
+      setMediaUri(null);
+      return true;
+    });
+    return () => handler.remove();
+  }, [modoCine]);
 
   useEffect(() => {
     return () => {
@@ -1687,8 +1704,8 @@ export default function Buscar() {
     autoPlayRef.current = autoPlay;
     setActual(item);
     guardarEnHistorial(item);
-    setPlayerVisible(true);
-    if (Platform.OS !== 'web') {
+    if (!modoCine) setPlayerVisible(true);
+    if (Platform.OS !== 'web' && !modoCine) {
       setMediaUri(null);
       setWebEmbedUri(null);
     }
@@ -1866,8 +1883,10 @@ export default function Buscar() {
 
       // 2) Modo Video integrado en YouThink: Reproducir directo vía WebView optimizado estilo Brave Shields
       //    (sin anuncios, sin subtítulos forzados, sin elementos pesados y con aceleración por GPU)
+      //    MODO CINE EXCLUSIVO: se activa antes de usarWebView para que el early return del componente
+      //    desmonte TODO el árbol de React Native y deje solo el WebView vivo (elimina ANR en 1GB RAM).
       try { native.stop(); } catch (_) {}
-      setPlayerVisible(true);
+      setModoCine(true);
       usarWebView(item);
     } catch (e: any) {
       setError('Error al reproducir. Intentá de nuevo.');
@@ -2214,6 +2233,7 @@ export default function Buscar() {
   }
   function minimizar() {
     if (esLandscape) alternarRotacion();
+    setModoCine(false);
     setPlayerVisible(false);
   }
 
@@ -2236,6 +2256,7 @@ export default function Buscar() {
         navigator.mediaSession.playbackState = 'none';
       }
     }
+    setModoCine(false);
     setActual(null);
     setPlayerVisible(false);
     setMediaUri(null);
@@ -2939,6 +2960,73 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
     </View>
   );
 
+  // ── MODO CINE EXCLUSIVO ──────────────────────────────────────────────────
+  // Early return: cuando modoCine está activo, desmontamos TODO el árbol de
+  // React Native (búsqueda, FlatList, modals, servicios, EQ, letras, cast…)
+  // y dejamos SOLO el WebView vivo. Esto libera ~300MB RAM en el Magcubic
+  // HY300 (1GB RAM) y elimina la contención del Main Thread que causaba ANR.
+  // Mismo principio que usa Brave: proceso dedicado exclusivamente al video.
+  if (modoCine && webEmbedUri && Platform.OS !== 'web') {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <StatusBar hidden />
+        {NativeWebView ? (
+          <NativeWebView
+            ref={webViewRef}
+            source={{
+              uri: webEmbedUri,
+              headers: { Referer: 'https://www.youtube-nocookie.com/' },
+            }}
+            style={{ flex: 1, backgroundColor: '#000' }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            allowsInlineMediaPlayback
+            mediaPlaybackRequiresUserAction={false}
+            allowsFullscreenVideo
+            setSupportMultipleWindows={false}
+            mixedContentMode="always"
+            androidHardwareAccelerationDisabled={false}
+            androidLayerType="hardware"
+            cacheEnabled={true}
+            cacheMode="LOAD_DEFAULT"
+            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            overScrollMode="never"
+            scrollEnabled={false}
+            bounces={false}
+            injectedJavaScript={WEBVIEW_MONITOR}
+            onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
+            onMessage={onWebViewMessage}
+          />
+        ) : null}
+        <Pressable
+          focusable={true}
+          onPress={() => {
+            try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause();}"); } catch (_) {}
+            setModoCine(false);
+            setWebEmbedUri(null);
+            setPlayerVisible(false);
+            setMediaUri(null);
+          }}
+          style={{
+            position: 'absolute',
+            top: 16,
+            right: 16,
+            zIndex: 9999,
+            backgroundColor: 'rgba(0,0,0,0.7)',
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.3)',
+          }}
+        >
+          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>✕ Salir</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={s.container}>
       {esIosSafari ? (
@@ -3309,7 +3397,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           document.body
         )
       ) : Platform.OS !== 'web' ? (
-        <Modal visible={Boolean(actual && playerVisible)} animationType="none" onRequestClose={minimizar} statusBarTranslucent>
+        <Modal visible={Boolean(actual && playerVisible && !modoCine)} animationType="none" onRequestClose={minimizar} statusBarTranslucent>
           <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center' }}>
             {/* Reproductor de Video a Pantalla Completa sin menú ni elementos que tapen */}
             {webEmbedUri ? (
