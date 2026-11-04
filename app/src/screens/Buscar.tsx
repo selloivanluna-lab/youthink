@@ -1569,7 +1569,7 @@ export default function Buscar() {
     setModo(v ? 'audio' : 'video');
     audioRef.current = v;
     AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
-    if (actual) aplicar(actual, v, idxRef.current);
+    if (actual) aplicar(actual, v, idxRef.current, true, true);
   }
   function setAuto(v: boolean) { setAutoSiguiente(v); AsyncStorage.setItem('qp_autoSig', v ? '1' : '0').catch(() => {}); }
   function toggleShuffle() { const v = !shuffle; setShuffle(v); AsyncStorage.setItem('qp_shuffle', v ? '1' : '0').catch(() => {}); }
@@ -1678,11 +1678,11 @@ export default function Buscar() {
     }
   }
 
-  async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true) {
-    // Si estamos en la pestaña Videos o el ítem es un video, se fuerza modo video
-    // y se desactiva la opción de audio por defecto automáticamente.
-    const esVideoItem = searchType === 'videos' || item?.kind === 'video';
-    const isAudio = esVideoItem ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
+  async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true, forzarModoManual = false) {
+    // Si el usuario cambia manualmente con el botón o toggle, respetamos su elección.
+    // Solo forzamos video si el usuario no especificó y estamos en la pestaña videos.
+    const esVideoTab = !forzarModoManual && (searchType === 'videos' || item?.kind === 'video');
+    const isAudio = esVideoTab ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     audioRef.current = isAudio;
     setSoloAudio(isAudio);
     setModo(isAudio ? 'audio' : 'video');
@@ -3347,20 +3347,76 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           document.body
         )
       ) : Platform.OS !== 'web' ? (
-        <Modal visible={Boolean(actual && playerVisible)} animationType="slide" onRequestClose={minimizar} statusBarTranslucent>
-          <View style={[s.modal, esLandscape && { paddingTop: 16, padding: 8 }]}>
-            {actual?.thumb ? (
-              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-                <Image
-                  source={{ uri: actual.thumb }}
-                  style={[s.modalBg, { opacity: 0.35, transform: [{ scale: 1.15 }] }]}
-                  blurRadius={24}
-                  resizeMode="cover"
+        <Modal visible={Boolean(actual && playerVisible)} animationType={esLandscape ? "none" : "slide"} onRequestClose={esLandscape ? alternarRotacion : minimizar} statusBarTranslucent>
+          {esLandscape && modo === 'video' ? (
+            /* Modo Video Horizontal a Pantalla Completa Limpia (sin menús) */
+            <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center' }}>
+              {webEmbedUri ? (
+                <NativeWebView
+                  ref={webViewRef}
+                  source={
+                    webEmbedUri.startsWith('<')
+                      ? { html: webEmbedUri, baseUrl: 'https://www.youtube.com' }
+                      : { uri: webEmbedUri, headers: { Referer: 'https://www.youtube.com/' } }
+                  }
+                  style={{ flex: 1, backgroundColor: '#000' }}
+                  originWhitelist={['*']}
+                  javaScriptEnabled
+                  domStorageEnabled
+                  allowsInlineMediaPlayback
+                  mediaPlaybackRequiresUserAction={false}
+                  allowsFullscreenVideo
+                  setSupportMultipleWindows={false}
+                  mixedContentMode="always"
+                  injectedJavaScript={WEBVIEW_MONITOR}
+                  onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
+                  onMessage={onWebViewMessage}
                 />
-              </View>
-            ) : null}
-            {renderPlayerContent()}
-          </View>
+              ) : (
+                <VideoView
+                  player={player}
+                  style={{ flex: 1, backgroundColor: '#000' }}
+                  nativeControls={true}
+                  fullscreenOptions={{ enable: true }}
+                  allowsPictureInPicture={true}
+                  contentFit="contain"
+                />
+              )}
+              {/* Botón flotante para salir del modo pantalla completa / volver a vertical */}
+              <Pressable
+                focusable={true}
+                onPress={alternarRotacion}
+                style={{
+                  position: 'absolute',
+                  top: 16,
+                  right: 16,
+                  zIndex: 9999,
+                  backgroundColor: 'rgba(0,0,0,0.65)',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 20,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.3)',
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>📱 Salir Fullscreen</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={s.modal}>
+              {actual?.thumb ? (
+                <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                  <Image
+                    source={{ uri: actual.thumb }}
+                    style={[s.modalBg, { opacity: 0.35, transform: [{ scale: 1.15 }] }]}
+                    blurRadius={24}
+                    resizeMode="cover"
+                  />
+                </View>
+              ) : null}
+              {renderPlayerContent()}
+            </View>
+          )}
         </Modal>
       ) : null}
 

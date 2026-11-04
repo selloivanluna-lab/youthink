@@ -86,7 +86,7 @@ class QpPlayerService : MediaSessionService() {
       .setContentTitle("YouThink")
       .setContentText("Reproduciendo audio")
       .setOngoing(true)
-      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setPriority(NotificationCompat.PRIORITY_MAX)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .build()
     try {
@@ -267,6 +267,7 @@ class QpPlayerService : MediaSessionService() {
         p.prepare()
         QpEvents.push(mapOf("resolving" to false, "buffering" to true, "isPlaying" to false, "error" to null))
         p.play()
+        updateForegroundNotification(title, artist)
         pushState()
       }
       return
@@ -314,6 +315,7 @@ class QpPlayerService : MediaSessionService() {
           p.prepare()
           QpEvents.push(mapOf("resolving" to false))
           p.play()
+          updateForegroundNotification(title.ifEmpty { r.title }, artist)
           pushState()
         }
       } catch (e: Exception) {
@@ -359,6 +361,22 @@ class QpPlayerService : MediaSessionService() {
   }
 
   fun applyEq(gains: IntArray) { main.post { applyEqInternal(gains) } }
+
+  fun updateForegroundNotification(trackTitle: String, trackArtist: String) {
+    try {
+      val notif = NotificationCompat.Builder(this, "qp_audio")
+        .setSmallIcon(android.R.drawable.ic_media_play)
+        .setContentTitle(trackTitle.ifEmpty { "YouThink" })
+        .setContentText(trackArtist.ifEmpty { "Reproduciendo audio" })
+        .setOngoing(true)
+        .setPriority(NotificationCompat.PRIORITY_MAX)
+        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        .setContentIntent(launchIntent())
+        .build()
+      val nm = getSystemService(NotificationManager::class.java)
+      nm?.notify(1001, notif)
+    } catch (_: Throwable) {}
+  }
 
   // Cambia el texto de la notificación: mientras se castea, el servicio sigue
   // en primer plano para que el servidor local del teléfono no se congele.
