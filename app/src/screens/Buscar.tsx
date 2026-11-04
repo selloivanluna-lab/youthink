@@ -249,10 +249,28 @@ export default function Buscar() {
     try { webViewRef.current?.injectJavaScript(js + ';true;'); } catch (_) {}
   }
 
+  async function abrirVideoNativo(item: YtResult) {
+    const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+    if (!cleanId) return;
+    setPlayerVisible(false);
+    try { native.stop(); } catch (_) {}
+    const appUri = `vnd.youtube:${cleanId}`;
+    const webUri = `https://www.youtube.com/watch?v=${cleanId}`;
+    try {
+      const puedeApp = await Linking.canOpenURL(appUri);
+      if (puedeApp) {
+        await Linking.openURL(appUri);
+        return;
+      }
+    } catch (_) {}
+    Linking.openURL(webUri).catch(() => {});
+  }
+
   function abrirEnYoutube(id?: string) {
     const vid = id || actual?.id;
     if (!vid) return;
-    Linking.openURL('https://www.youtube.com/watch?v=' + vid).catch(() => {});
+    const cleanId = vid.trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+    Linking.openURL(`https://www.youtube.com/watch?v=${cleanId}`).catch(() => {});
   }
 
   function usarWebView(item: YtResult) {
@@ -1808,9 +1826,10 @@ export default function Buscar() {
         }
       }
 
-      // 2) Modo Video: Reproducir directo vía WebView oficial con aceleración por GPU
+      // 2) Modo Video en TV: Abrir directamente con el reproductor nativo del proyector (YouTube/SmartTube/VLC)
+      //    con aceleración de hardware directa, 60fps reales, sin WebView, sin subtítulos forzados y sin congelamientos.
       try { native.stop(); } catch (_) {}
-      usarWebView(item);
+      abrirVideoNativo(item);
     } catch (e: any) {
       setError('Error al reproducir. Intentá de nuevo.');
       setReproduciendo(false);
