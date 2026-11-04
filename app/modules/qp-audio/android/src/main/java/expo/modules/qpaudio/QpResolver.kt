@@ -60,13 +60,13 @@ object QpResolver {
     val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
     extractor.fetchPage()
 
-    // Buscamos streams de video con audio integrado (muxed videoStreams, p.ej. 360p / 720p mp4)
+    // Priorizar 720p HD nativo (la resolución exacta de la pantalla del proyector HY300 1280x720)
     val best = extractor.videoStreams
       .filter { it.content.isNotEmpty() }
       .sortedWith(
         compareBy {
           val res = it.resolution ?: ""
-          if (res.contains("360")) 0 else if (res.contains("480")) 1 else if (res.contains("720")) 2 else 3
+          if (res.contains("720")) 0 else if (res.contains("1080")) 1 else if (res.contains("480")) 2 else 3
         }
       )
       .firstOrNull()

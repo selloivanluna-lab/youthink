@@ -260,7 +260,7 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&vq=medium`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&vq=hd720`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
