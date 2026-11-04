@@ -1928,8 +1928,17 @@ export default function Buscar() {
         if (audio) {
           setMediaUri('native:' + item.id);
           setError(null);
-          await native.setEq(eqRef.current);
-          if (autoPlay && !tvRef.current) await native.play(item.id, item.title, item.channel || '', item.thumb || '');
+          try { await native.setEq(eqRef.current); } catch (_) {}
+          if (autoPlay && !tvRef.current) {
+            try {
+              await native.play(item.id, item.title, item.channel || '', item.thumb || '');
+            } catch (errPlay) {
+              console.warn('[Buscar] Error en native.play, fallback a webview:', errPlay);
+              setModoCine(true);
+              usarWebView(item);
+              return;
+            }
+          }
           if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
           return;
         }
@@ -3246,7 +3255,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     </View>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 4 }}>
                       {historial.map((item, index) => (
-                        <Pressable focusable={true}
+                        <TvPressable
                           key={'hist-' + item.id}
                           style={{
                             width: 130,
@@ -3272,7 +3281,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                           <Text style={{ color: theme.colors.textDim, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
                             {item.channel}
                           </Text>
-                        </Pressable>
+                        </TvPressable>
                       ))}
                     </ScrollView>
                   </View>
@@ -3294,7 +3303,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     ) : (
                       recomendaciones.map((it, idx) => (
                         <View key={'rec-' + it.id} style={[s.row, { marginBottom: 10 }]}>
-                          <Pressable focusable={true} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
+                          <TvPressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, padding: 4, borderRadius: 8 }} onPress={() => reproducir(recomendaciones, idx, soloAudio)}>
                             <Image source={{ uri: it.thumb }} style={s.thumb} />
                             <View style={{ flex: 1 }}>
                               <Text style={s.title} numberOfLines={2}>{it.title}</Text>
@@ -3302,19 +3311,19 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                                 {it.channel} {it.duration ? `· ${fmtTiempo(it.duration)}` : ''}
                               </Text>
                             </View>
-                          </Pressable>
+                          </TvPressable>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
                             {actual ? (
-                              <Pressable focusable={true}
+                              <TvPressable
                                 style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
                                 onPress={() => encolarCancion(it)}
                               >
                                 <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '700' }}>➕ Cola</Text>
-                              </Pressable>
+                              </TvPressable>
                             ) : null}
-                            <Pressable focusable={true} onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6 }}>
+                            <TvPressable onPress={() => reproducir(recomendaciones, idx, soloAudio)} style={{ padding: 6, borderRadius: 8 }}>
                               <Text style={s.play}>▶</Text>
-                            </Pressable>
+                            </TvPressable>
                           </View>
                         </View>
                       ))
