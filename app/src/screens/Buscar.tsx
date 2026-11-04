@@ -1920,34 +1920,11 @@ export default function Buscar() {
       return;
     }
     try {
-      // ── Android/iOS nativo ────────────────────────────────────────────────
-      // 1) Módulo nativo disponible (Android): NewPipe extrae el stream en el
-      //    propio teléfono. Es el mejor camino: audio en segundo plano, sin
-      //    backend y sin bloqueo de YouTube por IP de datacenter.
-      if (NATIVE_AUDIO && QpAudio) {
-        if (audio) {
-          setMediaUri('native:' + item.id);
-          setError(null);
-          try { await native.setEq(eqRef.current); } catch (_) {}
-          if (autoPlay && !tvRef.current) {
-            try {
-              await native.play(item.id, item.title, item.channel || '', item.thumb || '');
-            } catch (errPlay) {
-              console.warn('[Buscar] Error en native.play, fallback a webview:', errPlay);
-              setModoCine(true);
-              usarWebView(item);
-              return;
-            }
-          }
-          if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
-          return;
-        }
-      }
-
-      // 2) Modo Video integrado en YouThink: Reproducir directo vía WebView optimizado estilo Brave Shields
-      //    (sin anuncios, sin subtítulos forzados, sin elementos pesados y con aceleración por GPU)
-      //    MODO CINE EXCLUSIVO: se activa antes de usarWebView para que el early return del componente
-      //    desmonte TODO el árbol de React Native y deje solo el WebView vivo (elimina ANR en 1GB RAM).
+      // ── En Proyector / TV (rama proyector-tv):
+      // Todo contenido (tanto canciones como videos) se reproduce de forma directa,
+      // estable y garantizada por el WebView en Modo Cine a 360p (sin anuncios ni subtítulos).
+      // Esto previene que NewPipeExtractor o el servicio de audio en background (ForegroundService)
+      // crasheen la app al no contar con permisos de notificación en Android TV.
       try { native.stop(); } catch (_) {}
       setModoCine(true);
       usarWebView(item);
