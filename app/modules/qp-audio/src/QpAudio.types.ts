@@ -12,6 +12,8 @@ export type ResolvedVideo = {
   resolution: string;
   mime: string;
   userAgent: string;
+  audioUrl?: string;   // Si vacío, el stream ya tiene audio (muxed)
+  audioMime?: string;
 };
 
 /** Medio servido por el teléfono para el Chromecast (red local). */

@@ -77,10 +77,12 @@ class QpAudioModule : Module() {
     AsyncFunction<Map<String, Any?>, String>("resolveVideo") { videoId ->
       val r = QpResolver.resolveVideo(videoId)
       mapOf(
-        "url" to r.url,
-        "title" to r.title,
+        "url"       to r.url,
+        "title"     to r.title,
         "resolution" to r.resolution,
-        "mime" to r.mime,
+        "mime"      to r.mime,
+        "audioUrl"  to r.audioUrl,
+        "audioMime" to r.audioMime,
         "userAgent" to QpDownloader.USER_AGENT
       )
     }

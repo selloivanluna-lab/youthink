@@ -23,6 +23,8 @@ object QpResolver {
     val title: String,
     val resolution: String,
     val mime: String,
+    val audioUrl: String = "",   // Si vacío, el stream ya tiene audio (muxed)
+    val audioMime: String = "",
   )
 
   @Synchronized
@@ -60,38 +62,69 @@ object QpResolver {
     val extractor = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
     extractor.fetchPage()
 
-    // Priorizar 720p HD nativo (la resolución exacta de la pantalla del proyector HY300 1280x720)
-    val best = extractor.videoStreams
+    // 1. Intentar stream muxed (video+audio en un solo archivo).
+    //    YouTube sirve muxed hasta 480p — suficiente para el proyector 1280x720.
+    //    Priorizar: 720p muxed → 480p muxed → 360p muxed
+    val muxed = extractor.videoStreams
       .filter { it.content.isNotEmpty() }
       .sortedWith(
         compareBy {
           val res = it.resolution ?: ""
-          if (res.contains("720")) 0 else if (res.contains("1080")) 1 else if (res.contains("480")) 2 else 3
+          when {
+            res.contains("720") -> 0
+            res.contains("480") -> 1
+            res.contains("360") -> 2
+            else -> 3
+          }
         }
       )
       .firstOrNull()
 
-    if (best != null) {
+    if (muxed != null) {
       return VideoResult(
-        url = best.content,
+        url = muxed.content,
         title = extractor.name,
-        resolution = best.resolution ?: "360p",
-        mime = best.format?.mimeType ?: "video/mp4",
+        resolution = muxed.resolution ?: "480p",
+        mime = muxed.format?.mimeType ?: "video/mp4",
+        audioUrl = "",   // Ya tiene audio incluido
+        audioMime = "",
       )
     }
 
-    // Si no hay muxed, buscar en videoOnlyStreams
+    // 2. No hay muxed: usar video-only DASH 720p + audio separado.
+    //    Ambas URLs se pasan al reproductor para que haga el merge.
     val videoOnly = extractor.videoOnlyStreams
       .filter { it.content.isNotEmpty() }
-      .sortedByDescending { it.resolution }
+      .sortedWith(
+        compareBy {
+          val res = it.resolution ?: ""
+          when {
+            res.contains("720") -> 0
+            res.contains("1080") -> 1
+            res.contains("480") -> 2
+            else -> 3
+          }
+        }
+      )
       .firstOrNull()
       ?: throw IllegalStateException("sin streams de video para $videoId")
+
+    // Resolver también el audio para hacer merge
+    val audio = extractor.audioStreams
+      .filter { it.content.isNotEmpty() }
+      .sortedWith(
+        compareByDescending<AudioStream> { it.format?.name?.contains("M4A", ignoreCase = true) == true }
+          .thenByDescending { it.averageBitrate }
+      )
+      .firstOrNull()
 
     return VideoResult(
       url = videoOnly.content,
       title = extractor.name,
-      resolution = videoOnly.resolution ?: "360p",
+      resolution = videoOnly.resolution ?: "720p",
       mime = videoOnly.format?.mimeType ?: "video/mp4",
+      audioUrl = audio?.content ?: "",
+      audioMime = audio?.format?.mimeType ?: "audio/mp4",
     )
   }
 }
