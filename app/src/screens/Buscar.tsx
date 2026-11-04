@@ -222,13 +222,45 @@ export default function Buscar() {
   // Si `QpAudio` no está disponible, reproducimos el embed oficial de YouTube
   // dentro de un WebView. Usa la IP del teléfono (no pasa por el backend de
   // Render, que YouTube bloquea) y funciona en cualquier Android con WebView.
+  // ── Motor estilo Brave Shields para WebView en TV ──────────────────────────
+  // Bloquea anuncios, oculta subtítulos automáticos y elementos pesados del DOM,
+  // y renderiza el <video> puro a pantalla completa con aceleración por GPU.
   const WEBVIEW_MONITOR = `
     (function () {
-      if (window.__qpMonitor) return;
-      window.__qpMonitor = true;
-      function attach() {
+      if (window.__qpBraveShields) return;
+      window.__qpBraveShields = true;
+
+      // 1. Inyectar CSS que elimina anuncios, subtítulos automáticos y UI pesada
+      try {
+        var style = document.createElement('style');
+        style.innerHTML = [
+          '.ytp-chrome-top, .ytp-watermark, .ytp-pause-overlay { display: none !important; }',
+          '.ytp-ce-element, .ytp-share-button, .ytp-show-cards-title { display: none !important; }',
+          '.ytp-subtitles-button, .ytp-caption-window-rollup, .caption-window { display: none !important; }',
+          '.video-ads, .ytp-ad-module, .ytp-ad-overlay-container { display: none !important; }',
+          'body, html { background: #000 !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; }',
+          'video { width: 100vw !important; height: 100vh !important; object-fit: contain !important; }'
+        ].join(' ');
+        (document.head || document.documentElement).appendChild(style);
+      } catch (e) {}
+
+      // 2. Salteador automático de anuncios (Brave Shields)
+      function skipAds() {
+        try {
+          var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+          if (skipBtn) skipBtn.click();
+          var video = document.querySelector('video');
+          if (video && document.querySelector('.ad-showing, .ad-interrupting')) {
+            video.currentTime = video.duration || 9999;
+          }
+        } catch (_) {}
+      }
+      setInterval(skipAds, 600);
+
+      // 3. Listener nativo de fin de video (sin polling de posición)
+      function attachListener() {
         var v = document.querySelector('video');
-        if (!v) { setTimeout(attach, 1000); return; }
+        if (!v) { setTimeout(attachListener, 800); return; }
         v.addEventListener('ended', function () {
           if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({ __qp: 1, e: true }));
@@ -240,7 +272,7 @@ export default function Buscar() {
           }
         });
       }
-      attach();
+      attachListener();
     })();
     true;
   `;
@@ -275,7 +307,8 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&vq=hd720`;
+    // cc_load_policy=0 desactiva subtítulos forzados; iv_load_policy=3 desactiva tarjetas pesadas; modestbranding=1 sin logo
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&vq=hd720`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
@@ -1695,7 +1728,12 @@ export default function Buscar() {
       setQIdx(idx);
       idxRef.current = idx;
     }
-    cargarLyrics(item);
+    // En TV/Video: no cargar letras ni traducción en segundo plano (ahorra memoria RAM y CPU)
+    if (isAudio) {
+      cargarLyrics(item);
+    } else {
+      setLyricsData(null);
+    }
     // Timeout de 12s: si en ese tiempo no llegó ningún evento del reproductor nativo,
     // mostramos botón de reintento en lugar del spinner infinito.
     if (isAudio) {
@@ -1826,10 +1864,11 @@ export default function Buscar() {
         }
       }
 
-      // 2) Modo Video en TV: Abrir directamente con el reproductor nativo del proyector (YouTube/SmartTube/VLC)
-      //    con aceleración de hardware directa, 60fps reales, sin WebView, sin subtítulos forzados y sin congelamientos.
+      // 2) Modo Video integrado en YouThink: Reproducir directo vía WebView optimizado estilo Brave Shields
+      //    (sin anuncios, sin subtítulos forzados, sin elementos pesados y con aceleración por GPU)
       try { native.stop(); } catch (_) {}
-      abrirVideoNativo(item);
+      setPlayerVisible(true);
+      usarWebView(item);
     } catch (e: any) {
       setError('Error al reproducir. Intentá de nuevo.');
       setReproduciendo(false);
@@ -3293,6 +3332,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 androidLayerType="hardware"
                 cacheEnabled={true}
                 cacheMode="LOAD_DEFAULT"
+                userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                overScrollMode="never"
+                scrollEnabled={false}
+                bounces={false}
                 injectedJavaScript={WEBVIEW_MONITOR}
                 onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
                 onMessage={onWebViewMessage}
