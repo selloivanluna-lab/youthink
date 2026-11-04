@@ -260,57 +260,8 @@ export default function Buscar() {
 
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
-    // Embeber reproductor con HTML limpio y YouTube IFrame API oficial en WebView
-    const embedHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <style>
-          * { margin:0; padding:0; overflow:hidden; background:#000; width:100%; height:100%; }
-        </style>
-      </head>
-      <body>
-        <div id="player"></div>
-        <script>
-          var tag = document.createElement('script');
-          tag.src = "https://www.youtube.com/iframe_api";
-          var firstScriptTag = document.getElementsByTagName('script')[0];
-          firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-          var player;
-          function onYouTubeIframeAPIReady() {
-            player = new YT.Player('player', {
-              videoId: '${cleanId}',
-              playerVars: {
-                'autoplay': 1,
-                'playsinline': 1,
-                'controls': 1,
-                'rel': 0,
-                'modestbranding': 1,
-                'iv_load_policy': 3,
-                'origin': 'https://www.youtube.com'
-              },
-              events: {
-                'onStateChange': onPlayerStateChange,
-                'onError': onPlayerError
-              }
-            });
-          }
-          function onPlayerError(e) {
-            if (window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({ __qpErr: e.data }));
-            }
-          }
-          function onPlayerStateChange(e) {
-            if (e.data === 0 && window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({ __qp: 1, e: true }));
-            }
-          }
-        </script>
-      </body>
-      </html>
-    `;
-    setWebEmbedUri(embedHtml);
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1`;
+    setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
     setPos(0); posRef.current = 0;
@@ -2606,11 +2557,10 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               {NativeWebView ? (
                 <NativeWebView
                   ref={webViewRef}
-                  source={
-                    webEmbedUri.startsWith('<')
-                      ? { html: webEmbedUri, baseUrl: 'https://www.youtube.com' }
-                      : { uri: webEmbedUri, headers: { Referer: 'https://www.youtube.com/' } }
-                  }
+                  source={{
+                    uri: webEmbedUri,
+                    headers: { Referer: 'https://www.youtube-nocookie.com/' },
+                  }}
                   style={{ flex: 1, backgroundColor: '#000' }}
                   originWhitelist={['*']}
                   javaScriptEnabled
@@ -2620,6 +2570,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   allowsFullscreenVideo
                   setSupportMultipleWindows={false}
                   mixedContentMode="always"
+                  androidHardwareAccelerationDisabled={true}
+                  androidLayerType="software"
                   injectedJavaScript={WEBVIEW_MONITOR}
                   onLoadEnd={() => webViewCmd(WEBVIEW_MONITOR)}
                   onMessage={onWebViewMessage}
