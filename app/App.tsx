@@ -6,18 +6,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform, Text } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Buscar from './src/screens/Buscar';
-import Radio from './src/screens/Radio';
-import LibraryCrew from './src/screens/LibraryCrew';
-import TapTempo from './src/screens/TapTempo';
-import Placeholder from './src/screens/Placeholder';
 import Sesion from './src/screens/Sesion';
 import { theme } from './src/theme';
 
-const Tab = createBottomTabNavigator();
+// En el proyector (Android TV / rama proyector-tv) la UI es minimalista:
+// solo las pestañas esenciales (Play y Sesión) sin headers, sin decoración
+// innecesaria que consuma memoria ni ciclos de CPU.
 
-function Descargas() {
-  return <Placeholder title="Descargas" emoji="⬇️" nota="Biblioteca offline (expo-file-system) — Fase 5." />;
-}
+const Tab = createBottomTabNavigator();
 
 const navTheme = {
   ...DarkTheme,
@@ -67,34 +63,36 @@ export default function App() {
           key={initialTab}
           initialRouteName={initialTab}
           screenOptions={{
-            headerStyle: { backgroundColor: theme.colors.surface },
-            headerTitleStyle: { color: theme.colors.text },
+            // Sin header: ahorra ~56px de RAM de layout y un componente extra
+            headerShown: false,
             tabBarStyle: {
               backgroundColor: theme.colors.surface,
               borderTopColor: theme.colors.border,
+              // Barra delgada, sin sombra, mínima
+              height: 48,
+              paddingBottom: 4,
+              paddingTop: 4,
             },
             tabBarActiveTintColor: theme.colors.gold,
             tabBarInactiveTintColor: theme.colors.textDim,
+            tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
           }}
         >
           <Tab.Screen
             name="Play"
             component={Buscar}
-            options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>▶️</Text> }}
-          />
-          <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
-          <Tab.Screen
-            name="Tap Tempo"
-            component={TapTempo}
-            options={{ title: 'Tap Tempo', tabBarLabel: 'Tempo', tabBarIcon: () => <Text>🥁</Text> }}
+            options={{
+              tabBarLabel: 'Play',
+              tabBarIcon: () => <Text style={{ fontSize: 16 }}>▶️</Text>,
+            }}
           />
           <Tab.Screen
-            name="Library Crew"
-            component={LibraryCrew}
-            options={{ tabBarIcon: () => <Text>👥</Text> }}
+            name="Sesión"
+            component={Sesion}
+            options={{
+              tabBarIcon: () => <Text style={{ fontSize: 16 }}>👤</Text>,
+            }}
           />
-          <Tab.Screen name="Descargas" component={Descargas} options={{ tabBarIcon: () => <Text>⬇️</Text> }} />
-          <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
         </Tab.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

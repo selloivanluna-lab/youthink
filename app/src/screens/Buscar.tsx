@@ -226,14 +226,15 @@ export default function Buscar() {
   // dentro de un WebView. Usa la IP del teléfono (no pasa por el backend de
   // Render, que YouTube bloquea) y funciona en cualquier Android con WebView.
   // ── Motor estilo Brave Shields para WebView en TV ──────────────────────────
-  // Bloquea anuncios, oculta subtítulos automáticos y elementos pesados del DOM,
-  // y renderiza el <video> puro a pantalla completa con aceleración por GPU.
+  // Bloquea anuncios, oculta subtítulos automáticos y elementos pesados del DOM.
+  // USA MutationObserver (reactivo) en lugar de setInterval para NO generar
+  // micro-jank cada N ms — esa era la causa de los tirones en el proyector.
   const WEBVIEW_MONITOR = `
     (function () {
       if (window.__qpBraveShields) return;
       window.__qpBraveShields = true;
 
-      // 1. Inyectar CSS que elimina anuncios, subtítulos automáticos y UI pesada
+      // 1. CSS: elimina anuncios, subtítulos, UI pesada y fuerza fondo negro
       try {
         var style = document.createElement('style');
         style.innerHTML = [
@@ -241,24 +242,35 @@ export default function Buscar() {
           '.ytp-ce-element, .ytp-share-button, .ytp-show-cards-title { display: none !important; }',
           '.ytp-subtitles-button, .ytp-caption-window-rollup, .caption-window { display: none !important; }',
           '.video-ads, .ytp-ad-module, .ytp-ad-overlay-container { display: none !important; }',
+          '.ytp-ad-text, .ytp-ad-player-overlay { display: none !important; }',
           'body, html { background: #000 !important; overflow: hidden !important; margin: 0 !important; padding: 0 !important; }',
           'video { width: 100vw !important; height: 100vh !important; object-fit: contain !important; }'
         ].join(' ');
         (document.head || document.documentElement).appendChild(style);
       } catch (e) {}
 
-      // 2. Salteador automático de anuncios (Brave Shields)
-      function skipAds() {
+      // 2. Saltador de anuncios REACTIVO con MutationObserver
+      // Sin setInterval: solo reacciona cuando el DOM cambia, cero CPU en idle.
+      function skipAdsNow() {
         try {
           var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
-          if (skipBtn) skipBtn.click();
+          if (skipBtn) { skipBtn.click(); return; }
           var video = document.querySelector('video');
           if (video && document.querySelector('.ad-showing, .ad-interrupting')) {
             video.currentTime = video.duration || 9999;
           }
         } catch (_) {}
       }
-      setInterval(skipAds, 600);
+
+      // Observer reactivo: solo se activa cuando aparece un nodo nuevo en el DOM
+      try {
+        var obs = new MutationObserver(function(mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            if (mutations[i].addedNodes.length > 0) { skipAdsNow(); break; }
+          }
+        });
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+      } catch (_) {}
 
       // 3. Listener nativo de fin de video (sin polling de posición)
       function attachListener() {
@@ -311,7 +323,7 @@ export default function Buscar() {
   function usarWebView(item: YtResult) {
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
     // cc_load_policy=0 desactiva subtítulos forzados; iv_load_policy=3 desactiva tarjetas pesadas; modestbranding=1 sin logo
-    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&vq=hd720`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${cleanId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&fs=1&enablejsapi=1&cc_load_policy=0&iv_load_policy=3&hl=es&vq=medium`;
     setWebEmbedUri(embedUrl);
     setMediaUri('webview:' + item.id);
     mediaUriRef.current = 'webview:' + item.id;
@@ -410,6 +422,15 @@ export default function Buscar() {
     });
     return () => handler.remove();
   }, [modoCine]);
+
+  // Ocultar la tab bar del navigator cuando estamos en Modo Cine
+  // para que el video sea verdaderamente pantalla completa.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    navigation.setOptions({
+      tabBarStyle: modoCine ? { display: 'none' } : undefined,
+    });
+  }, [modoCine, navigation]);
 
   useEffect(() => {
     return () => {
