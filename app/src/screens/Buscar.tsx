@@ -3278,8 +3278,61 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         )
       ) : Platform.OS !== 'web' ? (
         <Modal visible={Boolean(actual && playerVisible)} animationType="none" onRequestClose={minimizar} statusBarTranslucent>
-          <View style={[s.modal, { backgroundColor: '#0a0a0a' }, esLandscape && { paddingTop: 16, padding: 8 }]}>
-            {renderPlayerContent()}
+          <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center' }}>
+            {/* Reproductor de Video a Pantalla Completa sin menú ni elementos que tapen */}
+            {webEmbedUri ? (
+              <NativeWebView
+                ref={webViewRef}
+                source={{
+                  uri: webEmbedUri,
+                  headers: { Referer: 'https://www.youtube-nocookie.com/' },
+                }}
+                style={{ flex: 1, backgroundColor: '#000' }}
+                originWhitelist={['*']}
+                javaScriptEnabled
+                domStorageEnabled
+                allowsInlineMediaPlayback
+                mediaPlaybackRequiresUserAction={false}
+                allowsFullscreenVideo
+                setSupportMultipleWindows={false}
+                mixedContentMode="always"
+                androidHardwareAccelerationDisabled={false}
+                onMessage={onWebViewMessage}
+              />
+            ) : mediaUri && mediaUri.startsWith('http') ? (
+              <VideoView
+                player={player}
+                style={{ flex: 1, backgroundColor: '#000' }}
+                nativeControls={true}
+                fullscreenOptions={{ enable: true }}
+                contentFit="contain"
+              />
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                <ActivityIndicator color={theme.colors.gold} size="large" />
+                <Text style={{ color: '#aaa', marginTop: 16 }}>Cargando video…</Text>
+              </View>
+            )}
+
+            {/* Botón flotante sutil para salir y volver a la lista de búsqueda */}
+            <Pressable
+              focusable={true}
+              onPress={minimizar}
+              style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                zIndex: 9999,
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.3)',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>✕ Salir</Text>
+            </Pressable>
           </View>
         </Modal>
       ) : null}
