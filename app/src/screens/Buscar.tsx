@@ -178,6 +178,8 @@ export default function Buscar() {
   // Fallback Android: si no hay módulo nativo, el video de YouTube se reproduce
   // dentro de un WebView (usa la IP del teléfono, no depende del backend).
   const [webEmbedUri, setWebEmbedUri] = useState<string | null>(null);
+  // APK download banner (web only) — se actualiza automáticamente con el último GitHub Release
+  const [apkRelease, setApkRelease] = useState<{ url: string; version: string; build: string } | null>(null);
   const webViewRef = useRef<any>(null);
   const [modo, setModo] = useState<Modo>('audio');
   const [soloAudio, setSoloAudio] = useState(true);
@@ -749,6 +751,27 @@ export default function Buscar() {
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
   useEffect(() => { crossoverRef.current = crossover; }, [crossover]);
   useEffect(() => { try { player.loop = repeat === 'one'; } catch (e) {} }, [repeat, player]);
+
+  // Fetch del último APK release para el banner de descarga en web
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    fetch('https://api.github.com/repos/selloivanluna-lab/youthink/releases/latest')
+      .then((r) => r.json())
+      .then((data) => {
+        const asset = Array.isArray(data?.assets)
+          ? data.assets.find((a: any) => typeof a.name === 'string' && a.name.endsWith('.apk'))
+          : null;
+        if (asset?.browser_download_url) {
+          const match = (asset.name as string).match(/v([\d.]+)-build-(\d+)/);
+          setApkRelease({
+            url: asset.browser_download_url,
+            version: match?.[1] || (data.tag_name || ''),
+            build: match?.[2] || '',
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Chromecast: mantener el TV sincronizado con el tema actual ──────────────
   useEffect(() => { tvRef.current = tv.conectado; }, [tv.conectado]);
@@ -3011,7 +3034,21 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* ── LOGO YOUTHINK OFICIAL ── */}
+      {/* ── BANNER DESCARGA APK ANDROID (solo web, no iOS Safari) ── */}
+      {Platform.OS === 'web' && !esIosSafari && apkRelease ? (
+        <Pressable
+          focusable={true}
+          style={s.apkBanner}
+          onPress={() => { try { Linking.openURL(apkRelease.url); } catch (_) {} }}
+        >
+          <Text style={s.apkBannerIcon}>📱</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.apkBannerTitle}>YouThink v{apkRelease.version} para Android</Text>
+            <Text style={s.apkBannerSub}>Build {apkRelease.build} · APK directo · Sin Play Store</Text>
+          </View>
+          <Text style={s.apkBannerBtn}>⬇ Bajar</Text>
+        </Pressable>
+      ) : null}
       <View style={{ alignItems: 'center', marginBottom: 12, paddingTop: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Image
@@ -4130,6 +4167,23 @@ const s = StyleSheet.create({
   iosBannerTitle: { color: theme.colors.gold, fontSize: 14, fontWeight: '700' },
   iosBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
   iosBannerBtn: { color: theme.colors.gold, fontSize: 13, fontWeight: '800' },
+
+  // Banner descarga APK Android (web)
+  apkBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(78, 205, 100, 0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(78, 205, 100, 0.35)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+  },
+  apkBannerIcon: { fontSize: 24 },
+  apkBannerTitle: { color: '#4ecd64', fontSize: 14, fontWeight: '700' },
+  apkBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
+  apkBannerBtn: { color: '#4ecd64', fontSize: 13, fontWeight: '800' },
 
   // Botones de cola (mover arriba, mover abajo, quitar)
   qActionBtn: {
