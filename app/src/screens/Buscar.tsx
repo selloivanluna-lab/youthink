@@ -569,6 +569,7 @@ export default function Buscar() {
   const native = useNativeAudio();
   const usarNativo = NATIVE_AUDIO && modo === 'audio';
   const usarNativoRef = useRef(false);
+  const lastAutoPlayConsumedRef = useRef('');
   const modoRef = useRef<Modo>(modo);
   const eqRef = useRef(eq);
   const siguienteRef = useRef<(auto?: any) => void>(() => {});
@@ -1167,8 +1168,11 @@ export default function Buscar() {
       });
 
       if (nuevos.length > 0) {
-        setCola([seed, ...nuevos]);
-        colaRef.current = [seed, ...nuevos];
+        if (nuevos.length > 0 && colaRef.current.length <= 1) {
+          // Solo actualizar la cola si aún estamos en la seed (no hubo navegación manual)
+          setCola([seed, ...nuevos]);
+          colaRef.current = [seed, ...nuevos];
+        }
       }
     } catch (e) {
       console.warn('[Radio Playlist]', e);
@@ -1565,11 +1569,25 @@ export default function Buscar() {
   }, [mediaUri]);
 
   function setAudio(v: boolean) {
+    // Detener TODOS los motores de forma incondicional y preventiva antes de cambiar de modo.
+    // No depender de usarNativoRef.current (puede estar desactualizado en este ciclo).
+    try { native.pause(); native.stop(); } catch (_) {}
+    try { player.pause(); } catch (_) {}
+    try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src='';} "); } catch (_) {}
+    if (v) {
+      // Pasando a AUDIO: limpiar WebView de inmediato para no dejar video sin sonido
+      setWebEmbedUri(null);
+    }
     setSoloAudio(v);
     setModo(v ? 'audio' : 'video');
     audioRef.current = v;
+    // Actualizar el ref de inmediato para que aplicar() lo vea correcto
+    usarNativoRef.current = NATIVE_AUDIO && v;
     AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
-    if (actual) aplicar(actual, v, idxRef.current, true, true);
+    if (actual) {
+      // Pequeño delay para que el motor previo se libere antes de arrancar el nuevo
+      setTimeout(() => { aplicar(actual, v, idxRef.current, true, true); }, 150);
+    }
   }
   function setAuto(v: boolean) { setAutoSiguiente(v); AsyncStorage.setItem('qp_autoSig', v ? '1' : '0').catch(() => {}); }
   function toggleShuffle() { const v = !shuffle; setShuffle(v); AsyncStorage.setItem('qp_shuffle', v ? '1' : '0').catch(() => {}); }
@@ -2030,6 +2048,9 @@ export default function Buscar() {
     const pRadio: boolean = Boolean(route.params?.autoRadio);
 
     if (pId) {
+      const autoKey = pId + (pRadio ? '_radio' : '') + (pShuffle ? '_shuffle' : '');
+      if (lastAutoPlayConsumedRef.current === autoKey) return;
+      lastAutoPlayConsumedRef.current = autoKey;
       if (pShuffle) {
         setShuffle(true);
         shuffleRef.current = true;
