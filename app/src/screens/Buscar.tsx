@@ -3044,7 +3044,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           <Text style={s.apkBannerIcon}>📱</Text>
           <View style={{ flex: 1 }}>
             <Text style={s.apkBannerTitle}>YouThink v{apkRelease.version} para Android</Text>
-            <Text style={s.apkBannerSub}>Build {apkRelease.build} · APK directo · Sin Play Store</Text>
+            <Text style={s.apkBannerSub}>Descarga directa</Text>
           </View>
           <Text style={s.apkBannerBtn}>⬇ Bajar</Text>
         </Pressable>
