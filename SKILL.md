@@ -1,12 +1,12 @@
 ---
 name: youthink
-description: Documentación y referencia técnica completa de la app YouThink (quepensabas-bajar-app). Cubre arquitectura híbrida (React Native / Expo + módulo nativo Android qp-audio con NewPipeExtractor), reproducción en segundo plano con ExoPlayer, extracción de audio/video sin bloqueo de bots (IP residencial), integración OAuth independiente con YouTube Data API v3, sincronización de playlists (locales y Supabase) y páginas legales de verificación Google Cloud. Usar para tareas de mantenimiento, compilación de APKs, features y bugs en YouThink.
+description: Documentación y referencia técnica completa de la app YouThink (quepensabas-bajar-app). Cubre arquitectura híbrida (React Native / Expo + módulo nativo Android qp-audio con NewPipeExtractor), reproducción en segundo plano con ExoPlayer, extracción de audio/video sin bloqueo de bots (IP residencial), integración OAuth independiente con YouTube Data API v3, sincronización de playlists (locales y Supabase), banner de descarga directa con auto-update desde GitHub Releases en la versión web (youthink.quepensabas.mov), arquitectura de dos ramas (main para Celular y proyector-tv para Android TV), prevención de doble reproducción y páginas legales de verificación Google Cloud. Usar para tareas de mantenimiento, compilación de APKs, features y bugs en YouThink.
 ---
 
 # YouThink — App Móvil de Música, Video y Listas de YouTube
 
 ## Qué es
-**YouThink** es la aplicación móvil para Android/iOS del ecosistema Qué Pensabas que permite:
+**YouThink** es la aplicación móvil y web para Android, iOS y navegadores del ecosistema Qué Pensabas que permite:
 1. Buscar y escuchar música o ver videos de YouTube sin anuncios ni bloqueos de bot.
 2. Reproducir audio en segundo plano con controles multimedia en la barra de notificaciones y ecualizador integrado.
 3. Crear y gestionar listas de reproducción personalizadas (con persistencia local en `AsyncStorage` y sincronización en Supabase).
@@ -23,6 +23,8 @@ description: Documentación y referencia técnica completa de la app YouThink (q
 14. **Watchdog de Fin de Canción y Radio Infinita:** sincronización precisa de duración en Web con `durRef`, tope infranqueable para que la barra de tiempo nunca supere la duración real de la pista, captura de eventos `onStateChange` (0 = ENDED), avance suave sin recarga de iframe (`loadVideoById`) y auto-extensión dinámica de las estaciones de radio.
 15. **Transmisión a Chromecast (Google Cast Nativo & Servidor Local):** transmisión fluida de video y audio a Smart TVs y dispositivos Chromecast con selector nativo, reconexión automática y controles remotos sincronizados.
 16. **Rotación de Pantalla en Modo Video:** alternancia fluida entre orientación vertical y apaisada (landscape) con adaptación dinámica del reproductor y restauración automática al minimizar.
+17. **Banner Dinámico de Descarga de APK en Web (`youthink.quepensabas.mov`):** banner superior táctil exclusivo para navegadores (`Platform.OS === 'web' && !esIosSafari`) con badge verde, que consulta automáticamente la API de GitHub Releases (`/releases/latest`) y enlaza a la descarga directa del APK de la última build para celular, mostrando "Descarga directa" y botón `⬇ Bajar`.
+18. **Deduplicación Atómica en Radio & Cambio Seguro de Modo Video/Audio:** guard `lastAutoPlayConsumedRef` que impide la doble reproducción al sintonizar radio desde `Sesion.tsx`, y detención incondicional de todos los motores (nativo, web y WebView) con delay de 150ms al conmutar entre audio y video.
 
 ---
 
@@ -32,7 +34,14 @@ description: Documentación y referencia técnica completa de la app YouThink (q
 - **Dominio y producción:**
   - URL Primaria: `https://youthink.quepensabas.mov` (alias: `https://yt.quepensabas.mov`)
   - Vercel Team Scope: `quepensabas`
+  - Proyecto Vercel principal: `dist` (`prj_a0d5i1UO0rT0pK6ECtUte5k2PIDs`)
   - Build pipeline: Expo Web (`npx expo export -p web` en carpeta `app/`) → despliegue estático de `app/dist`.
+  - Proyecto Vercel secundario (monorepo CI): `quepensabas-bajar-app` (`prj_FBf8FxkKwL0SJEqDRMH9WUNYs7iq`) con `rootDirectory: "app"` y `.vercelignore` para evitar intentos de compilación de Docker containers.
+- **Banner de Descarga Directa APK Celular:**
+  - Implementado en `src/screens/Buscar.tsx` (`apkBanner`).
+  - Solo se renderiza en Web (`Platform.OS === 'web' && !esIosSafari`).
+  - Consulta en el arranque `https://api.github.com/repos/selloivanluna-lab/youthink/releases/latest` y extrae el asset `.apk` activo.
+  - Al hacer push a `main`, GitHub Actions compila y publica el nuevo APK en GitHub Releases con `make_latest: true`. La web se actualiza automáticamente sin tocar código.
 - **Modificador de Velocidad y Tempo:**
   - Disponible en el reproductor (botón `⏱️ Velocidad` en la barra de herramientas) con presets rápidos (`0.5x`, `0.75x`, `0.85x`, `0.9x`, `1.0x`, `1.1x`, `1.15x`, `1.25x`, `1.5x`, `1.75x`, `2.0x`) y micro-ajustes (`±0.05x`).
   - En Web: se comanda al iframe de YouTube vía `postMessage({ event: 'command', func: 'setPlaybackRate', args: [rate] })`, aplicándose también a elementos `<video>`/`<audio>` locales y sincronizándose con `MediaSession.playbackRate`.
@@ -74,10 +83,8 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - **Validación de Video ID y Descarte Seguro de Tiempos Residuales (`currentTrackIdRef` & `hasStartedPlayingCurrentTrackRef`):** Durante el cambio de pista, el iframe de YouTube puede tardar 1–2s en descargar el video viejo. Se descarta cualquier mensaje cuyo `video_id` no coincida con `currentTrackIdRef.current`. Además, se ignoran valores de `currentTime > 2s` hasta que el nuevo track haya confirmado inicio (`hasStartedPlayingCurrentTrackRef.current` o `playerState === 1`). Esto evita que la posición residual del tema previo contamine `pos` y bloquee la barra de progreso al final.
   - **Modo Audio por Defecto y Sincronía Total:** YouThink inicia por defecto en modo Audio (`soloAudio = true`, `modo = 'audio'`). La variable `audioRef.current` se sincroniza instantáneamente al conmutar el modo o leer `AsyncStorage`, y todas las rutas de navegación (pantalla de Sesión, Radio, Historial, Búsqueda) leen `audioRef.current`, garantizando que ninguna canción se inicie en modo Video por capturas de cierre obsoletas.
   - **Avance Fluido y Calibración del Reproductor Web:** La API IFrame de YouTube no emite `currentTime` de forma continua a alta frecuencia vía `postMessage`. Por ello, un temporizador local (`setInterval` cada 400ms) avanza `pos` con un paso suave de `0.4 * velocidadRef.current` una vez que `hasStartedPlayingCurrentTrackRef.current` es verdadero, calibrando la posición exacta cada vez que YouTube envía un paquete `infoDelivery` verificado. Esto garantiza que la barra de progreso siempre avance con total fluidez visual desde el segundo 0:00.
-  - **En Android APK:** Al presionar `⏭` (o `⏮`), el handler recibe el evento de click (objeto); `siguiente()` y `anterior()` deben llamar SIEMPRE a `aplicar` con `autoPlay = true`. De lo contrario, `if (autoPlay) await native.play(...)` no se ejecuta y ExoPlayer continúa reproduciendo el audio del tema anterior.
-  - **En Web (Cero recarga de iframe y persistencia de mediaUri):** Modificar el atributo `src` en un `<iframe>` existente recarga el documento y es bloqueado por las políticas de autoplay de Safari/Chrome. Cuando el iframe ya está montado, se conserva el nodo y se emite `loadVideoById(item.id)` vía `postMessage` a la API IFrame de YouTube, manteniendo la reproducción instantánea y continua. Además, en Web `mediaUri` NUNCA se resetea a `null` al aplicar un nuevo tema, ya que `!mediaUri` provocaría que el render limpie el iframe a `about:blank` y muestre el indicador de carga infinitamente.
-  - **Modo Radio Infinito:** `ytmusic_radio.py` parsea la duración textual (`MM:SS` o `HH:MM:SS`) a segundos numéricos cuando `length_seconds` no viene del endpoint. Cuando el usuario se aproxima a los últimos 2 temas de la cola (`i >= c.length - 2`), `siguiente` solicita automáticamente un nuevo lote de canciones afines a `api.radio` para extender la cola dinámicamente y hacer la radio verdaderamente infinita.
-  - Actualizar `idxRef.current = idx` inmediatamente en `aplicar()` para que saltos rápidos de cola no lean un índice desfasado.
+
+---
 
 ### 2. Módulo Nativo Android: `qp-audio` (NewPipeExtractor + Media3 ExoPlayer)
 - **Ubicación:** `app/modules/qp-audio/android/`
@@ -89,12 +96,17 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - Intercepta comandos `onPlayerCommandRequest` (`COMMAND_SEEK_TO_NEXT`/`PREVIOUS`) y eventos de teclado `onMediaButtonEvent` (`KEYCODE_MEDIA_NEXT`, `KEYCODE_MEDIA_PREVIOUS`, `KEYCODE_HEADSETHOOK`, `KEYCODE_MEDIA_PLAY_PAUSE`).
   - Detecta doble-click en el botón de reproducción del parlante/auricular (intervalo <350ms) para saltar automáticamente a la siguiente canción (`action: "next"` en `QpEvents`).
   - En React Native (`Buscar.tsx`), si la cola se termina o solo había 1 tema sonando, `siguiente` salta automáticamente al primer tema de las recomendaciones para no cortar la música.
-- **Prevención de Audio Simultáneo (Race Condition Fix):**
+- **Prevención de Audio Simultáneo y Deduplicación:**
   - En `QpPlayerService.kt`, se mantiene un contador atómico `currentRequestId = AtomicLong(0)`.
   - Al recibir `playVideo(url, id, title, ...)`, se detiene de inmediato el reproductor previo (`player?.stop(); player?.clearMediaItems()`) en el hilo principal antes de arrancar la extracción asíncrona de NewPipe.
   - Al completar la extracción asíncrona, si el `reqId` no coincide con `currentRequestId.get()`, se descarta el stream viejo para evitar que suene en paralelo al tema nuevo.
-  - En `Buscar.tsx`, `forzarPlay` y `aplicar` cancelan todos los temporizadores previos (`forzarPlayTimersRef.current.forEach(clearTimeout)`) y pausan/detienen tanto `native` como web `<video>`/`<iframe>` antes de iniciar el nuevo track.
+  - En `Buscar.tsx`:
+    - `lastAutoPlayConsumedRef` guarda la clave única del tema y parámetros para que el `useEffect` de autoPlay no se dispare dos veces por render o por retraso en el consumo de params de navegación.
+    - En `iniciarRadioDesdePlaylist`: la cola asíncrona solo se actualiza si `colaRef.current.length <= 1`, garantizando que si el usuario navegó a otro tema mientras cargaba la radio, la llamada remota no pise la pista activa.
+    - En `setAudio(v)`: se detienen sincrónicamente y sin excepciones todos los motores (`native.pause()`, `native.stop()`, `player.pause()`, `webViewCmd(...)`), actualizando `usarNativoRef.current` de inmediato y aplicando un delay de 150ms para que ExoPlayer libere el audio focus del sistema operativo.
 - **Expo Module Bridge:** Expuesto a JS mediante `QpAudioModule.kt` con métodos `resolveAudio`, `resolveVideo`, `play`, `togglePlay`, `pause`, `resume`, `seek`, `stop`, `setEq`.
+
+---
 
 ### 3. Autenticación y YouTube Data API (Independencia de Supabase)
 - **Problema resuelto:** Supabase comparte el proyecto y clientes OAuth con la productora y alumnos (*Qué Pensabas*, *Qué Estudiabas*). Modificar el Google OAuth en Supabase afectaría las demás plataformas.
@@ -106,6 +118,8 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - Redirección nativa deep link: `youthink://oauth2redirect`
   - Token de acceso guardado en `AsyncStorage` (`qp_yt_access_token`) para persistencia sin re-login.
 
+---
+
 ### 4. Modal "Añadir a lista" (Ecosistema Híbrido)
 - **Carga de Listas (`abrirModalPlaylists` en `Buscar.tsx`):**
   - No bloquea al usuario si no tiene sesión de Supabase: carga listas locales con `getPlaylists()`.
@@ -116,6 +130,8 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - Si es una lista de YouTube (`yt_`): agrega el ítem llamando a la API de YouTube (`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet`) e invalida/actualiza el caché local `qp_yt_pl_cache_${playlistId}`.
   - Emite alerta visual clara confirmando que se añadió a la lista seleccionada.
 
+---
+
 ### 5. Backend en Render (`youthink-1.onrender.com`)
 - **Repositorio:** `server/src/index.js`
 - **Rutas clave:**
@@ -124,6 +140,8 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - `/oauth/callback`: Recibe el hash OAuth de Google en navegador móvil y lo redirige automáticamente a `youthink://oauth2redirect`.
   - `/`, `/privacidad`, `/terminos`: Páginas oficiales con texto legal exhaustivo requeridas para la Verificación Oficial de Google OAuth.
 
+---
+
 ### 6. Base de Datos Supabase (Playlists de YouThink)
 - **Proyecto:** `prixtmnilittshdegrxq.supabase.co`
 - **Tablas:**
@@ -131,30 +149,41 @@ description: Documentación y referencia técnica completa de la app YouThink (q
   - `youthink_playlist_items`: `id` (text), `playlist_id` (text references youthink_playlists), `yt_id` (text), `title`, `channel`, `thumb`, `duration`, `added_at`.
 - **Fusión híbrida:** `getPlaylists()` en `app/src/lib/playlists.ts` combina listas locales con las de Supabase, evitando pérdida de datos por race conditions de sesión.
 
+---
+
 ### 7. Google Cast / Chromecast (`app/src/lib/cast.ts` & `CastButtonHost.tsx`)
 - **Dependencia nativa:** `react-native-google-cast v4.9.1`.
 - **Regla de oro de ciclo de vida (Separación de suscripciones):**
-  - **Causa raíz del bug histórico ("el Chromecast abre la pantalla azul pero no reproduce a la primera salvo reiniciando la app"):**
-    - En el mount de `useCast()`, se registraban los listeners del ciclo de vida nativo de la sesión (`onSessionStarted`, `onSessionResumed`, `onSessionEnded`, `onCastStateChanged`) en `subsRef`.
-    - Al final del mount se ejecutaba `refrescar(true)` para detectar si ya había un dispositivo conectado. Esa función llamaba a `limpiarCliente()`, la cual borraba `subsRef.current` y eliminaba **todos los listeners del CastContext y SessionManager** recién creados.
-    - Como resultado, cuando el usuario tocaba el botón de Cast y seleccionaba su TV en el diálogo nativo, el receptor web se cargaba en el TV pero JavaScript nunca recibía el evento `onSessionStarted`, dejando `tv.conectado = false` y evitando que el reproductor le enviara la orden `loadMedia` al televisor. Al reiniciar la app, el televisor ya tenía la sesión viva y la levantaba en la carga inicial.
-  - **Solución definitiva:** Separación estricta de dos referencias de suscripciones:
-    - `sessionSubsRef`: Aloja los listeners del ciclo de vida general (`CastContext` y `SessionManager`). Se crean en el mount de `useCast()` y **solo se destruyen al desmontar la app completa**.
-    - `clientSubsRef`: Aloja exclusivamente los eventos del cliente de medios activo (`onMediaStatusUpdated`, `onMediaPlaybackEnded`). Se limpian dinámicamente con `limpiarCliente()` al cambiar de pista o desconectar.
-- **Botón nativo `CastButtonHost`:**
-  - El SDK nativo de Google Cast requiere que un componente `<CastButton>` exista montado en el árbol de render de Android para que `CastContext.showCastDialog()` funcione de forma fiable.
-  - Vive invisible como `<CastButtonHost style={{ width: 1, height: 1 }} />` montado persistentemente en `Buscar.tsx`.
-- **Bucle de carga paciente (`cargarEnTv`):**
-  - El receptor web del Chromecast (Default Media Receiver) puede demorar entre 5 y 20 segundos en iniciar en frío. `cargarEnTv` ejecuta reintentos continuos con un límite de 35 segundos, regenerando URLs frescas de stream para evitar caducidad de firmas de YouTube.
+  - `sessionSubsRef`: Aloja los listeners del ciclo de vida general (`CastContext` y `SessionManager`). Se crean en el mount de `useCast()` y **solo se destruyen al desmontar la app completa**.
+  - `clientSubsRef`: Aloja exclusivamente los eventos del cliente de medios activo (`onMediaStatusUpdated`, `onMediaPlaybackEnded`). Se limpian dinámicamente con `limpiarCliente()` al cambiar de pista o desconectar.
+- **Botón nativo `CastButtonHost`:** vive invisible como `<CastButtonHost style={{ width: 1, height: 1 }} />` montado persistentemente en `Buscar.tsx`.
+- **Bucle de carga paciente (`cargarEnTv`):** ejecuta reintentos continuos con límite de 35 segundos regenerando URLs frescas de stream.
+
+---
 
 ### 8. Rotación de Pantalla en Modo Video (`expo-screen-orientation`)
-- **Librería:** `expo-screen-orientation ~57.0.3` (autolinked en Android, fallback para Web vía `window.screen.orientation`).
-- **Comportamiento:**
-  - Botón directo `🔄 Rotar / 📱 Vertical` en la cabecera del reproductor maximizado (`modalHead`), en la barra de herramientas (`toolsRow`), y flotante sobre la vista de video.
-  - Al activar, bloquea la orientación en `ScreenOrientation.OrientationLock.LANDSCAPE`.
-  - El modal y el contenedor de video amplían su altura a 320px/proporcional, reduciendo márgenes para aprovechar la pantalla completa.
-  - Al minimizar (`minimizar()`) o cerrar (`cerrar()`) el reproductor, se restablece automáticamente a `ScreenOrientation.OrientationLock.PORTRAIT_UP`.
-  - Al desmontar la pantalla de búsqueda, se llama a `ScreenOrientation.unlockAsync()`.
+- **Librería:** `expo-screen-orientation ~57.0.3`.
+- Botón directo `🔄 Rotar / 📱 Vertical` en la cabecera del reproductor maximizado (`modalHead`), barra de herramientas (`toolsRow`) y flotante sobre el video.
+- Al activar bloquea en `LANDSCAPE`. Al minimizar o cerrar restaura a `PORTRAIT_UP`.
+- Al desmontar la pantalla de búsqueda, llama a `ScreenOrientation.unlockAsync()`.
+
+---
+
+### 9. Las Dos Ramas Activas Independientes (Celular vs TV)
+- **Objetivo:** Mantener dos builds perfectamente diferenciados y optimizados sin interferir entre sí:
+  1. **Rama `main` (Celular / Móvil):**
+     - Orientación vertical default con rotación táctil.
+     - Todas las pestañas habilitadas (Play, Sesión, Radio, Tempo, Library Crew, Descargas).
+     - ForegroundService de Android activo para audio con pantalla apagada.
+     - Build pipeline automatizado con GitHub Actions que compila APK standalone y publica a GitHub Releases con `make_latest: true`.
+     - Build 98 (versionCode 25).
+  2. **Rama `proyector-tv` (Proyector Android TV / Magcubic HY300 1GB RAM):**
+     - Interfaz simplificada con solo 2 pestañas: **Play** (`Buscar.tsx`) y **Sesión** (`Sesion.tsx`).
+     - **Modo Cine Exclusivo:** Early return en React Native que desmonta todo el árbol al reproducir video, reduciendo el consumo de RAM de 350MB a 40MB y evitando ANRs.
+     - TabBar oculta dinámicamente durante la reproducción.
+     - Resolución fijada a 360p y subtítulos desactivados por defecto para máxima fluidez.
+     - D-pad / Cruceta de control remoto con halos dorados interactivos (`<TvPressable>`).
+     - Build 97 local (`youthink-v0.2.7-tv-build-97.apk`).
 
 ---
 
@@ -162,27 +191,17 @@ description: Documentación y referencia técnica completa de la app YouThink (q
 
 - **Código Fuente YouThink:** `C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app\`
 - **GitHub Repo:** `selloivanluna-lab/youthink` (rama `main`)
-- **CI / Build Pipeline:** GitHub Actions (`.github/workflows/build-apk.yml`)
-  - Compila con Gradle en release mode y genera artefactos: `youthink-app-{run_number}` (~38 MB).
+- **CI / Build Pipeline:** GitHub Actions (`.github/workflows/build-android.yml`)
+  - Compila con Gradle en release mode y genera artefactos: `youthink-v{version}-build-{run_number}.apk`.
+  - Publica automáticamente a GitHub Releases con tag `apk-v{version}-{run_number}`.
+  - URL Releases: `https://github.com/selloivanluna-lab/youthink/releases`
   - URL Runs: `https://github.com/selloivanluna-lab/youthink/actions`
-
----
-
-## Flujo de Pantalla Sesión (`Sesion.tsx`)
-1. **Mis Listas de Reproducción:**
-   - Creación directa con campo de texto y botón `➕ Crear`.
-   - Consulta remota filtrada por `user_id` con fallback local.
-2. **Mis Listas de YouTube:**
-   - Botón rojo *Vincular cuenta de YouTube* (abre flujo directo con Google).
-   - Botón *Desconectar* para revocar y limpiar storage local.
-   - Listas expandibles: al tocar una lista consulta `playlistItems` en YouTube Data API v3.
-   - Cada tema muestra miniatura, título y canal. Al tocar un tema salta al reproductor (`autoPlayId`) en la pestaña *Buscar*.
 
 ---
 
 ## Comandos de Mantenimiento Frecuentes
 
-### Commitear cambios y disparar nueva compilación de APK:
+### Commitear cambios en Celular y disparar nueva compilación de APK:
 ```powershell
 git -C "C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app" add .
 git -C "C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app" commit -m "feat/fix: descripcion del cambio"
@@ -191,7 +210,7 @@ git -C "C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app" push or
 
 ### Consultar estado del último APK en GitHub Actions:
 ```powershell
-$r = Invoke-RestMethod -Uri "https://api.github.com/repos/selloivanluna-lab/youthink/actions/runs?per_page=1" -Headers @{"User-Agent"="YouThink-CI"}
+$r = Invoke-RestMethod -Uri "https://api.github.com/repos/selloivanluna-lab/youthink/actions/runs?per_page=1&branch=main" -Headers @{"User-Agent"="YouThink-CI"}
 Write-Output "Run #$($r.workflow_runs[0].run_number) | Status: $($r.workflow_runs[0].status) | Conclusion: $($r.workflow_runs[0].conclusion)"
 ```
 
@@ -205,6 +224,5 @@ git add .
 git commit -m "feat(web): descripcion del cambio"
 git push origin main
 npx --yes vercel app/dist --prod --yes --scope quepensabas
-# Si se requiere reasociar el alias:
-# npx --yes vercel alias <deployment-url> youthink.quepensabas.mov --scope quepensabas
+npx --yes vercel alias dist-<id>-quepensabas.vercel.app youthink.quepensabas.mov --scope quepensabas
 ```
