@@ -3280,7 +3280,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <Text style={s.apkBannerTitle}>YouThink v{apkRelease.version} para Android</Text>
             <Text style={s.apkBannerSub}>Descarga directa</Text>
           </View>
-          <Text style={s.apkBannerBtn}>⬇ Bajar</Text>
+          <Text style={s.apkBannerBtn}>⬇</Text>
         </Pressable>
       ) : null}
 
@@ -4185,7 +4185,7 @@ const s = StyleSheet.create({
   apkBannerIcon: { fontSize: 22 },
   apkBannerTitle: { color: '#4ecd64', fontSize: 13, fontWeight: '700' },
   apkBannerSub: { color: theme.colors.textDim, fontSize: 11, marginTop: 1 },
-  apkBannerBtn: { color: '#4ecd64', fontSize: 13, fontWeight: '800' },
+  apkBannerBtn: { color: '#4ecd64', fontSize: 18, fontWeight: '800', paddingHorizontal: 6 },
 
   // Botones de cola (mover arriba, mover abajo, quitar)
   qActionBtn: {
