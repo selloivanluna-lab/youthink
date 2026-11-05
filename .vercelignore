@@ -1,0 +1,5 @@
+# Evitar que Vercel intente compilar Docker containers en Git push
+Dockerfile
+server
+app/android
+app/ios
