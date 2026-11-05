@@ -3034,21 +3034,6 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* ── BANNER DESCARGA APK ANDROID (solo web, no iOS Safari) ── */}
-      {Platform.OS === 'web' && !esIosSafari && apkRelease ? (
-        <Pressable
-          focusable={true}
-          style={s.apkBanner}
-          onPress={() => { try { Linking.openURL(apkRelease.url); } catch (_) {} }}
-        >
-          <Text style={s.apkBannerIcon}>📱</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={s.apkBannerTitle}>YouThink v{apkRelease.version} para Android</Text>
-            <Text style={s.apkBannerSub}>Descarga directa</Text>
-          </View>
-          <Text style={s.apkBannerBtn}>⬇ Bajar</Text>
-        </Pressable>
-      ) : null}
       <View style={{ alignItems: 'center', marginBottom: 12, paddingTop: 4 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Image
@@ -3136,7 +3121,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {error ? <Text style={s.error}>{error}</Text> : null}
       {loading ? <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 24 }} /> : null}
 
-      <FlatList data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
+      <FlatList style={{ flex: 1 }} data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
         renderItem={({ item, index }) => {
           // En la pestaña Videos siempre reproducir en modo video (independiente del switch global).
           // En Canciones siempre audio. En Todo: respetar el switch.
@@ -3282,6 +3267,22 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           ) : null
         }
       />
+
+      {/* ── BANNER DESCARGA APK ANDROID (solo web, parte inferior de la pantalla) ── */}
+      {Platform.OS === 'web' && !esIosSafari && apkRelease ? (
+        <Pressable
+          focusable={true}
+          style={[s.apkBanner, actual && !playerVisible ? { marginBottom: 70 } : null]}
+          onPress={() => { try { Linking.openURL(apkRelease.url); } catch (_) {} }}
+        >
+          <Text style={s.apkBannerIcon}>📱</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.apkBannerTitle}>YouThink v{apkRelease.version} para Android</Text>
+            <Text style={s.apkBannerSub}>Descarga directa</Text>
+          </View>
+          <Text style={s.apkBannerBtn}>⬇ Bajar</Text>
+        </Pressable>
+      ) : null}
 
       {/* Mini-reproductor flotante para móvil nativo (en Web se gestiona en el portal persistente) */}
       {actual && !playerVisible && Platform.OS !== 'web' ? (
@@ -4168,7 +4169,7 @@ const s = StyleSheet.create({
   iosBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
   iosBannerBtn: { color: theme.colors.gold, fontSize: 13, fontWeight: '800' },
 
-  // Banner descarga APK Android (web)
+  // Banner descarga APK Android (web, pie de pantalla)
   apkBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4177,12 +4178,13 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(78, 205, 100, 0.35)',
     borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+    padding: 10,
+    marginTop: 6,
+    marginBottom: 6,
   },
-  apkBannerIcon: { fontSize: 24 },
-  apkBannerTitle: { color: '#4ecd64', fontSize: 14, fontWeight: '700' },
-  apkBannerSub: { color: theme.colors.textDim, fontSize: 12, marginTop: 2 },
+  apkBannerIcon: { fontSize: 22 },
+  apkBannerTitle: { color: '#4ecd64', fontSize: 13, fontWeight: '700' },
+  apkBannerSub: { color: theme.colors.textDim, fontSize: 11, marginTop: 1 },
   apkBannerBtn: { color: '#4ecd64', fontSize: 13, fontWeight: '800' },
 
   // Botones de cola (mover arriba, mover abajo, quitar)
