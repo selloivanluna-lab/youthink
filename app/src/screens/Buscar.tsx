@@ -2448,7 +2448,16 @@ export default function Buscar() {
     setPlaylistModalOpen(true);
     setCargandoPlaylists(true);
     try {
-      const data = await getPlaylists();
+      let data = await getPlaylists();
+
+      // Si no hay listas pero hay sesión potencialmente expirada, intentar refrescar
+      if (data.length === 0) {
+        try {
+          await supabase.auth.refreshSession();
+          data = await getPlaylists();
+        } catch (_) {}
+      }
+
       let todas: Playlist[] = [...data];
 
       // Cargar también las listas de la cuenta de YouTube vinculada (si existe token)
@@ -3754,7 +3763,29 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       <Text style={{ color: theme.colors.text, fontSize: 13 }} numberOfLines={2}>{item.title}</Text>
                       <Text style={{ color: theme.colors.textDim, fontSize: 11 }}>{item.channel}</Text>
                     </View>
-                    <Pressable focusable={true}
+                    {/* Botón Reproducir */}
+                    <Pressable
+                      focusable={true}
+                      style={{ padding: 10 }}
+                      onPress={() => {
+                        setManagingPlaylist(null);
+                        const track: YtResult = {
+                          id: item.yt_id,
+                          title: item.title,
+                          channel: item.channel,
+                          thumb: item.thumb,
+                          duration: item.duration,
+                          url: `https://www.youtube.com/watch?v=${item.yt_id}`,
+                          kind: 'song',
+                        };
+                        reproducir([track], 0, true);
+                      }}
+                    >
+                      <Text style={{ fontSize: 18 }}>▶️</Text>
+                    </Pressable>
+                    {/* Botón Eliminar */}
+                    <Pressable
+                      focusable={true}
                       style={{ padding: 10 }}
                       onPress={() => borrarDePlaylist(item.yt_id)}
                       disabled={deletingItem === item.yt_id}
