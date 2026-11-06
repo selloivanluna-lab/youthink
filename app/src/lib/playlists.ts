@@ -23,6 +23,22 @@ export type PlaylistItem = {
 
 const LOCAL_PL_KEY = 'qp_local_playlists';
 const LOCAL_ITEMS_KEY = 'qp_local_pl_items_';
+const DELETED_PL_KEY = 'qp_deleted_pl_ids'; // tombstone: IDs borrados localmente
+
+async function getDeletedIds(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(DELETED_PL_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch { return new Set(); }
+}
+
+async function markAsDeleted(id: string): Promise<void> {
+  try {
+    const ids = await getDeletedIds();
+    ids.add(id);
+    await AsyncStorage.setItem(DELETED_PL_KEY, JSON.stringify([...ids]));
+  } catch {}
+}
 
 async function getLocalPlaylists(): Promise<Playlist[]> {
   try {
@@ -50,6 +66,7 @@ async function saveLocalItems(playlistId: string, items: PlaylistItem[]): Promis
 
 export async function getPlaylists(): Promise<Playlist[]> {
   const localList = await getLocalPlaylists();
+  const deletedIds = await getDeletedIds();
 
   // Intentar con Supabase si hay sesión activa
   try {
@@ -65,9 +82,11 @@ export async function getPlaylists(): Promise<Playlist[]> {
       console.log('[Playlists] Resultado Supabase:', { data, error });
 
       if (!error && Array.isArray(data)) {
+        // Filtrar las que el usuario ya eliminó (aunque Supabase falle en borrarlas)
+        const remotasFiltradas = data.filter((p) => !deletedIds.has(p.id));
         // Fusionar remotas con locales para no perder ninguna
-        const remoteIds = new Set(data.map((p) => p.id));
-        const merged = [...data, ...localList.filter((p) => !remoteIds.has(p.id))];
+        const remoteIds = new Set(remotasFiltradas.map((p) => p.id));
+        const merged = [...remotasFiltradas, ...localList.filter((p) => !remoteIds.has(p.id) && !deletedIds.has(p.id))];
         saveLocalPlaylists(merged).catch(() => {});
         return merged;
       }
@@ -83,8 +102,8 @@ export async function getPlaylists(): Promise<Playlist[]> {
     // No re-lanzar: fallback a storage local
   }
 
-  // Retornar almacenamiento local persistente
-  return localList;
+  // Retornar almacenamiento local persistente (filtrando eliminadas)
+  return localList.filter((p) => !deletedIds.has(p.id));
 }
 
 export async function createPlaylist(nombre: string): Promise<Playlist> {
@@ -122,13 +141,22 @@ export async function createPlaylist(nombre: string): Promise<Playlist> {
 }
 
 export async function deletePlaylist(id: string): Promise<void> {
+  // Marcar como eliminada en tombstone local ANTES de cualquier red
+  // para que no vuelva a aparecer incluso si Supabase falla
+  await markAsDeleted(id);
+
   const locals = await getLocalPlaylists();
   const filtered = locals.filter((p) => p.id !== id);
   await saveLocalPlaylists(filtered);
   await AsyncStorage.removeItem(LOCAL_ITEMS_KEY + id);
   memItems.delete(id);
 
+  // Intentar borrar en Supabase, refrescando sesión si es necesario
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      await supabase.auth.refreshSession();
+    }
     await supabase.from('youthink_playlists').delete().eq('id', id);
   } catch {}
 }
