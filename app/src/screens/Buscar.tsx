@@ -206,6 +206,7 @@ export default function Buscar() {
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
   const sourceRetryRef = useRef(0);
   const sourceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackWebViewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actualRetryRef = useRef<YtResult | null>(null);
   const forzarPlayTimersRef = useRef<any[]>([]);
 
@@ -261,6 +262,11 @@ export default function Buscar() {
   }
 
   function usarWebView(item: YtResult) {
+    if (!item?.id) return;
+    // Si la pista activa cambió antes del fallback, descartar para no superponer audio
+    if (currentTrackIdRef.current && item.id !== currentTrackIdRef.current) return;
+    try { native.pause(); native.stop(); } catch (_) {}
+    try { player.pause(); } catch (_) {}
     const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
     // Embeber reproductor con HTML limpio y YouTube IFrame API oficial en WebView
     const embedHtml = `
@@ -709,10 +715,15 @@ export default function Buscar() {
           } else {
             setError(st.error);
             // Si el reproductor nativo no puede con este tema, seguimos con el
-            // embed de YouTube en el WebView en vez de dejar el error en pantalla.
+            // embed de YouTube en el WebView solo si el usuario sigue en esta pista.
             const tr = actualRetryRef.current;
-            if (tr && !tvRef.current) {
-              setTimeout(() => { try { usarWebView(tr); } catch (_) {} }, 600);
+            if (tr && !tvRef.current && tr.id === currentTrackIdRef.current) {
+              if (fallbackWebViewTimerRef.current) clearTimeout(fallbackWebViewTimerRef.current);
+              fallbackWebViewTimerRef.current = setTimeout(() => {
+                if (tr.id === currentTrackIdRef.current) {
+                  try { usarWebView(tr); } catch (_) {}
+                }
+              }, 600);
             }
           }
         }
@@ -720,7 +731,7 @@ export default function Buscar() {
         // último segundo). ExoPlayer avisa `ended` cuando termina de verdad.
         // Guard: algunos streams inválidos pasan a ENDED sin haber sonado; en ese
         // caso NO salteamos el tema (era el "carga pero se saltea sola"), usamos
-        // el fallback de WebView.
+        // el fallback de WebView solo si la pista sigue activa.
         if (st.ended) {
           const ppos = Number(st.position || 0);
           const pdur = Number(st.duration || 0);
@@ -729,8 +740,13 @@ export default function Buscar() {
             avanzarPorFin(evId);
           } else {
             const tr = actualRetryRef.current;
-            if (tr && !tvRef.current) {
-              setTimeout(() => { try { usarWebView(tr); } catch (_) {} }, 300);
+            if (tr && !tvRef.current && tr.id === currentTrackIdRef.current) {
+              if (fallbackWebViewTimerRef.current) clearTimeout(fallbackWebViewTimerRef.current);
+              fallbackWebViewTimerRef.current = setTimeout(() => {
+                if (tr.id === currentTrackIdRef.current) {
+                  try { usarWebView(tr); } catch (_) {}
+                }
+              }, 300);
             }
           }
         }
@@ -1093,8 +1109,17 @@ export default function Buscar() {
     if (!track) return;
     setIniciandoRadio(true);
     autoExtenderRef.current = true;
-    // Reproducir inmediatamente el tema seleccionado para que la música empiece ya mismo sin esperar
-    reproducir([track], 0, soloAudio, true);
+    setShuffle(false);
+    shuffleRef.current = false;
+    // La radio es SIEMPRE modo audio
+    setSoloAudio(true);
+    audioRef.current = true;
+    setModo('audio');
+    modoRef.current = 'audio';
+    AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
+    const trackItem: YtResult = { ...track, kind: 'song' };
+    // Reproducir inmediatamente el tema seleccionado en modo audio
+    reproducir([trackItem], 0, true, true);
     try {
       let tracksRadio: YtResult[] = [];
       try {
@@ -1120,9 +1145,10 @@ export default function Buscar() {
       }
 
       if (tracksRadio.length > 0) {
-        // Encolar los temas de la estación después de la canción que ya está sonando
-        setCola([track, ...tracksRadio]);
-        colaRef.current = [track, ...tracksRadio];
+        // Encolar los temas de la estación después de la canción que ya está sonando asegurando kind song
+        const radioSongs = tracksRadio.map((r) => ({ ...r, kind: 'song' as const }));
+        setCola([trackItem, ...radioSongs]);
+        colaRef.current = [trackItem, ...radioSongs];
       }
     } catch (e) {
       console.warn('[Iniciar Radio]', e);
@@ -1138,8 +1164,30 @@ export default function Buscar() {
     autoExtenderRef.current = true;
     setShuffle(false);
     shuffleRef.current = false;
-    // Arrancar la reproducción con el tema semilla de inmediato
-    reproducir([seed], 0, soloAudio, true);
+
+    // La radio es SIEMPRE modo audio
+    setSoloAudio(true);
+    audioRef.current = true;
+    setModo('audio');
+    modoRef.current = 'audio';
+    AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
+
+    // Forzar que la semilla sea tipo canción para no activar modo video
+    const seedItem: YtResult = {
+      ...seed,
+      kind: 'song',
+    };
+
+    // Detener incondicionalmente cualquier reproducción previa
+    try { native.pause(); native.stop(); } catch (_) {}
+    try { player.pause(); } catch (_) {}
+    try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src=''; v.load();}"); } catch (_) {}
+    if (Platform.OS !== 'web') {
+      setWebEmbedUri(null);
+    }
+
+    // Arrancar la reproducción con el tema semilla forzando audio
+    reproducir([seedItem], 0, true, true);
 
     try {
       let tracksRadio: YtResult[] = [];
@@ -1188,13 +1236,13 @@ export default function Buscar() {
         if (!t?.id || idsVistos.has(t.id)) return false;
         idsVistos.add(t.id);
         return true;
-      });
+      }).map((t) => ({ ...t, kind: 'song' as const }));
 
       if (nuevos.length > 0) {
-        if (nuevos.length > 0 && colaRef.current.length <= 1) {
+        if (colaRef.current.length <= 1) {
           // Solo actualizar la cola si aún estamos en la seed (no hubo navegación manual)
-          setCola([seed, ...nuevos]);
-          colaRef.current = [seed, ...nuevos];
+          setCola([seedItem, ...nuevos]);
+          colaRef.current = [seedItem, ...nuevos];
         }
       }
     } catch (e) {
@@ -1722,11 +1770,12 @@ export default function Buscar() {
   async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true, forzarModoManual = false) {
     // Si el usuario cambia manualmente con el botón o toggle, respetamos su elección.
     // Solo forzamos video si el usuario no especificó y estamos en la pestaña videos.
-    const esVideoTab = !forzarModoManual && (searchType === 'videos' || item?.kind === 'video');
+    const esVideoTab = !forzarModoManual && audio !== true && (searchType === 'videos' || item?.kind === 'video');
     const isAudio = esVideoTab ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     audioRef.current = isAudio;
     setSoloAudio(isAudio);
     setModo(isAudio ? 'audio' : 'video');
+    usarNativoRef.current = NATIVE_AUDIO && isAudio;
     AsyncStorage.setItem('qp_soloAudio', isAudio ? '1' : '0').catch(() => {});
     autoPlayRef.current = autoPlay;
     setActual(item);
@@ -1747,16 +1796,24 @@ export default function Buscar() {
       clearTimeout(crossoverFadeTimerRef.current);
       crossoverFadeTimerRef.current = null;
     }
+    if (fallbackWebViewTimerRef.current) {
+      clearTimeout(fallbackWebViewTimerRef.current);
+      fallbackWebViewTimerRef.current = null;
+    }
 
     // Cancelar cualquier temporizador de forzarPlay previo para evitar solapamiento
     forzarPlayTimersRef.current.forEach((t) => clearTimeout(t));
     forzarPlayTimersRef.current = [];
 
-    // Detener inmediatamente cualquier audio previo en todos los motores para evitar reproducción simultánea
-    if (usarNativoRef.current) {
-      try { native.pause(); native.stop(); } catch (_) {}
-    }
+    // Detener inmediatamente y de forma incondicional TODOS los motores para evitar reproducción simultánea
+    try { native.pause(); native.stop(); } catch (_) {}
     try { player.pause(); } catch (_) {}
+    try {
+      webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src=''; v.load();}");
+    } catch (_) {}
+    if (Platform.OS !== 'web') {
+      setWebEmbedUri(null);
+    }
 
     // Resetear auto-retry counter para esta canción
     sourceRetryRef.current = 0;
@@ -1893,7 +1950,7 @@ export default function Buscar() {
       //    propio teléfono. Es el mejor camino: audio en segundo plano, sin
       //    backend y sin bloqueo de YouTube por IP de datacenter.
       if (NATIVE_AUDIO && QpAudio) {
-        if (audio) {
+        if (isAudio) {
           setMediaUri('native:' + item.id);
           setError(null);
           await native.setEq(eqRef.current);
@@ -1960,7 +2017,7 @@ export default function Buscar() {
   function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current, autoExtender = false) {
     if (!lista.length) return;
     const targetItem = lista[idx] || lista[0];
-    const esVideoItem = searchType === 'videos' || targetItem?.kind === 'video';
+    const esVideoItem = (searchType === 'videos' || targetItem?.kind === 'video') && audio !== true;
     const isAudio = esVideoItem ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     unlockWebAudio();
     autoPlayRef.current = true;
@@ -1973,7 +2030,7 @@ export default function Buscar() {
       for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
       arr = [first, ...rest]; start = 0;
     }
-    setCola(arr); colaRef.current = arr; aplicar(arr[start], isAudio, start, true);
+    setCola(arr); colaRef.current = arr; aplicar(arr[start], isAudio, start, true, typeof audio === 'boolean');
   }
 
   function siguiente(auto?: any) {
@@ -2086,14 +2143,19 @@ export default function Buscar() {
         setShuffle(false);
         shuffleRef.current = false;
         autoExtenderRef.current = true;
+        setSoloAudio(true);
+        audioRef.current = true;
+        setModo('audio');
+        modoRef.current = 'audio';
+        AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
         const seed = (Array.isArray(pQueue) && pQueue.length > 0) ? pQueue[0] : null;
-        const seedItem: YtResult = seed || {
-          id: pId,
-          title: pTitle,
-          url: `https://www.youtube.com/watch?v=${pId}`,
-          channel: '',
-          duration: 0,
-          thumb: `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
+        const seedItem: YtResult = {
+          id: seed?.id || pId,
+          title: seed?.title || pTitle,
+          url: seed?.url || `https://www.youtube.com/watch?v=${pId}`,
+          channel: seed?.channel || '',
+          duration: seed?.duration || 0,
+          thumb: seed?.thumb || `https://i.ytimg.com/vi/${pId}/hqdefault.jpg`,
           kind: 'song',
         };
         iniciarRadioDesdePlaylist(seedItem, pQueue);
