@@ -25,6 +25,7 @@ description: Documentación y referencia técnica completa de la app YouThink (q
 16. **Rotación de Pantalla en Modo Video:** alternancia fluida entre orientación vertical y apaisada (landscape) con adaptación dinámica del reproductor y restauración automática al minimizar.
 17. **Banner Dinámico de Descarga de APK en Web (`youthink.quepensabas.mov`):** banner superior táctil exclusivo para navegadores (`Platform.OS === 'web' && !esIosSafari`) con badge verde, que consulta automáticamente la API de GitHub Releases (`/releases/latest`) y enlaza a la descarga directa del APK de la última build para celular, mostrando "Descarga directa" y botón `⬇ Bajar`.
 18. **Deduplicación Atómica en Radio & Cambio Seguro de Modo Video/Audio:** guard `lastAutoPlayConsumedRef` que impide la doble reproducción al sintonizar radio desde `Sesion.tsx`, y detención incondicional de todos los motores (nativo, web y WebView) con delay de 150ms al conmutar entre audio y video.
+19. **Búsqueda Avanzada de Listas y Detección de Álbumes Completos:** integración nativa en InnerTube con `FILTER_PLAYLISTS` (`EgIQAw%3D%3D`), nuevo filtro `📑 Listas` (`type === 'playlists'`), extracción instantánea de canciones de cualquier lista o álbum de YouTube vía `/api/ytplaylist`, reproducción en un toque y etiquetado visual `💿 Álbum Completo` (`isAlbumVideo`) en videos largos que corresponden a discos completos.
 
 ---
 
