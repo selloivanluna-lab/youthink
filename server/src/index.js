@@ -940,16 +940,16 @@ function getOAuthCreds() {
       return;
     }
 
-    // Si el usuario pidió explícitamente canciones, probamos con ytmusicapi primero
+    // Si el usuario pidió explícitamente canciones, buscar directo en YouTube Music vía InnerTube
     if (type === 'songs') {
-      ytmusic.search(q, n, (err, results) => {
+      innertube.search(q, n, 'songs', (err, results, next) => {
         if (!err && Array.isArray(results) && results.length > 0) {
-          respond(res, 200, { ok: true, results: results.map((r) => ({ ...r, kind: 'song' })), next: null });
+          respond(res, 200, { ok: true, results, next: next || null });
           return;
         }
-        innertube.search(q, n, 'all', (err2, results2, next2) => {
+        ytmusic.search(q, n, (err2, results2) => {
           if (!err2 && Array.isArray(results2) && results2.length > 0) {
-            respond(res, 200, { ok: true, results: results2, next: next2 || null });
+            respond(res, 200, { ok: true, results: results2.map((r) => ({ ...r, kind: 'song' })), next: null });
             return;
           }
           fallbackYtDlp(err || err2);

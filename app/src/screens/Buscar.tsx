@@ -1007,6 +1007,7 @@ export default function Buscar() {
         const isA = m.qp_soloAudio === '1';
         setSoloAudio(isA);
         setModo(isA ? 'audio' : 'video');
+        modoRef.current = isA ? 'audio' : 'video';
         audioRef.current = isA;
       }
       if (m.qp_autoSig != null) setAutoSiguiente(m.qp_autoSig === '1');
@@ -1641,24 +1642,57 @@ export default function Buscar() {
   }, [mediaUri]);
 
   function setAudio(v: boolean) {
-    // Detener TODOS los motores de forma incondicional y preventiva antes de cambiar de modo.
-    // No depender de usarNativoRef.current (puede estar desactualizado en este ciclo).
-    try { native.pause(); native.stop(); } catch (_) {}
-    try { player.pause(); } catch (_) {}
-    try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src='';} "); } catch (_) {}
-    if (v) {
-      // Pasando a AUDIO: limpiar WebView de inmediato para no dejar video sin sonido
-      setWebEmbedUri(null);
+    // En Web: el iframe persistente maneja tanto audio como video en vivo.
+    // Solo alternamos la presentación visual sin detener ni reiniciar la reproducción.
+    if (Platform.OS === 'web') {
+      setSoloAudio(v);
+      setModo(v ? 'audio' : 'video');
+      modoRef.current = v ? 'audio' : 'video';
+      audioRef.current = v;
+      AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
+      return;
     }
+
+    // Android nativo:
+    const currentPos = posRef.current || pos || 0;
     setSoloAudio(v);
     setModo(v ? 'audio' : 'video');
+    modoRef.current = v ? 'audio' : 'video';
     audioRef.current = v;
-    // Actualizar el ref de inmediato para que aplicar() lo vea correcto
     usarNativoRef.current = NATIVE_AUDIO && v;
     AsyncStorage.setItem('qp_soloAudio', v ? '1' : '0').catch(() => {});
-    if (actual) {
-      // Pequeño delay para que el motor previo se libere antes de arrancar el nuevo
-      setTimeout(() => { aplicar(actual, v, idxRef.current, true, true); }, 150);
+
+    if (!actual) return;
+
+    if (v) {
+      // Pasando a MODO AUDIO: apagar video y encender motor de audio nativo con persistencia de posición
+      try { player.pause(); } catch (_) {}
+      try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src='';} "); } catch (_) {}
+      setWebEmbedUri(null);
+      if (NATIVE_AUDIO && QpAudio) {
+        setMediaUri('native:' + actual.id);
+        setError(null);
+        native.play(actual.id, actual.title, actual.channel || '', actual.thumb || '').then(() => {
+          if (currentPos > 2) {
+            setTimeout(() => { try { native.seek(currentPos); } catch (_) {} }, 450);
+          }
+        }).catch(() => {
+          if (actual) usarWebView(actual);
+        });
+      } else {
+        usarWebView(actual);
+      }
+    } else {
+      // Pasando a MODO VIDEO: detener nativo y activar reproductor de video
+      try { native.pause(); native.stop(); } catch (_) {}
+      aplicar(actual, false, idxRef.current, true, true).then(() => {
+        if (currentPos > 2) {
+          setTimeout(() => {
+            try { player.seekBy(currentPos - (player.currentTime || 0)); } catch (_) {}
+            try { webViewCmd(`var v=document.querySelector('video'); if(v){v.currentTime=${currentPos}; v.play();}`); } catch (_) {}
+          }, 800);
+        }
+      });
     }
   }
   function setAuto(v: boolean) { setAutoSiguiente(v); AsyncStorage.setItem('qp_autoSig', v ? '1' : '0').catch(() => {}); }
@@ -1755,11 +1789,13 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       setSoloAudio(false);
       setModo('video');
       audioRef.current = false;
+      modoRef.current = 'video';
       AsyncStorage.setItem('qp_soloAudio', '0').catch(() => {});
     } else if (tipo === 'songs' || tipo === 'playlists') {
       setSoloAudio(true);
       setModo('audio');
       audioRef.current = true;
+      modoRef.current = 'audio';
       AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
     }
     buscar(tipo);
@@ -1810,10 +1846,11 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
   async function aplicar(item: YtResult, audio: boolean = audioRef.current, idx: number, autoPlay = true, forzarModoManual = false) {
     // Si el usuario cambia manualmente con el botón o toggle, respetamos su elección.
-    // Solo forzamos video si el usuario no especificó y estamos en la pestaña videos.
-    const esVideoTab = !forzarModoManual && audio !== true && (searchType === 'videos' || item?.kind === 'video');
+    // Solo forzamos video si el usuario está en la pestaña videos y no eligió audio explícitamente.
+    const esVideoTab = !forzarModoManual && (searchType === 'videos');
     const isAudio = esVideoTab ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     audioRef.current = isAudio;
+    modoRef.current = isAudio ? 'audio' : 'video';
     setSoloAudio(isAudio);
     setModo(isAudio ? 'audio' : 'video');
     usarNativoRef.current = NATIVE_AUDIO && isAudio;
@@ -2058,7 +2095,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   function reproducir(lista: YtResult[], idx: number, audio: boolean = audioRef.current, autoExtender = false) {
     if (!lista.length) return;
     const targetItem = lista[idx] || lista[0];
-    const esVideoItem = (searchType === 'videos' || targetItem?.kind === 'video') && audio !== true;
+    const esVideoItem = (searchType === 'videos') && audio !== true;
     const isAudio = esVideoItem ? false : (typeof audio === 'boolean' ? audio : audioRef.current);
     unlockWebAudio();
     autoPlayRef.current = true;
@@ -2378,6 +2415,26 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   }
   function minimizar() {
     if (esLandscape) alternarRotacion();
+    if (Platform.OS !== 'web' && modo === 'video' && actual) {
+      // Si estamos en modo video en celular nativo y se minimiza, transferir
+      // la reproducción fluidamente al motor de audio nativo (QpAudio) para que no se frene.
+      if (NATIVE_AUDIO && QpAudio) {
+        const currentPos = posRef.current || pos || 0;
+        usarNativoRef.current = true;
+        modoRef.current = 'audio';
+        setSoloAudio(true);
+        setModo('audio');
+        audioRef.current = true;
+        try { player.pause(); } catch (_) {}
+        try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src='';}"); } catch (_) {}
+        setWebEmbedUri(null);
+        native.play(actual.id, actual.title, actual.channel || '', actual.thumb || '').then(() => {
+          if (currentPos > 2) {
+            setTimeout(() => { try { native.seek(currentPos); } catch (_) {} }, 450);
+          }
+        }).catch(() => {});
+      }
+    }
     setPlayerVisible(false);
   }
 

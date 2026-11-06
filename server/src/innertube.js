@@ -21,6 +21,7 @@ const FALLBACK_VERSION = '2.20250701.00.00';
 
 const FILTER_VIDEOS = 'EgIQAQ%3D%3D'; // protobuf oficial: solo videos
 const FILTER_PLAYLISTS = 'EgIQAw%3D%3D'; // protobuf oficial: solo listas de reproducción
+const FILTER_SONGS = 'EgWKAQIIAWoKEAUQAxAEEAkQFA%3D%3D'; // protobuf oficial de YouTube Music para canciones
 
 let clientCache = { version: '', key: '', at: 0 };
 
@@ -524,9 +525,87 @@ async function searchRaw(query, limit, type, clientName, clientVersion, key) {
   return { results, continuation };
 }
 
+async function searchMusic(query, limit = 20) {
+  if (!query || !String(query).trim()) return [];
+  const client = await getClientInfo();
+  const payload = {
+    context: {
+      client: {
+        clientName: 'WEB_REMIX',
+        clientVersion: '1.20250701.00.00',
+        hl: 'es',
+        gl: 'AR',
+        userAgent: UA,
+      },
+    },
+    query: String(query).trim(),
+    params: FILTER_SONGS,
+  };
+
+  const qs = client.key ? '?key=' + encodeURIComponent(client.key) : '';
+  let json;
+  try {
+    json = await postJson('music.youtube.com', '/youtubei/v1/search' + qs, payload, 9000);
+  } catch (e) {
+    return [];
+  }
+
+  const results = [];
+  const seen = new Set();
+  function walk(node, depth = 0) {
+    if (!node || typeof node !== 'object' || results.length >= limit || depth > 20) return;
+    if (Array.isArray(node)) {
+      for (const n of node) {
+        if (results.length >= limit) return;
+        walk(n, depth + 1);
+      }
+      return;
+    }
+    if (node.musicResponsiveListItemRenderer) {
+      const it = node.musicResponsiveListItemRenderer;
+      const vid =
+        it.playlistItemData?.videoId ||
+        it.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId ||
+        it.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
+      const title = it.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
+      const canal = it.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text;
+      const thumbs = it.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+      const thumb = thumbs.slice(-1)[0]?.url || (vid ? 'https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg' : '');
+      if (vid && title && !seen.has(vid)) {
+        seen.add(vid);
+        results.push({
+          id: vid,
+          title,
+          channel: canal || '',
+          duration: 0,
+          durationText: '',
+          thumb,
+          url: 'https://www.youtube.com/watch?v=' + vid,
+          kind: 'song',
+          live: false,
+        });
+      }
+    }
+    for (const k of Object.keys(node)) {
+      if (results.length >= limit) return;
+      walk(node[k], depth + 1);
+    }
+  }
+  walk(json);
+  return results;
+}
+
 async function runSearch(query, limit, type) {
   if (!query || !String(query).trim()) return { results: [], continuation: null };
   const client = await getClientInfo();
+
+  // Si se piden explícitamente canciones, buscar en YouTube Music directamente
+  if (type === 'songs') {
+    try {
+      const songs = await searchMusic(query, limit);
+      if (songs.length > 0) return { results: songs, continuation: null };
+    } catch (_) {}
+  }
 
   const attempts = [
     { name: 'WEB', version: client.version },
@@ -536,15 +615,40 @@ async function runSearch(query, limit, type) {
   let lastErr = null;
   for (const a of attempts) {
     try {
-      const r = await searchRaw(
-        String(query).trim(),
-        limit,
-        type,
-        a.name,
-        a.version,
-        client.key
-      );
-      if (r.results.length > 0) return r;
+      // Si type === 'all', enriquecer la búsqueda de videos con las canciones oficiales del artista
+      if (type === 'all') {
+        const [rSearch, songs] = await Promise.all([
+          searchRaw(String(query).trim(), limit, type, a.name, a.version, client.key).catch(() => ({ results: [], continuation: null })),
+          searchMusic(String(query).trim(), Math.min(limit, 10)).catch(() => []),
+        ]);
+        if (rSearch.results.length > 0 || songs.length > 0) {
+          const seen = new Set();
+          const out = [];
+          // Primero canciones oficiales destacadas
+          for (const s of songs.slice(0, 4)) {
+            if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+          }
+          // Luego videos y playlists generales
+          for (const r of rSearch.results) {
+            if (!seen.has(r.id)) { seen.add(r.id); out.push(r); }
+          }
+          // Luego el resto de canciones oficiales
+          for (const s of songs.slice(4)) {
+            if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+          }
+          return { results: out.slice(0, limit), continuation: rSearch.continuation };
+        }
+      } else {
+        const r = await searchRaw(
+          String(query).trim(),
+          limit,
+          type,
+          a.name,
+          a.version,
+          client.key
+        );
+        if (r.results.length > 0) return r;
+      }
       lastErr = new Error('Sin resultados con cliente ' + a.name);
     } catch (e) {
       lastErr = e;
