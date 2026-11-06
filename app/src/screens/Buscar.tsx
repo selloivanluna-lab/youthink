@@ -163,7 +163,8 @@ export default function Buscar() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [results, setResults] = useState<YtResult[]>([]);
-  const [searchType, setSearchType] = useState<'all' | 'videos' | 'songs'>('all');
+  const [searchType, setSearchType] = useState<'all' | 'videos' | 'songs' | 'playlists'>('all');
+  const [cargandoPlaylistId, setCargandoPlaylistId] = useState<string | null>(null);
   const [nextPage, setNextPage] = useState<string | null>(null);
   const searchReqRef = useRef(0);
   const [recomendaciones, setRecomendaciones] = useState<YtResult[]>([]);
@@ -1667,7 +1668,47 @@ export default function Buscar() {
     setRepeat(next); AsyncStorage.setItem('qp_repeat', next).catch(() => {});
   }
 
-  async function buscar(tipo?: 'all' | 'videos' | 'songs', mas = false) {
+    async function reproducirPlaylist(item: YtResult) {
+    setCargandoPlaylistId(item.id);
+    try {
+      const res = await api.playlist(item.id);
+      if (res.ok && Array.isArray(res.tracks) && res.tracks.length > 0) {
+        reproducir(res.tracks, 0, soloAudio);
+      } else if (item.firstVideoId) {
+        const primerTrack: YtResult = {
+          id: item.firstVideoId,
+          title: item.title,
+          channel: item.channel,
+          duration: 0,
+          thumb: item.thumb,
+          url: 'https://www.youtube.com/watch?v=' + item.firstVideoId,
+          kind: 'song',
+        };
+        reproducir([primerTrack], 0, soloAudio);
+      } else {
+        Alert.alert('Lista no disponible', 'No se pudieron cargar los temas de esta lista.');
+      }
+    } catch (e: any) {
+      if (item.firstVideoId) {
+        const primerTrack: YtResult = {
+          id: item.firstVideoId,
+          title: item.title,
+          channel: item.channel,
+          duration: 0,
+          thumb: item.thumb,
+          url: 'https://www.youtube.com/watch?v=' + item.firstVideoId,
+          kind: 'song',
+        };
+        reproducir([primerTrack], 0, soloAudio);
+      } else {
+        Alert.alert('Error', e?.message || 'No se pudo abrir la lista de reproducción');
+      }
+    } finally {
+      setCargandoPlaylistId(null);
+    }
+  }
+
+async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = false) {
     const q = query.trim();
     if (!q) return;
     const t = tipo || searchType;
@@ -1706,7 +1747,7 @@ export default function Buscar() {
     }
   }
 
-  function buscarConTipo(tipo: 'all' | 'videos' | 'songs') {
+  function buscarConTipo(tipo: 'all' | 'videos' | 'songs' | 'playlists') {
     setSearchType(tipo);
     // Al filtrar por Videos, cambiar automáticamente a modo video.
     // Al filtrar por Canciones o Todo, volver a audio (por defecto).
@@ -1715,7 +1756,7 @@ export default function Buscar() {
       setModo('video');
       audioRef.current = false;
       AsyncStorage.setItem('qp_soloAudio', '0').catch(() => {});
-    } else if (tipo === 'songs') {
+    } else if (tipo === 'songs' || tipo === 'playlists') {
       setSoloAudio(true);
       setModo('audio');
       audioRef.current = true;
@@ -3123,7 +3164,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <TvPressable style={s.btn} onPress={buscarDesdeInput}><Text style={s.btnText}>🔎</Text></TvPressable>
       </View>
       <View style={{ flexDirection: 'row', paddingHorizontal: 12, gap: 6, marginBottom: 4 }}>
-        {(['all', 'videos', 'songs'] as const).map((t) => {
+        {((['all', 'songs', 'playlists', 'videos'] as const)).map((t) => {
           const activo = t === searchType;
           return (
             <TvPressable
@@ -3134,7 +3175,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 borderWidth: 1, borderColor: activo ? theme.colors.gold : theme.colors.border }}
             >
               <Text style={{ color: activo ? theme.colors.gold : theme.colors.textDim, fontSize: 12, fontWeight: activo ? '700' : '400' }}>
-                {t === 'all' ? '🌐 Todo' : t === 'videos' ? '▶️ Videos' : '🎵 Canciones'}
+                {t === 'all' ? '🌐 Todo' : t === 'songs' ? '🎵 Canciones' : t === 'playlists' ? '📑 Listas' : '▶️ Videos'}
               </Text>
             </TvPressable>
           );
@@ -3194,19 +3235,79 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
 
       <FlatList style={{ flex: 1 }} data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
         renderItem={({ item, index }) => {
-          // En la pestaña Videos siempre reproducir en modo video (independiente del switch global).
-          // En Canciones siempre audio. En Todo: respetar el switch.
-          const modoItem = searchType === 'videos' ? false : searchType === 'songs' ? true : soloAudio;
+          const esPlaylist = item.kind === 'playlist' || item.kind === 'album';
+          const esCargando = cargandoPlaylistId === item.id;
+          const modoItem = searchType === 'videos' ? false : (searchType === 'songs' || searchType === 'playlists') ? true : soloAudio;
+
+          if (esPlaylist) {
+            return (
+              <View style={[s.row, { borderLeftWidth: 3, borderLeftColor: item.kind === 'album' ? '#E5A93C' : theme.colors.gold }]}>
+                <TvPressable
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, padding: 4, borderRadius: 8 }}
+                  onPress={() => reproducirPlaylist(item)}
+                >
+                  <View style={{ position: 'relative' }}>
+                    <Image source={{ uri: item.thumb }} style={s.thumb} />
+                    <View style={{ position: 'absolute', right: 2, bottom: 2, backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+                      <Text style={{ color: item.kind === 'album' ? '#E5A93C' : theme.colors.gold, fontSize: 9, fontWeight: '800' }}>
+                        {item.kind === 'album' ? 'DISCO' : 'LISTA'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.title} numberOfLines={2}>
+                      {item.kind === 'album' ? '💿 ' : '📑 '}
+                      {item.title}
+                    </Text>
+                    <Text style={s.sub} numberOfLines={1}>
+                      {item.channel ? `${item.channel} · ` : ''}
+                      <Text style={{ color: item.kind === 'album' ? '#E5A93C' : theme.colors.gold, fontWeight: '700' }}>
+                        {item.itemCountText || (item.kind === 'album' ? 'Álbum' : 'Lista')}
+                      </Text>
+                    </Text>
+                  </View>
+                </TvPressable>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                  <TvPressable
+                    onPress={() => reproducirPlaylist(item)}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.surface2, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                    disabled={esCargando}
+                  >
+                    {esCargando ? (
+                      <ActivityIndicator size="small" color={theme.colors.gold} />
+                    ) : (
+                      <>
+                        <Text style={{ fontSize: 13 }}>▶️</Text>
+                        <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: '700' }}>Reproducir</Text>
+                      </>
+                    )}
+                  </TvPressable>
+                </View>
+              </View>
+            );
+          }
+
           return (
           <View style={[s.row, qIdx === index && cola[qIdx]?.id === item.id ? s.rowActiva : null]}>
             <TvPressable style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, padding: 4, borderRadius: 8 }} onPress={() => reproducir(results, index, modoItem)}>
-              <Image source={{ uri: item.thumb }} style={s.thumb} />
+              <View style={{ position: 'relative' }}>
+                <Image source={{ uri: item.thumb }} style={s.thumb} />
+                {item.isAlbumVideo ? (
+                  <View style={{ position: 'absolute', left: 2, top: 2, backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4, borderWidth: 1, borderColor: '#E5A93C' }}>
+                    <Text style={{ color: '#E5A93C', fontSize: 9, fontWeight: '900' }}>💿 ÁLBUM</Text>
+                  </View>
+                ) : null}
+              </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.title} numberOfLines={2}>
-                  {item.kind === 'song' ? '🎵 ' : item.kind === 'short' ? '⚡ ' : ''}
+                  {item.isAlbumVideo ? '💿 ' : item.kind === 'song' ? '🎵 ' : item.kind === 'short' ? '⚡ ' : ''}
                   {item.title}
                 </Text>
-                <Text style={s.sub} numberOfLines={1}>{item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}{item.live ? ' · 🔴 EN VIVO' : ''}</Text>
+                <Text style={s.sub} numberOfLines={1}>
+                  {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+                  {item.isAlbumVideo ? ' · 💿 Álbum Completo' : ''}
+                  {item.live ? ' · 🔴 EN VIVO' : ''}
+                </Text>
               </View>
             </TvPressable>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>

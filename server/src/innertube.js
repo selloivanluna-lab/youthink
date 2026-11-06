@@ -20,6 +20,7 @@ const FALLBACK_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const FALLBACK_VERSION = '2.20250701.00.00';
 
 const FILTER_VIDEOS = 'EgIQAQ%3D%3D'; // protobuf oficial: solo videos
+const FILTER_PLAYLISTS = 'EgIQAw%3D%3D'; // protobuf oficial: solo listas de reproducción
 
 let clientCache = { version: '', key: '', at: 0 };
 
@@ -185,6 +186,15 @@ function isLive(vr) {
   return false;
 }
 
+function checkIfAlbumVideo(title, duration) {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  const hasAlbumWord = /(álbum|album)\s+completo|full\s+album|disco\s+completo|disco\s+entero|complete\s+album|\(album\)|\(álbum\)|\[album\]|\[álbum\]/i.test(t);
+  if (hasAlbumWord && duration >= 600) return true;
+  if (duration >= 1500 && /(álbum|album|disco)/i.test(t)) return true;
+  return false;
+}
+
 function pushVideo(vr, out, seen, kind) {
   if (!vr || !vr.videoId || seen.has(vr.videoId)) return;
   seen.add(vr.videoId);
@@ -199,6 +209,7 @@ function pushVideo(vr, out, seen, kind) {
     vr.lengthText?.simpleText || (Array.isArray(vr.lengthText?.runs) ? textOf(vr.lengthText) : '');
   const duration = parseDuration(durationText);
   const live = isLive(vr);
+  const isAlbum = checkIfAlbumVideo(title, duration);
 
   out.push({
     id: vid,
@@ -212,6 +223,7 @@ function pushVideo(vr, out, seen, kind) {
     live,
     views: textOf(vr.viewCountText) || textOf(vr.shortViewCountText),
     published: textOf(vr.publishedTimeText),
+    isAlbumVideo: isAlbum || undefined,
   });
 }
 
@@ -229,6 +241,33 @@ function collectVideos(node, out, seen, limit, depth) {
 
   const vr = node.videoRenderer || node.compactVideoRenderer || node.gridVideoRenderer;
   if (vr) pushVideo(vr, out, seen, 'video');
+
+  const pr = node.playlistRenderer || node.compactPlaylistRenderer || node.gridPlaylistRenderer;
+  if (pr && out.length < limit) {
+    const plId = pr.playlistId;
+    if (plId && !seen.has(plId)) {
+      seen.add(plId);
+      const title = textOf(pr.title) || '(sin título)';
+      const count = textOf(pr.videoCountText || pr.videoCountShortText) || (pr.videoCount ? `${pr.videoCount} videos` : 'Lista');
+      const canal = textOf(pr.shortBylineText || pr.ownerText) || '';
+      const isAlbum = plId.startsWith('OLAK') || /álbum|album/i.test(title);
+      const firstVid = pr.navigationEndpoint?.watchEndpoint?.videoId;
+      const thumb = pr.thumbnails?.[0]?.thumbnails?.slice(-1)?.[0]?.url || (firstVid ? 'https://i.ytimg.com/vi/' + firstVid + '/mqdefault.jpg' : '');
+      out.push({
+        id: plId,
+        title,
+        channel: canal,
+        duration: 0,
+        durationText: count,
+        itemCountText: count,
+        firstVideoId: firstVid || undefined,
+        thumb,
+        url: 'https://www.youtube.com/playlist?list=' + plId,
+        kind: isAlbum ? 'album' : 'playlist',
+        live: false,
+      });
+    }
+  }
 
   const reel = node.reelItemRenderer;
   if (reel && out.length < limit) {
@@ -274,62 +313,97 @@ function collectVideos(node, out, seen, limit, depth) {
     }
   }
 
-  // lockupViewModel: formato nuevo de YouTube. Puede ser un video, una lista de
-  // reproducción, un mix, un canal o un álbum. Solo aceptamos VIDEOS: antes se
-  // colaban listas/mixes con id de lista, título vacío ("(sin título)") y que no
-  // se podían reproducir.
+  // lockupViewModel: formato nuevo de YouTube (videos, playlists, mixes o álbumes).
   const lockup = node.lockupViewModel;
   if (lockup && out.length < limit) {
     const tipo = String(lockup.contentType || '');
-    const watchId =
-      lockup?.itemPlayback?.inlinePlayerData?.onSelect?.innertubeCommand?.watchEndpoint?.videoId ||
-      lockup?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
-      lockup?.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
-      '';
-    const esVideo =
-      tipo === 'LOCKUP_CONTENT_TYPE_VIDEO' ||
-      (!tipo && /^[\w-]{11}$/.test(String(lockup.contentId || '')));
-    const id = esVideo ? watchId || String(lockup.contentId || '') : '';
-    if (/^[\w-]{11}$/.test(id) && !seen.has(id)) {
-      const meta = lockup?.metadata?.lockupMetadataViewModel;
-      const rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || [];
-      const partes = [];
-      for (const row of rows) {
-        for (const part of row?.metadataParts || []) {
-          const t = textOf(part?.text);
-          if (t) partes.push(t);
+    const meta = lockup?.metadata?.lockupMetadataViewModel;
+    const title = textOf(meta?.title) || '(sin título)';
+    const rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || [];
+    const partes = [];
+    for (const row of rows) {
+      for (const part of row?.metadataParts || []) {
+        const t = textOf(part?.text);
+        if (t) partes.push(t);
+      }
+    }
+
+    const esPlaylist =
+      tipo === 'LOCKUP_CONTENT_TYPE_PLAYLIST' ||
+      tipo === 'LOCKUP_CONTENT_TYPE_ALBUM' ||
+      /^((PL|OLAK|RD|UU|FL)[\w-]{10,})$/.test(String(lockup.contentId || ''));
+
+    if (esPlaylist) {
+      const plId = String(lockup.contentId || '');
+      if (plId && !seen.has(plId)) {
+        seen.add(plId);
+        const watchId =
+          lockup?.itemPlayback?.inlinePlayerData?.onSelect?.innertubeCommand?.watchEndpoint?.videoId ||
+          lockup?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
+          lockup?.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
+          '';
+        const isAlbum = plId.startsWith('OLAK') || /álbum|album/i.test(title) || partes.some((p) => /álbum|album/i.test(p));
+        const countText = partes.find((p) => /\d+\s*(videos?|temas?|canciones?)/i.test(p)) || (isAlbum ? 'Álbum' : 'Lista');
+        const canal = partes.find((p) => !/\d+\s*(videos?|temas?|canciones?)/i.test(p) && !/lista de reproducci|album|álbum|mix/i.test(p)) || '';
+        out.push({
+          id: plId,
+          title,
+          channel: canal,
+          duration: 0,
+          durationText: countText,
+          itemCountText: countText,
+          firstVideoId: watchId || undefined,
+          thumb: firstImageUrl(lockup.contentImage) || (watchId ? 'https://i.ytimg.com/vi/' + watchId + '/mqdefault.jpg' : ''),
+          url: 'https://www.youtube.com/playlist?list=' + plId,
+          kind: isAlbum ? 'album' : 'playlist',
+          live: false,
+        });
+      }
+    } else {
+      const watchId =
+        lockup?.itemPlayback?.inlinePlayerData?.onSelect?.innertubeCommand?.watchEndpoint?.videoId ||
+        lockup?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
+        lockup?.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.videoId ||
+        '';
+      const esVideo =
+        tipo === 'LOCKUP_CONTENT_TYPE_VIDEO' ||
+        (!tipo && /^[\w-]{11}$/.test(String(lockup.contentId || '')));
+      const id = esVideo ? watchId || String(lockup.contentId || '') : '';
+      if (/^[\w-]{11}$/.test(id) && !seen.has(id)) {
+        let durationText = '';
+        const overlays =
+          lockup?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail?.thumbnailViewModel
+            ?.overlays ||
+          lockup?.contentImage?.thumbnailViewModel?.overlays ||
+          [];
+        for (const o of overlays) {
+          for (const b of o?.thumbnailOverlayBadgeViewModel?.thumbnailBadges || []) {
+            const t = String(b?.thumbnailBadgeViewModel?.text || '').trim();
+            if (/^\d+(:\d+)+$/.test(t)) durationText = t;
+          }
         }
-      }
-      let durationText = '';
-      const overlays =
-        lockup?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail?.thumbnailViewModel
-          ?.overlays ||
-        lockup?.contentImage?.thumbnailViewModel?.overlays ||
-        [];
-      for (const o of overlays) {
-        for (const b of o?.thumbnailOverlayBadgeViewModel?.thumbnailBadges || []) {
-          const t = String(b?.thumbnailBadgeViewModel?.text || '').trim();
-          if (/^\d+(:\d+)+$/.test(t)) durationText = t;
+        if (!durationText) {
+          durationText = partes.find((p) => /^\d+(:\d+)+$/.test(p)) || '';
         }
+        const canal =
+          partes.find((p) => !/^\d+(:\d+)+$/.test(p) && !/visualizaci|views|hace /i.test(p)) || '';
+        const durSecs = parseDuration(durationText);
+        const isAlbum = checkIfAlbumVideo(title, durSecs);
+        seen.add(id);
+        out.push({
+          id,
+          title,
+          channel: canal,
+          duration: durSecs,
+          durationText,
+          thumb: firstImageUrl(lockup.contentImage) || 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg',
+          url: 'https://www.youtube.com/watch?v=' + id,
+          kind: 'video',
+          live: false,
+          views: partes.find((p) => /visualizaci|views/i.test(p)) || '',
+          isAlbumVideo: isAlbum || undefined,
+        });
       }
-      if (!durationText) {
-        durationText = partes.find((p) => /^\d+(:\d+)+$/.test(p)) || '';
-      }
-      const canal =
-        partes.find((p) => !/^\d+(:\d+)+$/.test(p) && !/visualizaci|views|hace /i.test(p)) || '';
-      seen.add(id);
-      out.push({
-        id,
-        title: textOf(meta?.title) || '(sin título)',
-        channel: canal,
-        duration: parseDuration(durationText),
-        durationText,
-        thumb: firstImageUrl(lockup.contentImage) || 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg',
-        url: 'https://www.youtube.com/watch?v=' + id,
-        kind: 'video',
-        live: false,
-        views: partes.find((p) => /visualizaci|views/i.test(p)) || '',
-      });
     }
   }
 
@@ -337,6 +411,7 @@ function collectVideos(node, out, seen, limit, depth) {
     if (out.length >= limit) return;
     if (k === 'videoRenderer' || k === 'compactVideoRenderer' || k === 'gridVideoRenderer') continue;
     if (k === 'reelItemRenderer' || k === 'lockupViewModel' || k === 'shortsLockupViewModel') continue;
+    if (k === 'playlistRenderer' || k === 'compactPlaylistRenderer' || k === 'gridPlaylistRenderer') continue;
     collectVideos(node[k], out, seen, limit, depth + 1);
   }
 }
@@ -422,7 +497,9 @@ function parsePage(json, limit, seen) {
 }
 
 async function searchRaw(query, limit, type, clientName, clientVersion, key) {
-  const params = type === 'videos' ? FILTER_VIDEOS : undefined;
+  let params = undefined;
+  if (type === 'videos') params = FILTER_VIDEOS;
+  else if (type === 'playlists') params = FILTER_PLAYLISTS;
   const seen = new Set();
   const results = [];
   let continuation = null;
@@ -498,4 +575,140 @@ function continueSearch(token, limit = 15, cb) {
     .catch((e) => cb(e));
 }
 
-module.exports = { search, continueSearch, parseDuration };
+// Carga los temas de una playlist o álbum de YouTube vía InnerTube browse
+async function fetchPlaylist(playlistId) {
+  if (!playlistId) throw new Error('Falta playlistId');
+  const client = await getClientInfo();
+  const rawId = String(playlistId).trim();
+  const browseId = rawId.startsWith('VL') ? rawId : (rawId.startsWith('OLAK') ? rawId : 'VL' + rawId);
+
+  const payload = {
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: client.version,
+        hl: 'es',
+        gl: 'AR',
+        userAgent: UA,
+      },
+    },
+    browseId,
+  };
+
+  const qs = client.key ? '?key=' + encodeURIComponent(client.key) : '';
+  const json = await postJson('www.youtube.com', '/youtubei/v1/browse' + qs, payload);
+
+  const tracks = [];
+  const seen = new Set();
+  let playlistTitle =
+    json?.metadata?.playlistMetadataRenderer?.title ||
+    json?.microformat?.microformatDataRenderer?.title ||
+    json?.sidebar?.playlistSidebarRenderer?.items?.[0]?.playlistSidebarPrimaryInfoRenderer?.title?.simpleText ||
+    '';
+  let playlistChannel =
+    json?.sidebar?.playlistSidebarRenderer?.items?.[1]?.playlistSidebarSecondaryInfoRenderer?.videoOwner?.videoOwnerRenderer?.title?.runs?.[0]?.text ||
+    '';
+
+  function walk(node, depth = 0) {
+    if (!node || typeof node !== 'object' || depth > 24) return;
+    if (Array.isArray(node)) {
+      for (const n of node) walk(n, depth + 1);
+      return;
+    }
+
+    if (!playlistTitle && node.pageHeaderViewModel?.pageHeaderTitle?.metadata?.title?.content) {
+      playlistTitle = node.pageHeaderViewModel.pageHeaderTitle.metadata.title.content;
+    }
+
+    // lockupViewModel
+    if (node.lockupViewModel) {
+      const l = node.lockupViewModel;
+      const vid =
+        (l.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' || !l.contentType)
+          ? (l.contentId || l.itemPlayback?.inlinePlayerData?.onSelect?.innertubeCommand?.watchEndpoint?.videoId || l.onTap?.innertubeCommand?.watchEndpoint?.videoId)
+          : '';
+      if (vid && /^[\w-]{11}$/.test(vid) && !seen.has(vid)) {
+        seen.add(vid);
+        const meta = l.metadata?.lockupMetadataViewModel;
+        const title = textOf(meta?.title) || '(sin título)';
+        const rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || [];
+        const partes = [];
+        for (const row of rows) {
+          for (const part of row?.metadataParts || []) {
+            const t = textOf(part?.text);
+            if (t) partes.push(t);
+          }
+        }
+        let durationText = '';
+        const overlays =
+          l.contentImage?.collectionThumbnailViewModel?.primaryThumbnail?.thumbnailViewModel?.overlays ||
+          l.contentImage?.thumbnailViewModel?.overlays ||
+          [];
+        for (const o of overlays) {
+          for (const b of o?.thumbnailOverlayBadgeViewModel?.thumbnailBadges || []) {
+            const t = String(b?.thumbnailBadgeViewModel?.text || '').trim();
+            if (/^\d+(:\d+)+$/.test(t)) durationText = t;
+          }
+        }
+        if (!durationText) {
+          durationText = partes.find((p) => /^\d+(:\d+)+$/.test(p)) || '';
+        }
+        const canal = partes.find((p) => !/^\d+(:\d+)+$/.test(p) && !/visualizaci|views|hace /i.test(p)) || playlistChannel;
+        const thumb = firstImageUrl(l.contentImage) || ('https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg');
+        tracks.push({
+          id: vid,
+          title,
+          channel: canal,
+          duration: parseDuration(durationText),
+          durationText,
+          thumb,
+          url: 'https://www.youtube.com/watch?v=' + vid,
+          kind: 'song',
+        });
+      }
+    }
+
+    // playlistVideoRenderer tradicional
+    if (node.playlistVideoRenderer) {
+      const pvr = node.playlistVideoRenderer;
+      const vid = pvr.videoId;
+      if (vid && !seen.has(vid)) {
+        seen.add(vid);
+        const title = textOf(pvr.title) || '(sin título)';
+        const canal = textOf(pvr.shortBylineText) || playlistChannel;
+        const durationText = textOf(pvr.lengthText) || '';
+        const thumb = pvr.thumbnails?.[0]?.thumbnails?.slice(-1)?.[0]?.url || ('https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg');
+        tracks.push({
+          id: vid,
+          title,
+          channel: canal,
+          duration: parseDuration(durationText),
+          durationText,
+          thumb,
+          url: 'https://www.youtube.com/watch?v=' + vid,
+          kind: 'song',
+        });
+      }
+    }
+
+    for (const k of Object.keys(node)) {
+      walk(node[k], depth + 1);
+    }
+  }
+
+  walk(json);
+  return {
+    id: rawId,
+    title: playlistTitle || 'Lista de reproducción',
+    channel: playlistChannel,
+    tracks,
+  };
+}
+
+function getPlaylist(playlistId, cb) {
+  fetchPlaylist(playlistId)
+    .then((r) => cb(null, r))
+    .catch((e) => cb(e));
+}
+
+module.exports = { search, continueSearch, parseDuration, getPlaylist };

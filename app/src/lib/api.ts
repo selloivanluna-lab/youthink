@@ -8,7 +8,10 @@ export type YtResult = {
   channel: string;
   thumb: string;
   /** Origen del resultado: video normal, Short o canción de YouTube Music. */
-  kind?: 'video' | 'short' | 'song';
+  kind?: 'video' | 'short' | 'song' | 'playlist' | 'album';
+  itemCountText?: string;
+  firstVideoId?: string;
+  isAlbumVideo?: boolean;
   live?: boolean;
   views?: string;
   published?: string;
@@ -108,7 +111,7 @@ export type CrewTrack = {
 export const api = {
   health: () => getJson<{ ok: boolean; ytdlp: boolean; ffmpeg: boolean; deno: boolean }>('/api/health', 8000),
 
-  search: (q: string, n = 20, type: 'all' | 'videos' | 'songs' = 'all', ct?: string | null) =>
+  search: (q: string, n = 20, type: 'all' | 'videos' | 'songs' | 'playlists' = 'all', ct?: string | null) =>
     withRetry(() =>
       getJson<YtSearchResponse>(
         `/api/ytsearch?q=${encodeURIComponent(q)}&n=${n}&type=${encodeURIComponent(type)}${
@@ -132,6 +135,14 @@ export const api = {
     withRetry(() => getJson<{ ok: boolean; audio: string }>(`/api/audio?id=${encodeURIComponent(id)}`, 18000)),
   audioClipUrl: (id: string) =>
     `${API_URL}/api/aclip?id=${encodeURIComponent(id)}&token=${encodeURIComponent(QP_TOKEN)}`,
+
+  playlist: (id: string) =>
+    withRetry(() =>
+      getJson<{ ok: boolean; id: string; title: string; channel?: string; tracks: YtResult[] }>(
+        '/api/ytplaylist?id=' + encodeURIComponent(id),
+        25000
+      ), 2, 1500
+    ),
 
   radio: (seed: string, n = 25) =>
     getJson<{ ok: boolean; tracks: YtResult[] }>(`/api/radio?seed=${encodeURIComponent(seed)}&n=${n}`),

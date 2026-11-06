@@ -221,6 +221,46 @@ function runYtSearch(q, n, cb) {
   });
 }
 
+// ── playlist de YouTube (temas de lista o álbum) ─────────────────────
+function runYtPlaylist(plId, cb) {
+  const ytdlp = findBin('yt-dlp');
+  if (!ytdlp) return cb(new Error('yt-dlp no encontrado en PATH'));
+  const args = [];
+  const deno = findDeno();
+  if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...ytExtraArgs());
+  args.push('--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
+    'https://www.youtube.com/playlist?list=' + plId);
+  let p;
+  try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return cb(e); }
+  let out = '', err = '', done = false;
+  const finish = (e, r) => { if (done) return; done = true; cb(e, r); };
+  const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de playlist (>35s)')); }, 35000);
+  p.stdout.on('data', (d) => { out += d.toString(); });
+  p.stderr.on('data', (d) => { err += d.toString(); });
+  p.on('error', (e) => { clearTimeout(timer); finish(e); });
+  p.on('close', (code) => {
+    clearTimeout(timer);
+    if (code !== 0 && !out) {
+      const det = (err || '').split(/\r?\n/).filter(Boolean).slice(-2).join(' | ');
+      return finish(new Error(det || ('yt-dlp code ' + code)));
+    }
+    try {
+      const data = JSON.parse(out);
+      const tracks = ((data && data.entries) || []).filter((e) => e && e.id).map((e) => ({
+        id: e.id,
+        title: e.title || '(sin título)',
+        url: 'https://www.youtube.com/watch?v=' + e.id,
+        duration: e.duration || 0,
+        channel: e.channel || e.uploader || '',
+        thumb: 'https://i.ytimg.com/vi/' + e.id + '/mqdefault.jpg',
+        kind: 'song',
+      }));
+      finish(null, { id: plId, title: data.title || 'Lista de reproducción', channel: data.channel || data.uploader || '', tracks });
+    } catch (e) { finish(new Error('JSON de playlist inválido')); }
+  });
+}
+
 // ── clip de vista previa (45s, ≤360p, con audio) ─────────────────────
 function runYtClip(id, cb) {
   const out = path.join(CLIP_DIR, id + '.mp4');
@@ -918,6 +958,18 @@ function getOAuthCreds() {
       return;
     }
 
+    // type === 'playlists': solo listas de reproducción y álbumes de YouTube
+    if (type === 'playlists') {
+      innertube.search(q, n, 'playlists', (err, results, next) => {
+        if (!err && Array.isArray(results) && results.length > 0) {
+          respond(res, 200, { ok: true, results, next: next || null });
+          return;
+        }
+        fallbackYtDlp(err);
+      });
+      return;
+    }
+
     // type === 'videos': solo videos reales de YouTube (entrevistas, podcasts, tutoriales…)
     if (type === 'videos') {
       innertube.search(q, n, 'videos', (err, results, next) => {
@@ -964,6 +1016,26 @@ function getOAuthCreds() {
       };
 
       completarConCanciones();
+    });
+    return;
+  }
+
+  if (p === '/api/ytplaylist') {
+    const id = (url.searchParams.get('id') || '').trim();
+    if (!id) { respond(res, 400, { error: 'falta ?id=' }); return; }
+
+    innertube.getPlaylist(id, (err, data) => {
+      if (!err && data && Array.isArray(data.tracks) && data.tracks.length > 0) {
+        respond(res, 200, { ok: true, id: data.id, title: data.title, channel: data.channel || '', tracks: data.tracks });
+        return;
+      }
+      runYtPlaylist(id, (err2, data2) => {
+        if (err2 || !data2) {
+          respond(res, 502, { error: 'ytplaylist: ' + (err ? err.message : err2 ? err2.message : 'no se pudo cargar la lista') });
+          return;
+        }
+        respond(res, 200, { ok: true, id, title: data2.title, channel: data2.channel || '', tracks: data2.tracks });
+      });
     });
     return;
   }
