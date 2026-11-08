@@ -40,25 +40,25 @@ async function markAsDeleted(id: string): Promise<void> {
   } catch {}
 }
 
-async function getLocalPlaylists(): Promise<Playlist[]> {
+export async function getLocalPlaylists(): Promise<Playlist[]> {
   try {
     const raw = await AsyncStorage.getItem(LOCAL_PL_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-async function saveLocalPlaylists(list: Playlist[]): Promise<void> {
+export async function saveLocalPlaylists(list: Playlist[]): Promise<void> {
   await AsyncStorage.setItem(LOCAL_PL_KEY, JSON.stringify(list));
 }
 
-async function getLocalItems(playlistId: string): Promise<PlaylistItem[]> {
+export async function getLocalItems(playlistId: string): Promise<PlaylistItem[]> {
   try {
     const raw = await AsyncStorage.getItem(LOCAL_ITEMS_KEY + playlistId);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-async function saveLocalItems(playlistId: string, items: PlaylistItem[]): Promise<void> {
+export async function saveLocalItems(playlistId: string, items: PlaylistItem[]): Promise<void> {
   await AsyncStorage.setItem(LOCAL_ITEMS_KEY + playlistId, JSON.stringify(items));
 }
 
@@ -243,16 +243,17 @@ export async function getPlaylistItemsDetailed(
 
 
 export async function addToPlaylist(playlistId: string, item: YtResult): Promise<void> {
+  const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
   const items = await getLocalItems(playlistId);
-  const exists = items.some((it) => it.yt_id === item.id);
+  const exists = items.some((it) => (it.yt_id === cleanId || it.yt_id === item.id));
   if (!exists) {
     const newItem: PlaylistItem = {
       id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       playlist_id: playlistId,
-      yt_id: item.id,
+      yt_id: cleanId,
       title: item.title,
       channel: item.channel,
-      thumb: item.thumb,
+      thumb: item.thumb || `https://i.ytimg.com/vi/${cleanId}/mqdefault.jpg`,
       duration: item.duration,
       added_at: new Date().toISOString(),
     };
@@ -267,7 +268,7 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
         {
           id: newItem.id,
           playlist_id: playlistId,
-          yt_id: item.id,
+          yt_id: cleanId,
           title: item.title,
           channel: item.channel,
           thumb: item.thumb,
@@ -281,8 +282,9 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
 }
 
 export async function removeFromPlaylist(playlistId: string, ytId: string): Promise<void> {
+  const cleanId = (ytId || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
   const items = await getLocalItems(playlistId);
-  const filtered = items.filter((it) => it.yt_id !== ytId);
+  const filtered = items.filter((it) => it.yt_id !== cleanId && it.yt_id !== ytId);
   await saveLocalItems(playlistId, filtered);
   memItems.set(playlistId, filtered);
 
@@ -291,7 +293,7 @@ export async function removeFromPlaylist(playlistId: string, ytId: string): Prom
       .from('youthink_playlist_items')
       .delete()
       .eq('playlist_id', playlistId)
-      .eq('yt_id', ytId);
+      .eq('yt_id', cleanId);
   } catch {}
 }
 

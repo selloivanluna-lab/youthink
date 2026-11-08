@@ -1,8 +1,148 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../config';
 
-const CACHE_YT_ITEMS_PREFIX = 'qp_cache_yt_items_';
-const CACHE_YT_LISTAS_KEY = 'qp_cache_yt_playlists';
+export const CACHE_YT_ITEMS_PREFIX = 'qp_cache_yt_items_';
+export const CACHE_YT_LISTAS_KEY = 'qp_cache_yt_playlists';
+
+/**
+ * Obtiene las listas de reproducción de la cuenta de YouTube vinculada.
+ * Retorna inmediatamente la caché local para no bloquear la UI y en segundo
+ * plano refresca contra Google API con auto-renovación de token si caducó.
+ */
+export async function obtenerListasYouTube(onFresh?: (listas: any[]) => void): Promise<any[]> {
+  let previas: any[] = [];
+  try {
+    const raw = await AsyncStorage.getItem(CACHE_YT_LISTAS_KEY);
+    if (raw) previas = JSON.parse(raw);
+  } catch {}
+
+  const refresco = (async () => {
+    try {
+      const resp = await ejecutarConTokenYouTube(async (tok) => {
+        let all: any[] = [];
+        let pageToken = '';
+        let lastError: any = null;
+        let lastStatus = 200;
+
+        do {
+          const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50${
+            pageToken ? '&pageToken=' + pageToken : ''
+          }`;
+          const r = await fetch(url, { headers: { Authorization: 'Bearer ' + tok } });
+          lastStatus = r.status;
+          const json = await r.json();
+
+          if (json.error) {
+            lastError = json.error;
+            break;
+          }
+
+          const items = (json.items || []).map((it: any) => ({
+            id: 'yt_' + it.id,
+            nombre: it.snippet?.title || 'Lista de YouTube',
+            user_id: 'youtube',
+            created_at: it.snippet?.publishedAt || new Date().toISOString(),
+            items_count: it.contentDetails?.itemCount,
+          }));
+
+          all = [...all, ...items];
+          pageToken = json.nextPageToken || '';
+        } while (pageToken);
+
+        if (lastError && all.length === 0) {
+          return { status: lastStatus, error: lastError };
+        }
+
+        return { data: all, status: 200 };
+      });
+
+      if (resp.data && Array.isArray(resp.data)) {
+        await AsyncStorage.setItem(CACHE_YT_LISTAS_KEY, JSON.stringify(resp.data));
+        if (onFresh) onFresh(resp.data);
+        return resp.data;
+      }
+    } catch (e) {
+      console.warn('[youtubeAuth] Error al actualizar listas de YouTube:', e);
+    }
+    return previas;
+  })();
+
+  if (previas.length > 0) {
+    refresco.catch(() => {});
+    return previas;
+  }
+
+  return await refresco;
+}
+
+/**
+ * Añade una canción a una lista de YouTube oficial.
+ * Usa auto-renovación transparente del token e inserta de inmediato en la caché local
+ * para que aparezca al instante sin esperar latencia de red.
+ */
+export async function agregarItemAPlaylistYouTube(
+  playlistIdRaw: string,
+  item: { id: string; title: string; channel?: string; thumb?: string; duration?: number }
+): Promise<{ ok: boolean; enYt: boolean }> {
+  const plId = playlistIdRaw.replace(/^yt_/, '');
+  const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+
+  // 1. Guardar de inmediato en la caché local de esa lista de YouTube
+  const cacheKey = CACHE_YT_ITEMS_PREFIX + plId;
+  try {
+    let itemsCache: any[] = [];
+    const raw = await AsyncStorage.getItem(cacheKey);
+    if (raw) itemsCache = JSON.parse(raw);
+
+    const existe = itemsCache.some((c) => (c.id === cleanId || c.yt_id === cleanId));
+    if (!existe) {
+      const nuevo = {
+        id: cleanId,
+        yt_id: cleanId,
+        title: item.title,
+        channel: item.channel || '',
+        thumb: item.thumb || `https://i.ytimg.com/vi/${cleanId}/mqdefault.jpg`,
+        duration: item.duration || 0,
+        added_at: new Date().toISOString(),
+      };
+      itemsCache.push(nuevo);
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(itemsCache));
+    }
+  } catch (e) {
+    console.warn('[youtubeAuth] Error actualizando caché local tras agregar item:', e);
+  }
+
+  // 2. Enviar a YouTube Data API v3 con manejo automático de token
+  let enYt = false;
+  try {
+    const res = await ejecutarConTokenYouTube(async (tok) => {
+      const r = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + tok,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          snippet: {
+            playlistId: plId,
+            resourceId: {
+              kind: 'youtube#video',
+              videoId: cleanId,
+            },
+          },
+        }),
+      });
+      const json = await r.json();
+      return { data: json, status: r.status, error: json.error };
+    });
+
+    if (res.data?.id) enYt = true;
+  } catch (e) {
+    console.warn('[youtubeAuth] Error en POST playlistItems YouTube:', e);
+  }
+
+  return { ok: true, enYt };
+}
 
 /**
  * Obtiene el access_token actual de YouTube guardado localmente.
@@ -133,10 +273,20 @@ export async function obtenerItemsPlaylistYouTube(
       });
 
       if (resp.data && Array.isArray(resp.data)) {
-        // Guardar en caché local
-        AsyncStorage.setItem(cacheKey, JSON.stringify(resp.data)).catch(() => {});
-        if (onFresh) onFresh(resp.data);
-        return resp.data;
+        // Fusionar con caché previo para no perder canciones añadidas recientemente
+        // mientras la API de YouTube termina de propagar los cambios
+        const ids = new Set(resp.data.map((x: any) => x.id || x.yt_id));
+        const merged = [...resp.data];
+        for (const prev of itemsPrevios) {
+          const k = prev.id || prev.yt_id;
+          if (k && !ids.has(k)) {
+            ids.add(k);
+            merged.push(prev);
+          }
+        }
+        AsyncStorage.setItem(cacheKey, JSON.stringify(merged)).catch(() => {});
+        if (onFresh) onFresh(merged);
+        return merged;
       }
     } catch (e) {
       console.warn('[youtubeAuth] Error al actualizar items de lista YT:', e);

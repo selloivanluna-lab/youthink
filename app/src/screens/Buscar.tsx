@@ -27,7 +27,8 @@ const NativeWebView: any =
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
-import { getPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, deletePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { getPlaylists, getLocalPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, deletePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { obtenerListasYouTube, agregarItemAPlaylistYouTube, obtenerItemsPlaylistYouTube, CACHE_YT_ITEMS_PREFIX } from '../lib/youtubeAuth';
 import { useCast, CAST_ANDROID } from '../lib/cast';
 import { TvPressable } from '../lib/useTvFocus';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -555,6 +556,88 @@ export default function Buscar() {
   const [renombrando, setRenombrando] = useState<Playlist | null>(null);
   const [renombreTexto, setRenombreTexto] = useState('');
 
+  // Radio inteligente: Likes y Dislikes para afinar la estación en vivo
+  const [radioLikes, setRadioLikes] = useState<Set<string>>(new Set());
+  const [radioDislikes, setRadioDislikes] = useState<Set<string>>(new Set());
+  const [radioLikedArtists, setRadioLikedArtists] = useState<Set<string>>(new Set());
+  const [radioDislikedArtists, setRadioDislikedArtists] = useState<Set<string>>(new Set());
+  const radioLikesRef = useRef<Set<string>>(new Set());
+  const radioDislikesRef = useRef<Set<string>>(new Set());
+  const radioDislikedArtistsRef = useRef<Set<string>>(new Set());
+  const [toastFeedback, setToastFeedback] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  function mostrarToast(msg: string) {
+    setToastFeedback(msg);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastFeedback(null);
+    }, 2800);
+  }
+
+  // ── Radio inteligente: dar like / dislike ──
+  function darLike() {
+    if (!actual) return;
+    const id = actual.id;
+    const artist = actual.channel || '';
+    // Quitar de dislikes si estaba
+    const dl = new Set(radioDislikesRef.current);
+    dl.delete(id);
+    setRadioDislikes(dl);
+    radioDislikesRef.current = dl;
+    // Quitar artista de disliked si no quedan dislikes de ese artista
+    if (artist) {
+      const da = new Set(radioDislikedArtistsRef.current);
+      da.delete(artist);
+      setRadioDislikedArtists(da);
+      radioDislikedArtistsRef.current = da;
+    }
+    // Agregar a likes
+    const lk = new Set(radioLikesRef.current);
+    lk.add(id);
+    setRadioLikes(lk);
+    radioLikesRef.current = lk;
+    // Agregar artista a liked
+    if (artist) {
+      const la = new Set(radioLikedArtists);
+      la.add(artist);
+      setRadioLikedArtists(la);
+    }
+    // Persistir
+    AsyncStorage.setItem('qp_radio_likes', JSON.stringify([...lk])).catch(() => {});
+    AsyncStorage.setItem('qp_radio_dislikes', JSON.stringify([...dl])).catch(() => {});
+    mostrarToast('👍 Te gusta — más temas así');
+  }
+
+  function darDislike() {
+    if (!actual) return;
+    const id = actual.id;
+    const artist = actual.channel || '';
+    // Quitar de likes si estaba
+    const lk = new Set(radioLikesRef.current);
+    lk.delete(id);
+    setRadioLikes(lk);
+    radioLikesRef.current = lk;
+    // Agregar a dislikes
+    const dl = new Set(radioDislikesRef.current);
+    dl.add(id);
+    setRadioDislikes(dl);
+    radioDislikesRef.current = dl;
+    // Agregar artista a disliked
+    if (artist) {
+      const da = new Set(radioDislikedArtistsRef.current);
+      da.add(artist);
+      setRadioDislikedArtists(da);
+      radioDislikedArtistsRef.current = da;
+    }
+    // Persistir
+    AsyncStorage.setItem('qp_radio_likes', JSON.stringify([...lk])).catch(() => {});
+    AsyncStorage.setItem('qp_radio_dislikes', JSON.stringify([...dl])).catch(() => {});
+    mostrarToast('👎 No te gusta — menos temas así');
+    // Auto-skip al siguiente
+    setTimeout(() => siguiente(), 600);
+  }
+
   // Descarga
   const [descargando, setDescargando] = useState(false);
 
@@ -1001,7 +1084,7 @@ export default function Buscar() {
   }
 
   useEffect(() => {
-    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover', 'qp_historial']).then((rows) => {
+    AsyncStorage.multiGet(['qp_soloAudio', 'qp_autoSig', 'qp_shuffle', 'qp_repeat', 'qp_eq', 'qp_crossover', 'qp_historial', 'qp_radio_likes', 'qp_radio_dislikes']).then((rows) => {
       const m: any = {}; rows.forEach(([k, v]) => (m[k] = v));
       if (m.qp_soloAudio != null) {
         const isA = m.qp_soloAudio === '1';
@@ -1020,6 +1103,26 @@ export default function Buscar() {
         // Crossover activado por defecto
         setCrossover(true);
         crossoverRef.current = true;
+      }
+      if (m.qp_radio_likes) {
+        try {
+          const arr = JSON.parse(m.qp_radio_likes);
+          if (Array.isArray(arr)) {
+            const s = new Set<string>(arr);
+            setRadioLikes(s);
+            radioLikesRef.current = s;
+          }
+        } catch (_) {}
+      }
+      if (m.qp_radio_dislikes) {
+        try {
+          const arr = JSON.parse(m.qp_radio_dislikes);
+          if (Array.isArray(arr)) {
+            const s = new Set<string>(arr);
+            setRadioDislikes(s);
+            radioDislikesRef.current = s;
+          }
+        } catch (_) {}
       }
       let hist: YtResult[] = [];
       if (m.qp_historial) {
@@ -2152,10 +2255,19 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
         if (nuevos.length > 0) {
           const idsExistentes = new Set(colaRef.current.map((t) => t.id));
-          const filtrados = nuevos.filter((t) => !idsExistentes.has(t.id));
+          // Filtrar: excluir dislikes (ID y artista) y ya existentes
+          const filtrados = nuevos.filter((t) =>
+            !idsExistentes.has(t.id) &&
+            !radioDislikesRef.current.has(t.id) &&
+            !(t.channel && radioDislikedArtistsRef.current.has(t.channel))
+          );
           if (filtrados.length > 0) {
+            // Priorizar artistas con likes: ponerlos primero
+            const conLike = filtrados.filter((t) => t.channel && radioLikedArtists.has(t.channel));
+            const sinLike = filtrados.filter((t) => !t.channel || !radioLikedArtists.has(t.channel));
+            const ordenados = [...conLike, ...sinLike];
             setCola((prev) => {
-              const actualizada = [...prev, ...filtrados];
+              const actualizada = [...prev, ...ordenados];
               colaRef.current = actualizada;
               return actualizada;
             });
@@ -2545,10 +2657,26 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   async function abrirModalPlaylists() {
     setPlaylistModalOpen(true);
     setCargandoPlaylists(true);
+
+    // 1. Mostrar de inmediato la caché local combinada (0ms de espera sin spinner bloqueante)
+    try {
+      const locales = await getLocalPlaylists();
+      let cachedYT: Playlist[] = [];
+      try {
+        const rawYT = await AsyncStorage.getItem('qp_cache_yt_playlists');
+        if (rawYT) cachedYT = JSON.parse(rawYT);
+      } catch (_) {}
+      const inmediatas = [...locales, ...cachedYT.filter((y) => !locales.some((l) => l.id === y.id))];
+      if (inmediatas.length > 0) {
+        setPlaylists(inmediatas);
+        setCargandoPlaylists(false);
+      }
+    } catch (_) {}
+
+    // 2. En segundo plano refrescar listas de Supabase y de YouTube con auto-renovación si el token caducó
     try {
       let data = await getPlaylists();
 
-      // Si no hay listas pero hay sesión potencialmente expirada, intentar refrescar
       if (data.length === 0) {
         try {
           await supabase.auth.refreshSession();
@@ -2558,30 +2686,16 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
       let todas: Playlist[] = [...data];
 
-      // Cargar también las listas de la cuenta de YouTube vinculada (si existe token)
-      const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
-      if (ytToken) {
-        try {
-          const res = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50', {
-            headers: { Authorization: 'Bearer ' + ytToken },
+      try {
+        const ytListas = await obtenerListasYouTube();
+        if (Array.isArray(ytListas) && ytListas.length > 0) {
+          const ids = new Set(todas.map((p) => p.id));
+          ytListas.forEach((yl) => {
+            if (!ids.has(yl.id)) todas.push(yl);
           });
-          const json = await res.json();
-          if (json.items && Array.isArray(json.items)) {
-            const ytListas: Playlist[] = json.items.map((it: any) => ({
-              id: 'yt_' + it.id,
-              nombre: it.snippet?.title || 'Lista de YouTube',
-              user_id: 'youtube',
-              created_at: it.snippet?.publishedAt || new Date().toISOString(),
-              items_count: it.contentDetails?.itemCount,
-            }));
-            const ids = new Set(todas.map((p) => p.id));
-            ytListas.forEach((yl) => {
-              if (!ids.has(yl.id)) todas.push(yl);
-            });
-          }
-        } catch (e) {
-          console.warn('[ModalPlaylists] Error cargando listas de YouTube:', e);
         }
+      } catch (e) {
+        console.warn('[ModalPlaylists] Error cargando listas de YouTube:', e);
       }
 
       setPlaylists(todas);
@@ -2590,8 +2704,9 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
         const raw = await AsyncStorage.getItem('qp_local_playlists');
         if (raw) setPlaylists(JSON.parse(raw));
       } catch (_) {}
+    } finally {
+      setCargandoPlaylists(false);
     }
-    setCargandoPlaylists(false);
   }
 
   async function agregarALista(playlist: Playlist) {
@@ -2599,37 +2714,13 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     setAddingToPlaylist(true);
     try {
       if (playlist.id.startsWith('yt_')) {
-        const rawYtId = playlist.id.replace(/^yt_/, '');
-        const ytToken = await AsyncStorage.getItem('qp_yt_access_token');
-        let agregadoEnYt = false;
-        if (ytToken) {
-          try {
-            const res = await fetch('https://www.googleapis.com/youtube/v3/playlistItems?part=snippet', {
-              method: 'POST',
-              headers: {
-                Authorization: 'Bearer ' + ytToken,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                snippet: {
-                  playlistId: rawYtId,
-                  resourceId: {
-                    kind: 'youtube#video',
-                    videoId: actual.id,
-                  },
-                },
-              }),
-            });
-            const data = await res.json();
-            if (data?.id) agregadoEnYt = true;
-          } catch (_) {}
-        }
+        const res = await agregarItemAPlaylistYouTube(playlist.id, actual);
         await addToPlaylist(playlist.id, actual);
         setPlaylistModalOpen(false);
         setNuevaListaNombre('');
         Alert.alert(
           '✅ Agregada',
-          `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${agregadoEnYt ? ' en YouTube' : ''}`
+          `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${res.enYt ? ' en YouTube 🎵' : ''}`
         );
       } else {
         await addToPlaylist(playlist.id, actual);
@@ -2994,6 +3085,36 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Text style={s.actionBtnText}>YouTube</Text>
               </Pressable>
             </View>
+
+            {/* ── Like / Dislike (solo en modo radio) ── */}
+            {autoExtenderRef.current && actual ? (
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 8, marginBottom: 2 }}>
+                <Pressable
+                  focusable={true}
+                  onPress={darDislike}
+                  style={[
+                    s.actionBtn,
+                    { flex: 0, paddingHorizontal: 20, paddingVertical: 8 },
+                    radioDislikesRef.current.has(actual.id) && { backgroundColor: 'rgba(255,80,80,0.18)', borderColor: '#ff5050' },
+                  ]}
+                >
+                  <Text style={{ fontSize: 20 }}>👎</Text>
+                  <Text style={[s.actionBtnText, radioDislikesRef.current.has(actual.id) && { color: '#ff5050' }]}>No me gusta</Text>
+                </Pressable>
+                <Pressable
+                  focusable={true}
+                  onPress={darLike}
+                  style={[
+                    s.actionBtn,
+                    { flex: 0, paddingHorizontal: 20, paddingVertical: 8 },
+                    radioLikesRef.current.has(actual.id) && { backgroundColor: 'rgba(80,220,120,0.18)', borderColor: '#50dc78' },
+                  ]}
+                >
+                  <Text style={{ fontSize: 20 }}>👍</Text>
+                  <Text style={[s.actionBtnText, radioLikesRef.current.has(actual.id) && { color: '#50dc78' }]}>Me gusta</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
 
           <Text style={s.queueTitle}>A continuación{proximos.length ? ` (${proximos.length})` : ''}</Text>
@@ -4192,6 +4313,22 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           </View>
         </View>
       </Modal>
+
+      {/* ── Toast de feedback de radio ── */}
+      {toastFeedback ? (
+        <View pointerEvents="none" style={{
+          position: 'absolute', bottom: 100, left: 0, right: 0,
+          alignItems: 'center', zIndex: 9999,
+        }}>
+          <View style={{
+            backgroundColor: 'rgba(20,20,20,0.92)', borderRadius: 24,
+            paddingVertical: 10, paddingHorizontal: 22,
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+          }}>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{toastFeedback}</Text>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
