@@ -31,6 +31,22 @@ description: Documentación y referencia técnica completa de la app YouThink (q
    - **Modo Audio por Defecto:** solo activa modo video si el usuario está en la pestaña `videos` o lo cambió manualmente, impidiendo que canciones con etiqueta `video` fuercen el modo video.
    - **Alternancia sin bloqueos (`setAudio`):** en Web conmuta la vista sin reiniciar el iframe; en Android transfiere suavemente entre motores preservando el segundo exacto (`currentPos`) y actualizando `modoRef`.
    - **Minimización sin corte en celular (`minimizar`):** al minimizar desde modo video en Android, transfiere la reproducción a `QpAudio` en segundo plano para que la música continúe sin interrupciones.
+21. **Radio Inteligente con Like/Dislike y Algoritmo de Semillas Distribuidas:**
+   - **Botones 👍/👎** visibles solo en modo radio (`autoExtenderRef.current === true`), debajo de los controles en `Buscar.tsx`.
+   - **`darLike()`**: agrega ID/artista a Sets `radioLikes`/`radioLikedArtists`, persiste en `AsyncStorage` (`qp_radio_likes`), elimina de dislikes si estaba, toast "👍 Te gusta — más temas así".
+   - **`darDislike()`**: agrega a `radioDislikedArtists`, persiste en `qp_radio_dislikes`, auto-skip al siguiente tema tras 600ms, toast "👎 No te gusta — menos temas así".
+   - **Toast overlay**: `toastFeedback` state con `mostrarToast()` (auto-oculta 2.8s), renderizado como `position: absolute, bottom: 100`.
+   - **Algoritmo `iniciarRadioDesdePlaylist()` con semillas distribuidas:**
+     - 3 semillas: inicio, mitad y fin de la playlist → refleja el estilo general, no solo el primer tema.
+     - `api.radio()` en paralelo (`Promise.allSettled`) sobre cada semilla.
+     - Artistas ponderados por **frecuencia** en la playlist completa (`Map<string, count>`), top 5, búsquedas en batches de 3 en paralelo.
+     - Shuffle interno del pool "sin like" para evitar repetición de artistas al inicio.
+     - Liked artists van al frente de la cola; disliked IDs y artistas se filtran antes de encolar.
+   - **Auto-extensión en `siguiente()` mejorada:** cuando la cola se agota, además de la semilla actual usa una semilla aleatoria de la cola existente para mantener diversidad de estilo.
+22. **Listas de reproducción instantáneas (cache-first):**
+   - `abrirModalPlaylists()` muestra listas locales al instante (sin spinner) vía `getLocalPlaylists()`, y refresca Supabase + YouTube en segundo plano.
+   - `agregarItemAPlaylistYouTube()` actualiza el caché local inmediatamente y luego sincroniza con YouTube Data API v3 con auto-renovación de token.
+   - `obtenerItemsPlaylistYouTube()` hace **merge** de items remotos con caché local (en vez de reemplazar), para no perder canciones recién añadidas antes de que YouTube las propague.
 
 ---
 
