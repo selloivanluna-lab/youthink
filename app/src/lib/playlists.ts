@@ -223,11 +223,12 @@ export async function getPlaylistItemsDetailed(
 
   const refrescar = async (): Promise<{ items: PlaylistItem[]; remoteOk: boolean }> => {
     const remote = await fetchRemoteItems(playlistId);
-    const merged = mergeItems(remote.items, base);
-    // Solo escribimos la caché si no perdemos canciones.
-    if (merged.length >= local.length) {
-      await saveLocalItems(playlistId, merged).catch(() => {});
-    }
+    // Siempre leer local fresco en este punto (puede haber cambiado desde que arrancó la función)
+    const localFresco = await getLocalItems(playlistId);
+    // Mergear: local primero para que canciones recién guardadas no se pierdan
+    const merged = mergeItems(remote.items, localFresco);
+    // Siempre guardar el merge (nunca pierde datos)
+    await saveLocalItems(playlistId, merged).catch(() => {});
     if (merged.length > 0) memItems.set(playlistId, merged);
     return { items: merged, remoteOk: remote.ok };
   };
@@ -257,10 +258,33 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
       duration: item.duration,
       added_at: new Date().toISOString(),
     };
-    items.push(newItem);
+    items.unshift(newItem);
     await saveLocalItems(playlistId, items);
     // Reflejar de inmediato en la caché en memoria (así al abrir la lista ya está)
     memItems.set(playlistId, mergeItems(items, memItems.get(playlistId) || []));
+
+    // Si es una lista con prefijo de YouTube, reflejar también en la caché de YouTube
+    if (playlistId.startsWith('yt_')) {
+      const plId = playlistId.replace(/^yt_/, '');
+      const cacheKey = 'qp_cache_yt_items_' + plId;
+      try {
+        let ytCache: any[] = [];
+        const rawYt = await AsyncStorage.getItem(cacheKey);
+        if (rawYt) ytCache = JSON.parse(rawYt);
+        if (!ytCache.some((c) => (c.id === cleanId || c.yt_id === cleanId))) {
+          ytCache.unshift({
+            id: cleanId,
+            yt_id: cleanId,
+            title: item.title,
+            channel: item.channel || '',
+            thumb: item.thumb || `https://i.ytimg.com/vi/${cleanId}/mqdefault.jpg`,
+            duration: item.duration || 0,
+            added_at: newItem.added_at,
+          });
+          await AsyncStorage.setItem(cacheKey, JSON.stringify(ytCache));
+        }
+      } catch (_) {}
+    }
 
     // Intentar sincronizar con Supabase (si falla, la canción igual queda local)
     try {

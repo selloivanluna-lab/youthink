@@ -1071,6 +1071,15 @@ export default function Buscar() {
       setHistorial(nuevo);
       historialRef.current = nuevo;
       await AsyncStorage.setItem('qp_historial', JSON.stringify(nuevo));
+
+      if (autoExtenderRef.current) {
+        const rawRadio = await AsyncStorage.getItem('qp_radio_historial_temas');
+        let histRadio: YtResult[] = [];
+        try { if (rawRadio) histRadio = JSON.parse(rawRadio); } catch (_) {}
+        const sinDup = histRadio.filter((it) => it.id !== item.id);
+        const actual = [item, ...sinDup].slice(0, 60);
+        await AsyncStorage.setItem('qp_radio_historial_temas', JSON.stringify(actual));
+      }
     } catch (_) {}
   }
 
@@ -1225,6 +1234,13 @@ export default function Buscar() {
     const trackItem: YtResult = { ...track, kind: 'song' };
     // Reproducir inmediatamente el tema seleccionado en modo audio
     reproducir([trackItem], 0, true, true);
+    // Navegar a la tab Radio para mostrar la estación ahí
+    const estacionNombre = (track.channel && !track.channel.toLowerCase().includes('topic'))
+      ? `📻 ${track.channel}`
+      : `📻 ${track.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()}`;
+    AsyncStorage.setItem('qp_radio_estacion_nombre', estacionNombre).catch(() => {});
+    AsyncStorage.setItem('qp_radio_cola', JSON.stringify([trackItem])).catch(() => {});
+    navigation.navigate('Radio' as never);
     try {
       let tracksRadio: YtResult[] = [];
       try {
@@ -1252,8 +1268,11 @@ export default function Buscar() {
       if (tracksRadio.length > 0) {
         // Encolar los temas de la estación después de la canción que ya está sonando asegurando kind song
         const radioSongs = tracksRadio.map((r) => ({ ...r, kind: 'song' as const }));
-        setCola([trackItem, ...radioSongs]);
-        colaRef.current = [trackItem, ...radioSongs];
+        const colaFinal = [trackItem, ...radioSongs];
+        setCola(colaFinal);
+        colaRef.current = colaFinal;
+        // Persistir la cola completa para que Radio.tsx la lea
+        AsyncStorage.setItem('qp_radio_cola', JSON.stringify(colaFinal)).catch(() => {});
       }
     } catch (e) {
       console.warn('[Iniciar Radio]', e);
@@ -1287,7 +1306,15 @@ export default function Buscar() {
     try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src=''; v.load();}"); } catch (_) {}
     if (Platform.OS !== 'web') setWebEmbedUri(null);
 
+    // Arrancar la reproducción con el tema semilla forzando audio
     reproducir([seedItem], 0, true, true);
+
+    const estacionNombre = seed.channel
+      ? `📻 Mix Playlist (${seed.channel})`
+      : `📻 Mix Playlist (${seed.title.slice(0, 25)})`;
+    AsyncStorage.setItem('qp_radio_estacion_nombre', estacionNombre).catch(() => {});
+    AsyncStorage.setItem('qp_radio_cola', JSON.stringify([seedItem])).catch(() => {});
+    navigation.navigate('Radio' as never);
 
     try {
       const idsVistos = new Set<string>([seed.id]);
@@ -1381,8 +1408,11 @@ export default function Buscar() {
       const nuevos = [...conLike, ...sinLike].map((t) => ({ ...t, kind: 'song' as const }));
 
       if (nuevos.length > 0 && colaRef.current.length <= 1) {
-        setCola([seedItem, ...nuevos]);
-        colaRef.current = [seedItem, ...nuevos];
+        const colaFinal = [seedItem, ...nuevos];
+        setCola(colaFinal);
+        colaRef.current = colaFinal;
+        // Persistir para que Radio.tsx la lea al ganar focus
+        AsyncStorage.setItem('qp_radio_cola', JSON.stringify(colaFinal)).catch(() => {});
       }
     } catch (e) {
       console.warn('[Radio Playlist]', e);
@@ -2313,6 +2343,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
             setCola((prev) => {
               const actualizada = [...prev, ...ordenados];
               colaRef.current = actualizada;
+              AsyncStorage.setItem('qp_radio_cola', JSON.stringify(actualizada)).catch(() => {});
               return actualizada;
             });
           }
@@ -2758,15 +2789,18 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     setAddingToPlaylist(true);
     try {
       if (playlist.id.startsWith('yt_')) {
+        // Para listas de YouTube: agregar SOLO vía agregarItemAPlaylistYouTube
+        // que ya actualiza el caché correcto (qp_cache_yt_items_XXXXX).
+        // NO llamar a addToPlaylist que usa una clave distinta y confunde.
         const res = await agregarItemAPlaylistYouTube(playlist.id, actual);
-        await addToPlaylist(playlist.id, actual);
         setPlaylistModalOpen(false);
         setNuevaListaNombre('');
         Alert.alert(
           '✅ Agregada',
-          `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${res.enYt ? ' en YouTube 🎵' : ''}`
+          `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${res.enYt ? ' en YouTube 🎵' : ' (localmente — se sincronizará cuando haya conexión)'}`
         );
       } else {
+        // Para listas locales / Supabase
         await addToPlaylist(playlist.id, actual);
         setPlaylistModalOpen(false);
         setNuevaListaNombre('');
@@ -2837,8 +2871,23 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     setManagingPlaylist(playlist);
     setLoadingManagingItems(true);
     try {
-      const items = await getPlaylistItems(playlist.id, { force: true });
-      setManagingItems(items);
+      if (playlist.id.startsWith('yt_')) {
+        const raw = await obtenerItemsPlaylistYouTube(playlist.id);
+        const formateados: PlaylistItem[] = (raw || []).map((it: any) => ({
+          id: it.id || it.yt_id || String(Math.random()),
+          playlist_id: playlist.id,
+          yt_id: (it.id || it.yt_id || '').trim(),
+          title: it.title || '(sin título)',
+          channel: it.channel || '',
+          thumb: it.thumb || '',
+          duration: it.duration || 0,
+          added_at: it.added_at || new Date().toISOString(),
+        }));
+        setManagingItems(formateados);
+      } else {
+        const items = await getPlaylistItems(playlist.id, { force: true });
+        setManagingItems(items);
+      }
     } catch {
       setManagingItems([]);
     }
@@ -2849,8 +2898,23 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     if (!managingPlaylist) return;
     setDeletingItem(ytId);
     try {
-      await removeFromPlaylist(managingPlaylist.id, ytId);
-      setManagingItems((prev) => prev.filter((it) => it.yt_id !== ytId));
+      if (managingPlaylist.id.startsWith('yt_')) {
+        const cleanId = (ytId || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+        const plId = managingPlaylist.id.replace(/^yt_/, '');
+        const cacheKey = CACHE_YT_ITEMS_PREFIX + plId;
+        try {
+          const raw = await AsyncStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            const filtrados = parsed.filter((it: any) => (it.id !== cleanId && it.yt_id !== cleanId && it.id !== ytId && it.yt_id !== ytId));
+            await AsyncStorage.setItem(cacheKey, JSON.stringify(filtrados));
+          }
+        } catch (_) {}
+        setManagingItems((prev) => prev.filter((it) => it.yt_id !== ytId && it.id !== ytId));
+      } else {
+        await removeFromPlaylist(managingPlaylist.id, ytId);
+        setManagingItems((prev) => prev.filter((it) => it.yt_id !== ytId));
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'No se pudo borrar');
     }
@@ -3278,17 +3342,6 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
         <Pressable focusable={true} style={[s.tool, eq !== 'flat' && s.toolOn]} onPress={() => setEqOpen(true)}>
           <Text style={[s.toolText, eq !== 'flat' && s.toolTextOn]}>🎚️ EQ</Text>
-        </Pressable>
-        <Pressable focusable={true}
-          style={[s.tool, crossover && s.toolOn]}
-          onPress={() => {
-            const nuevo = !crossover;
-            setCrossover(nuevo);
-            crossoverRef.current = nuevo;
-            AsyncStorage.setItem('qp_crossover', nuevo ? '1' : '0').catch(() => {});
-          }}
-        >
-          <Text style={[s.toolText, crossover && s.toolTextOn]}>⚡ Crossover</Text>
         </Pressable>
         {CAST_ANDROID ? (
           tv.conectado ? (

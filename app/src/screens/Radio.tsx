@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -10,7 +10,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, YtResult } from '../lib/api';
 import { theme } from '../theme';
 
@@ -33,12 +34,48 @@ export default function Radio() {
   const [cargando, setCargando] = useState(false);
   const [tracks, setTracks] = useState<YtResult[]>([]);
   const [estacionActual, setEstacionActual] = useState<string>('');
+  const [historialRadio, setHistorialRadio] = useState<YtResult[]>([]);
+  const [vistaActiva, setVistaActiva] = useState<'estacion' | 'descubiertos'>('estacion');
   const [error, setError] = useState<string | null>(null);
+
+  // Sincronizar cola y temas descubiertos cada vez que el usuario abre la pestaña Radio
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.multiGet(['qp_radio_estacion_nombre', 'qp_radio_cola', 'qp_radio_historial_temas']).then(
+        (rows) => {
+          const map: Record<string, string | null> = {};
+          rows.forEach(([k, v]) => (map[k] = v));
+
+          if (map.qp_radio_estacion_nombre) {
+            setEstacionActual(map.qp_radio_estacion_nombre);
+          }
+          if (map.qp_radio_cola) {
+            try {
+              const parsed = JSON.parse(map.qp_radio_cola);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setTracks(parsed);
+              }
+            } catch (_) {}
+          }
+          if (map.qp_radio_historial_temas) {
+            try {
+              const hist = JSON.parse(map.qp_radio_historial_temas);
+              if (Array.isArray(hist)) {
+                setHistorialRadio(hist);
+              }
+            } catch (_) {}
+          }
+        }
+      ).catch(() => {});
+    }, [])
+  );
 
   const iniciarEstacion = async (seed: string, nombreVisible: string) => {
     setCargando(true);
     setError(null);
-    setEstacionActual(nombreVisible);
+    const nombreFinal = `📻 ${nombreVisible}`;
+    setEstacionActual(nombreFinal);
+    setVistaActiva('estacion');
     try {
       let tracksRadio: YtResult[] = [];
       try {
@@ -58,7 +95,13 @@ export default function Radio() {
       }
 
       if (tracksRadio.length > 0) {
-        setTracks(tracksRadio);
+        const canciones = tracksRadio.map((t) => ({ ...t, kind: 'song' as const }));
+        setTracks(canciones);
+        AsyncStorage.setItem('qp_radio_estacion_nombre', nombreFinal).catch(() => {});
+        AsyncStorage.setItem('qp_radio_cola', JSON.stringify(canciones)).catch(() => {});
+
+        // Reproducir de inmediato en Play con auto-radio activado
+        reproducirRadio(0, canciones);
       } else {
         setError('No se pudieron obtener temas para esta estación.');
       }
@@ -69,16 +112,24 @@ export default function Radio() {
     }
   };
 
-  const reproducirRadioCompleta = (startIndex = 0) => {
-    if (!tracks.length) return;
-    const track = tracks[startIndex];
+  const reproducirRadio = (startIndex = 0, lista: YtResult[] = tracks) => {
+    if (!lista.length) return;
+    const track = lista[startIndex];
     navigation.navigate('Play' as never, {
       autoPlayId: track.id,
       autoPlayTitle: track.title,
-      autoPlayQueue: tracks,
+      autoPlayQueue: lista,
       autoPlayIndex: startIndex,
+      autoRadio: true,
     } as never);
   };
+
+  const limpiarDescubiertos = () => {
+    setHistorialRadio([]);
+    AsyncStorage.removeItem('qp_radio_historial_temas').catch(() => {});
+  };
+
+  const listaMostrar = vistaActiva === 'estacion' ? tracks : historialRadio;
 
   return (
     <View style={s.container}>
@@ -107,11 +158,11 @@ export default function Radio() {
       </View>
 
       {/* Categorías Rápidas */}
-      <View style={{ marginBottom: 16 }}>
+      <View style={{ marginBottom: 12 }}>
         <Text style={[s.sectionHeader, { paddingHorizontal: 16, marginBottom: 8 }]}>🌟 Géneros y Estaciones</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
           {GENEROS.map((g) => {
-            const activo = estacionActual === g.nombre;
+            const activo = estacionActual.includes(g.nombre);
             return (
               <Pressable
                 key={g.id}
@@ -125,16 +176,41 @@ export default function Radio() {
         </ScrollView>
       </View>
 
-      {/* Lista de temas de la estación */}
+      {/* Selector de Vista: Estación Activa vs Temas Descubiertos */}
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 10 }}>
+        <Pressable
+          style={[s.tabPill, vistaActiva === 'estacion' && s.tabPillActivo]}
+          onPress={() => setVistaActiva('estacion')}
+        >
+          <Text style={[s.tabPillText, vistaActiva === 'estacion' && s.tabPillTextActivo]}>
+            📻 Estación ({tracks.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[s.tabPill, vistaActiva === 'descubiertos' && s.tabPillActivo]}
+          onPress={() => setVistaActiva('descubiertos')}
+        >
+          <Text style={[s.tabPillText, vistaActiva === 'descubiertos' && s.tabPillTextActivo]}>
+            💾 Descubiertos ({historialRadio.length})
+          </Text>
+        </Pressable>
+        {vistaActiva === 'descubiertos' && historialRadio.length > 0 && (
+          <Pressable style={s.limpiarBtn} onPress={limpiarDescubiertos}>
+            <Text style={{ fontSize: 11, color: theme.colors.textDim, fontWeight: '700' }}>Limpiar</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Lista de temas */}
       <View style={{ flex: 1, paddingHorizontal: 16 }}>
-        {estacionActual ? (
+        {vistaActiva === 'estacion' && estacionActual ? (
           <View style={s.estacionHeaderRow}>
             <View style={{ flex: 1 }}>
-              <Text style={s.estacionTitle}>Estación: {estacionActual}</Text>
-              <Text style={s.estacionCount}>{tracks.length} temas sintonizados</Text>
+              <Text style={s.estacionTitle}>{estacionActual}</Text>
+              <Text style={s.estacionCount}>{tracks.length} temas en cola infinita</Text>
             </View>
             {tracks.length > 0 && (
-              <Pressable style={s.playAllBtn} onPress={() => reproducirRadioCompleta(0)}>
+              <Pressable style={s.playAllBtn} onPress={() => reproducirRadio(0, tracks)}>
                 <Text style={s.playAllBtnText}>▶ Sintonizar Todo</Text>
               </Pressable>
             )}
@@ -150,11 +226,11 @@ export default function Radio() {
           </View>
         ) : (
           <FlatList
-            data={tracks}
-            keyExtractor={(it) => 'r-' + it.id}
+            data={listaMostrar}
+            keyExtractor={(it, index) => 'r-' + it.id + '-' + index}
             contentContainerStyle={{ paddingBottom: 40 }}
             renderItem={({ item, index }) => (
-              <Pressable style={s.trackRow} onPress={() => reproducirRadioCompleta(index)}>
+              <Pressable style={s.trackRow} onPress={() => reproducirRadio(index, listaMostrar)}>
                 {item.thumb ? (
                   <Image source={{ uri: item.thumb }} style={s.trackThumb} />
                 ) : (
@@ -169,10 +245,12 @@ export default function Radio() {
             )}
             ListEmptyComponent={
               !cargando ? (
-                <View style={{ alignItems: 'center', marginTop: 40 }}>
+                <View style={{ alignItems: 'center', marginTop: 32 }}>
                   <Text style={{ fontSize: 40 }}>📻</Text>
                   <Text style={[s.subText, { textAlign: 'center', marginTop: 12 }]}>
-                    Elegí un género arriba o buscá cualquier artista para arrancar la radio.
+                    {vistaActiva === 'estacion'
+                      ? 'Iniciá una estación desde la búsqueda, tocando un género o con el botón "📻 Iniciar Radio" de cualquier tema en Play.'
+                      : 'Acá se van guardando automáticamente los temas que vas descubriendo en la radio mientras escuchás.'}
                   </Text>
                 </View>
               ) : null
@@ -253,6 +331,33 @@ const s = StyleSheet.create({
   chipTextActivo: {
     color: '#111',
     fontWeight: '800',
+  },
+  tabPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  tabPillActivo: {
+    backgroundColor: theme.colors.gold + '22',
+    borderColor: theme.colors.gold,
+  },
+  tabPillText: {
+    fontSize: 12,
+    color: theme.colors.textDim,
+    fontWeight: '600',
+  },
+  tabPillTextActivo: {
+    color: theme.colors.gold,
+    fontWeight: '800',
+  },
+  limpiarBtn: {
+    marginLeft: 'auto',
+    alignSelf: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
   estacionHeaderRow: {
     flexDirection: 'row',

@@ -89,6 +89,7 @@ export async function agregarItemAPlaylistYouTube(
 
   // 1. Guardar de inmediato en la caché local de esa lista de YouTube
   const cacheKey = CACHE_YT_ITEMS_PREFIX + plId;
+  const localKey = 'qp_local_pl_items_' + (playlistIdRaw.startsWith('yt_') ? playlistIdRaw : 'yt_' + playlistIdRaw);
   try {
     let itemsCache: any[] = [];
     const raw = await AsyncStorage.getItem(cacheKey);
@@ -105,9 +106,31 @@ export async function agregarItemAPlaylistYouTube(
         duration: item.duration || 0,
         added_at: new Date().toISOString(),
       };
-      itemsCache.push(nuevo);
+      // Colocar al inicio para que el usuario la vea de inmediato arriba
+      itemsCache.unshift(nuevo);
       await AsyncStorage.setItem(cacheKey, JSON.stringify(itemsCache));
     }
+
+    // Doble garantía: reflejar también bajo la clave local para pantallas que lean getLocalItems
+    try {
+      let localItems: any[] = [];
+      const rawLocal = await AsyncStorage.getItem(localKey);
+      if (rawLocal) localItems = JSON.parse(rawLocal);
+      const existeLocal = localItems.some((c) => (c.yt_id === cleanId || c.id === cleanId));
+      if (!existeLocal) {
+        localItems.unshift({
+          id: 'item_' + Date.now(),
+          playlist_id: playlistIdRaw,
+          yt_id: cleanId,
+          title: item.title,
+          channel: item.channel || '',
+          thumb: item.thumb || `https://i.ytimg.com/vi/${cleanId}/mqdefault.jpg`,
+          duration: item.duration || 0,
+          added_at: new Date().toISOString(),
+        });
+        await AsyncStorage.setItem(localKey, JSON.stringify(localItems));
+      }
+    } catch (_) {}
   } catch (e) {
     console.warn('[youtubeAuth] Error actualizando caché local tras agregar item:', e);
   }
