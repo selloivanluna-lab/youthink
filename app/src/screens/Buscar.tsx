@@ -1262,7 +1262,9 @@ export default function Buscar() {
     }
   }
 
-  // Iniciar estación de radio a partir de una playlist completa (mezclando recomendaciones de sus artistas)
+  // Iniciar estación de radio a partir de una playlist completa
+  // Estrategia: muestrear toda la playlist para capturar el ADN musical general,
+  // lanzar api.radio() sobre semillas distribuidas y pesar artistas por frecuencia.
   async function iniciarRadioDesdePlaylist(seed: YtResult, queue?: YtResult[]) {
     if (!seed) return;
     setIniciandoRadio(true);
@@ -1277,78 +1279,110 @@ export default function Buscar() {
     modoRef.current = 'audio';
     AsyncStorage.setItem('qp_soloAudio', '1').catch(() => {});
 
-    // Forzar que la semilla sea tipo canción para no activar modo video
-    const seedItem: YtResult = {
-      ...seed,
-      kind: 'song',
-    };
+    const seedItem: YtResult = { ...seed, kind: 'song' };
 
-    // Detener incondicionalmente cualquier reproducción previa
+    // Detener reproducción previa
     try { native.pause(); native.stop(); } catch (_) {}
     try { player.pause(); } catch (_) {}
     try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src=''; v.load();}"); } catch (_) {}
-    if (Platform.OS !== 'web') {
-      setWebEmbedUri(null);
-    }
+    if (Platform.OS !== 'web') setWebEmbedUri(null);
 
-    // Arrancar la reproducción con el tema semilla forzando audio
     reproducir([seedItem], 0, true, true);
 
     try {
+      const idsVistos = new Set<string>([seed.id]);
       let tracksRadio: YtResult[] = [];
-      // 1) Consultar api.radio con la canción semilla
-      try {
-        const res = await api.radio(seed.id, 25);
-        if (res.ok && res.tracks && res.tracks.length > 0) {
-          tracksRadio = res.tracks;
-        }
-      } catch (_) {}
 
-      // 2) Extraer artistas de la playlist para enriquecer la radio con variedad
-      if (Array.isArray(queue) && queue.length > 1) {
-        const otrosArtistas = Array.from(new Set(
-          queue
-            .map((q) => q.channel)
-            .filter((ch) => ch && ch !== seed.channel && !ch.toLowerCase().includes('topic'))
-        )).slice(0, 3);
+      const playlist = Array.isArray(queue) && queue.length > 1 ? queue : [];
 
-        for (const art of otrosArtistas) {
-          try {
-            const busq = await api.search(`${art} mix`, 8);
-            if (busq.ok && busq.results && busq.results.length > 0) {
-              tracksRadio = [...tracksRadio, ...busq.results];
-            }
-          } catch (_) {}
+      // ── 1. Semillas distribuidas: inicio, medio y fin de la playlist ──────
+      //   Así la radio refleja el estilo GENERAL, no solo el primer tema.
+      const semillas: YtResult[] = [seed];
+      if (playlist.length >= 4) {
+        const mid = playlist[Math.floor(playlist.length / 2)];
+        const last = playlist[playlist.length - 1];
+        if (mid && mid.id !== seed.id) semillas.push(mid);
+        if (last && last.id !== seed.id && last.id !== mid?.id) semillas.push(last);
+      }
+
+      // api.radio() en paralelo para todas las semillas
+      const radioResults = await Promise.allSettled(
+        semillas.map((s) => api.radio(s.id, 20))
+      );
+      for (const r of radioResults) {
+        if (r.status === 'fulfilled' && r.value?.ok && r.value.tracks?.length > 0) {
+          tracksRadio = [...tracksRadio, ...r.value.tracks];
         }
       }
 
-      // 3) Fallback si api.radio no devolvió tracks
+      // ── 2. Artistas ponderados por frecuencia en la playlist ───────────────
+      //   Artistas que más aparecen → más probabilidad de ser buscados.
+      if (playlist.length > 1) {
+        const freqMap = new Map<string, number>();
+        for (const item of playlist) {
+          const ch = item.channel?.trim();
+          if (ch && !ch.toLowerCase().includes('topic') && ch !== seed.channel) {
+            freqMap.set(ch, (freqMap.get(ch) ?? 0) + 1);
+          }
+        }
+        // Ordenar por frecuencia desc, tomar top 5
+        const topArtistas = [...freqMap.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([ch]) => ch);
+
+        // Búsquedas en paralelo (hasta 3 a la vez para no sobrecargar)
+        const batches: string[][] = [];
+        for (let i = 0; i < topArtistas.length; i += 3) batches.push(topArtistas.slice(i, i + 3));
+        for (const batch of batches) {
+          const batchResults = await Promise.allSettled(
+            batch.map((art) => api.search(`${art} mix`, 10))
+          );
+          for (const r of batchResults) {
+            if (r.status === 'fulfilled' && r.value?.ok && r.value.results?.length > 0) {
+              tracksRadio = [...tracksRadio, ...r.value.results];
+            }
+          }
+        }
+      }
+
+      // ── 3. Fallback si todo lo anterior falló ─────────────────────────────
       if (tracksRadio.length === 0) {
         const q = (seed.channel && !seed.channel.toLowerCase().includes('topic'))
           ? `${seed.channel} mix`
           : `${seed.title.replace(/\[.*?\]|\(.*?\)|official|video|audio|remix|lyric/gi, '').trim()} mix`;
         try {
           const busq = await api.search(q, 25);
-          if (busq.ok && busq.results && busq.results.length > 0) {
-            tracksRadio = busq.results;
-          }
+          if (busq.ok && busq.results?.length > 0) tracksRadio = busq.results;
         } catch (_) {}
       }
 
-      // 4) Descartar duplicados y armar la cola de la radio
-      const idsVistos = new Set<string>([seed.id]);
-      const nuevos = tracksRadio.filter((t) => {
+      // ── 4. Deduplicar, filtrar dislikes, priorizar artistas con like ──────
+      const likedArtists = radioLikedArtists;
+      const dislikedIds = radioDislikesRef.current;
+      const dislikedArtists = radioDislikedArtistsRef.current;
+
+      const filtrados = tracksRadio.filter((t) => {
         if (!t?.id || idsVistos.has(t.id)) return false;
+        if (dislikedIds.has(t.id)) return false;
+        if (t.channel && dislikedArtists.has(t.channel)) return false;
         idsVistos.add(t.id);
         return true;
-      }).map((t) => ({ ...t, kind: 'song' as const }));
+      });
 
-      if (nuevos.length > 0) {
-        if (colaRef.current.length <= 1) {
-          // Solo actualizar la cola si aún estamos en la seed (no hubo navegación manual)
-          setCola([seedItem, ...nuevos]);
-          colaRef.current = [seedItem, ...nuevos];
-        }
+      // Mezclar: liked artists primero, luego el resto (shuffle interno)
+      const conLike = filtrados.filter((t) => t.channel && likedArtists.has(t.channel));
+      const sinLike = filtrados.filter((t) => !t.channel || !likedArtists.has(t.channel));
+      // Shuffle de sinLike para evitar que siempre salgan los mismos artistas al principio
+      for (let i = sinLike.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sinLike[i], sinLike[j]] = [sinLike[j], sinLike[i]];
+      }
+      const nuevos = [...conLike, ...sinLike].map((t) => ({ ...t, kind: 'song' as const }));
+
+      if (nuevos.length > 0 && colaRef.current.length <= 1) {
+        setCola([seedItem, ...nuevos]);
+        colaRef.current = [seedItem, ...nuevos];
       }
     } catch (e) {
       console.warn('[Radio Playlist]', e);
@@ -2234,12 +2268,24 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       const cur = c[i];
       (async () => {
         let nuevos: YtResult[] = [];
+
+        // Semilla principal: canción actual
         try {
           const res = await api.radio(cur.id, 20);
-          if (res.ok && res.tracks && res.tracks.length > 0) {
-            nuevos = res.tracks;
-          }
+          if (res.ok && res.tracks && res.tracks.length > 0) nuevos = res.tracks;
         } catch (_) {}
+
+        // Semilla aleatoria de la cola actual para diversidad de estilo
+        if (c.length >= 6) {
+          const randomIdx = Math.floor(Math.random() * Math.max(1, c.length - 2));
+          const randomSeed = c[randomIdx];
+          if (randomSeed?.id && randomSeed.id !== cur.id) {
+            try {
+              const res2 = await api.radio(randomSeed.id, 10);
+              if (res2.ok && res2.tracks?.length > 0) nuevos = [...nuevos, ...res2.tracks];
+            } catch (_) {}
+          }
+        }
 
         if (nuevos.length === 0) {
           try {
@@ -2247,9 +2293,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
               ? `${cur.channel} mix`
               : `${cur.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()} mix`;
             const busq = await api.search(q, 15);
-            if (busq.ok && busq.results && busq.results.length > 0) {
-              nuevos = busq.results;
-            }
+            if (busq.ok && busq.results && busq.results.length > 0) nuevos = busq.results;
           } catch (_) {}
         }
 
