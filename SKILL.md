@@ -47,6 +47,10 @@ description: Documentación y referencia técnica completa de la app YouThink (q
    - `abrirModalPlaylists()` muestra listas locales al instante (sin spinner) vía `getLocalPlaylists()`, y refresca Supabase + YouTube en segundo plano.
    - `agregarItemAPlaylistYouTube()` actualiza el caché local inmediatamente y luego sincroniza con YouTube Data API v3 con auto-renovación de token.
    - `obtenerItemsPlaylistYouTube()` hace **merge** de items remotos con caché local (en vez de reemplazar), para no perder canciones recién añadidas antes de que YouTube las propague.
+23. **Sincronización Total de Listas, Pestaña Radio Dinámica y Limpieza de Interfaz:**
+   - **Gestión Unificada de Listas:** `abrirGestionPlaylist` y `borrarDePlaylist` en `Buscar.tsx` soportan de forma transparente tanto listas locales/Supabase como listas oficiales de YouTube (`yt_`), leyendo `obtenerItemsPlaylistYouTube` y sincronizando inmediatamente la caché local sin vacíos. Tanto `addToPlaylist` como `agregarItemAPlaylistYouTube` guardan de forma redundante en ambas estructuras de caché local (`qp_cache_yt_items_` y `qp_local_pl_items_`) colocando las canciones nuevas al inicio (`unshift`).
+   - **Pestaña Radio Dinámica & Historial de Descubiertos:** al iniciar una estación de radio (desde una canción o playlist en Play), navega automáticamente a la pestaña `Radio`. En dicha pantalla, mediante `useFocusEffect` se sincroniza la cola de la estación en vivo (`qp_radio_cola`), la estación activa (`qp_radio_estacion_nombre`) y una vista dedicada con pestañas internas para "Estación" y "Descubiertos" (`qp_radio_historial_temas`), permitiendo volver a escuchar o gestionar cualquier tema descubierto.
+   - **Eliminación del botón Crossover:** botón retirado de la barra de herramientas del reproductor para simplificar la interfaz visual.
 
 ---
 
