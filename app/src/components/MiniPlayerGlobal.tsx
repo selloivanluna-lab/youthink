@@ -7,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { playerStore, PlayerState } from '../lib/playerStore';
 import { theme } from '../theme';
 import MarqueeText from './MarqueeText';
@@ -15,8 +16,12 @@ interface MiniPlayerGlobalProps {
   onPressExpand?: () => void;
 }
 
+// Altura por defecto de la barra de pestañas de React Navigation (bottom-tabs v6)
+const TAB_BAR_HEIGHT = 49;
+
 export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProps) {
   const [state, setState] = useState<PlayerState>(playerStore.getState());
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     return playerStore.subscribe((next) => {
@@ -30,6 +35,15 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
     return null;
   }
 
+  // El miniplayer debe flotar POR ENCIMA de la barra de pestañas en cualquier
+  // dispositivo: la tab bar mide 49px + el inset inferior del sistema (gestos
+  // Android ~24-48px o home indicator de iPhone ~34px). Sin el inset, el
+  // miniplayer termina pisando los botones Play/Radio/Tempo en teléfonos
+  // con navegación por gestos.
+  const bottomOffset = Platform.OS === 'web'
+    ? 86
+    : TAB_BAR_HEIGHT + insets.bottom + 12;
+
   const handleExpand = () => {
     if (onPressExpand) onPressExpand();
     playerStore.abrirPlayer();
@@ -42,7 +56,7 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
         Platform.OS === 'web'
           ? ({
               position: 'fixed',
-              bottom: 74,
+              bottom: bottomOffset,
               left: 12,
               right: 12,
               maxWidth: 720,
@@ -51,7 +65,7 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
             } as any)
           : {
               position: 'absolute',
-              bottom: 68,
+              bottom: bottomOffset,
               left: 10,
               right: 10,
               zIndex: 9999,

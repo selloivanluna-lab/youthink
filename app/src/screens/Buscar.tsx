@@ -3807,7 +3807,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {Platform.OS === 'web' && !esIosSafari && apkRelease ? (
         <Pressable
           focusable={true}
-          style={[s.apkBanner, actual && !playerVisible ? { marginBottom: 70 } : null]}
+          style={[s.apkBanner, actual && !playerVisible ? { marginBottom: 82 } : null]}
           onPress={() => { try { Linking.openURL(apkRelease.url); } catch (_) {} }}
         >
           <Text style={s.apkBannerIcon}>📱</Text>
@@ -3844,8 +3844,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     ]
                   : {
                       position: 'fixed' as any,
-                      bottom: 22,
-                      left: 26,
+                      // Ubicado EXACTAMENTE detrás del thumbnail del mini player
+                      // (tarjeta: bottom 86 + padding 10 => thumb a bottom 96, left 12+10=22).
+                      // Antes estaba a bottom:22 y pisaba la barra de pestañas inferior.
+                      bottom: 96,
+                      left: 22,
                       width: 44,
                       height: 44,
                       borderRadius: 8,
@@ -3905,7 +3908,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   s.miniPlayer,
                   {
                     position: 'fixed' as any,
-                    bottom: 74,
+                    // 86px: flota bien arriba de la barra de pestañas (49px) sin pisarla
+                    bottom: 86,
                     left: 12,
                     right: 12,
                     maxWidth: 720,
@@ -4136,6 +4140,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setPlaylistModalOpen(false)}>
           <Pressable focusable={true} style={[s.eqPanel, { maxHeight: '80%' }]} onPress={() => {}}>
             <Text style={s.eqTitle}>➕ Añadir a lista</Text>
+            <Text style={[s.eqFoot, { marginTop: -8, marginBottom: 8, textAlign: 'left' }]}>
+              📋 ver y borrar canciones · ✏️ renombrar · 🗑️ borrar la lista entera
+            </Text>
 
             {/* Nueva lista */}
             <View style={s.plNewRow}>
@@ -4190,24 +4197,24 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       </Pressable>
                       {/* Botón para ver y gestionar items */}
                       <Pressable focusable={true}
-                        style={{ padding: 10, marginLeft: 4 }}
+                        style={{ padding: 9, marginLeft: 4, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }}
                         onPress={() => { setPlaylistModalOpen(false); abrirGestionPlaylist(item); }}
                       >
-                        <Text style={{ fontSize: 16 }}>📋</Text>
+                        <Text style={{ fontSize: 15 }}>📋</Text>
                       </Pressable>
                       {/* Botón para renombrar */}
                       <Pressable focusable={true}
-                        style={{ padding: 10, marginLeft: 2 }}
+                        style={{ padding: 9, marginLeft: 4, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface2 }}
                         onPress={() => { setPlaylistModalOpen(false); abrirRenombrar(item); }}
                       >
-                        <Text style={{ fontSize: 16 }}>✏️</Text>
+                        <Text style={{ fontSize: 15 }}>✏️</Text>
                       </Pressable>
                       {/* Botón para borrar playlist completa */}
                       <Pressable focusable={true}
-                        style={{ padding: 10, marginLeft: 2 }}
+                        style={{ padding: 9, marginLeft: 4, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255, 60, 60, 0.55)', backgroundColor: 'rgba(255, 60, 60, 0.16)' }}
                         onPress={() => eliminarLista(item)}
                       >
-                        <Text style={{ fontSize: 16 }}>🗑️</Text>
+                        <Text style={{ fontSize: 15 }}>🗑️</Text>
                       </Pressable>
                     </View>
                   );
@@ -4223,6 +4230,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Pressable focusable={true} style={s.eqBackdrop} onPress={() => setManagingPlaylist(null)}>
           <Pressable focusable={true} style={[s.eqPanel, { maxHeight: '85%' }]} onPress={() => {}}>
             <Text style={s.eqTitle} numberOfLines={1}>📋 {managingPlaylist?.nombre}</Text>
+            <Text style={[s.eqFoot, { marginTop: -8, marginBottom: 8, textAlign: 'left' }]}>
+              Tocá 🗑️ para borrar una canción de la lista.
+            </Text>
             {loadingManagingItems ? (
               <ActivityIndicator color={theme.colors.gold} style={{ marginVertical: 20 }} />
             ) : managingItems.length === 0 ? (
@@ -4247,7 +4257,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     {/* Botón Reproducir */}
                     <Pressable
                       focusable={true}
-                      style={{ paddingHorizontal: 10, paddingVertical: 8, flexShrink: 0 }}
+                      style={{ paddingHorizontal: 11, paddingVertical: 8, flexShrink: 0, marginLeft: 6, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(229, 178, 31, 0.4)', backgroundColor: 'rgba(229, 178, 31, 0.12)' }}
                       onPress={() => {
                         setManagingPlaylist(null);
                         const track: YtResult = {
@@ -4262,18 +4272,18 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                         reproducir([track], 0, true);
                       }}
                     >
-                      <Text style={{ fontSize: 18 }}>▶️</Text>
+                      <Text style={{ fontSize: 15 }}>▶️</Text>
                     </Pressable>
-                    {/* Botón Eliminar */}
+                    {/* Botón Eliminar (rojo, bien visible) */}
                     <Pressable
                       focusable={true}
-                      style={{ paddingHorizontal: 10, paddingVertical: 8, flexShrink: 0 }}
+                      style={{ paddingHorizontal: 11, paddingVertical: 8, flexShrink: 0, marginLeft: 6, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255, 60, 60, 0.55)', backgroundColor: 'rgba(255, 60, 60, 0.16)' }}
                       onPress={() => borrarDePlaylist(item.yt_id)}
                       disabled={deletingItem === item.yt_id}
                     >
                       {deletingItem === item.yt_id
                         ? <ActivityIndicator color={theme.colors.danger} size="small" />
-                        : <Text style={{ fontSize: 18 }}>🗑️</Text>
+                        : <Text style={{ fontSize: 15 }}>🗑️</Text>
                       }
                     </Pressable>
                   </View>
@@ -4574,7 +4584,7 @@ const s = StyleSheet.create({
   eqNote: { color: theme.colors.textDim, fontSize: 12, marginBottom: 8 },
   miniPlayer: {
     position: 'absolute',
-    bottom: 74,
+    bottom: 86,
     left: 16,
     right: 16,
     backgroundColor: theme.colors.surface,
