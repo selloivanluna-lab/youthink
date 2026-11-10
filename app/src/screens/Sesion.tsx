@@ -289,6 +289,33 @@ export default function Sesion() {
     setItemsLista((prev) => prev.filter((it) => it.yt_id !== ytId));
   };
 
+  const borrarItemYT = async (videoId: string) => {
+    if (!ytListaSeleccionada) return;
+    const cleanId = (videoId || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+    const plId = ytListaSeleccionada.id.replace(/^yt_/, '');
+
+    // 1. Eliminar inmediatamente del estado visual
+    setYtItems((prev) => prev.filter((it) => it.id !== cleanId && it.yt_id !== cleanId && it.id !== videoId));
+
+    // 2. Eliminar de la caché local de YouTube y local general
+    try {
+      const cacheKey = 'qp_cache_yt_items_' + plId;
+      const raw = await AsyncStorage.getItem(cacheKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const filtrado = parsed.filter((it: any) => it.id !== cleanId && it.yt_id !== cleanId && it.id !== videoId);
+        await AsyncStorage.setItem(cacheKey, JSON.stringify(filtrado));
+      }
+      const localKey = 'qp_local_pl_items_yt_' + plId;
+      const rawLocal = await AsyncStorage.getItem(localKey);
+      if (rawLocal) {
+        const parsedL = JSON.parse(rawLocal);
+        const filtradoL = parsedL.filter((it: any) => it.id !== cleanId && it.yt_id !== cleanId && it.id !== videoId);
+        await AsyncStorage.setItem(localKey, JSON.stringify(filtradoL));
+      }
+    } catch (_) {}
+  };
+
   const borrarLista = async (pId: string) => {
     await deletePlaylist(pId);
     setPlaylists((prev) => prev.filter((p) => p.id !== pId));

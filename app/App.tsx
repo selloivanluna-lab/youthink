@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, useNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Platform, Text } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Buscar from './src/screens/Buscar';
 import Radio from './src/screens/Radio';
@@ -11,6 +11,7 @@ import LibraryCrew from './src/screens/LibraryCrew';
 import TapTempo from './src/screens/TapTempo';
 import Placeholder from './src/screens/Placeholder';
 import Sesion from './src/screens/Sesion';
+import MiniPlayerGlobal from './src/components/MiniPlayerGlobal';
 import { theme } from './src/theme';
 
 const Tab = createBottomTabNavigator();
@@ -33,6 +34,7 @@ const navTheme = {
 
 export default function App() {
   const [initialTab, setInitialTab] = useState<string>('Play');
+  const navigationRef = useNavigationContainerRef();
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -61,41 +63,50 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer theme={navTheme}>
+      <NavigationContainer ref={navigationRef} theme={navTheme}>
         <StatusBar style="light" />
-        <Tab.Navigator
-          key={initialTab}
-          initialRouteName={initialTab}
-          screenOptions={{
-            headerStyle: { backgroundColor: theme.colors.surface },
-            headerTitleStyle: { color: theme.colors.text },
-            tabBarStyle: {
-              backgroundColor: theme.colors.surface,
-              borderTopColor: theme.colors.border,
-            },
-            tabBarActiveTintColor: theme.colors.gold,
-            tabBarInactiveTintColor: theme.colors.textDim,
-          }}
-        >
-          <Tab.Screen
-            name="Play"
-            component={Buscar}
-            options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>▶️</Text> }}
+        <View style={{ flex: 1 }}>
+          <Tab.Navigator
+            key={initialTab}
+            initialRouteName={initialTab}
+            screenOptions={{
+              headerStyle: { backgroundColor: theme.colors.surface },
+              headerTitleStyle: { color: theme.colors.text },
+              tabBarStyle: {
+                backgroundColor: theme.colors.surface,
+                borderTopColor: theme.colors.border,
+              },
+              tabBarActiveTintColor: theme.colors.gold,
+              tabBarInactiveTintColor: theme.colors.textDim,
+            }}
+          >
+            <Tab.Screen
+              name="Play"
+              component={Buscar}
+              options={{ title: 'Play', tabBarLabel: 'Play', tabBarIcon: () => <Text style={{ fontSize: 18 }}>▶️</Text> }}
+            />
+            <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
+            <Tab.Screen
+              name="Tap Tempo"
+              component={TapTempo}
+              options={{ title: 'Tap Tempo', tabBarLabel: 'Tempo', tabBarIcon: () => <Text>🥁</Text> }}
+            />
+            <Tab.Screen
+              name="Library Crew"
+              component={LibraryCrew}
+              options={{ tabBarIcon: () => <Text>👥</Text> }}
+            />
+            <Tab.Screen name="Descargas" component={Descargas} options={{ tabBarIcon: () => <Text>⬇️</Text> }} />
+            <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
+          </Tab.Navigator>
+
+          {/* Mini-reproductor global: visible en todas las pestañas */}
+          <MiniPlayerGlobal
+            onPressExpand={() => {
+              try { navigationRef.navigate('Play' as never); } catch (_) {}
+            }}
           />
-          <Tab.Screen name="Radio" component={Radio} options={{ tabBarIcon: () => <Text>📻</Text> }} />
-          <Tab.Screen
-            name="Tap Tempo"
-            component={TapTempo}
-            options={{ title: 'Tap Tempo', tabBarLabel: 'Tempo', tabBarIcon: () => <Text>🥁</Text> }}
-          />
-          <Tab.Screen
-            name="Library Crew"
-            component={LibraryCrew}
-            options={{ tabBarIcon: () => <Text>👥</Text> }}
-          />
-          <Tab.Screen name="Descargas" component={Descargas} options={{ tabBarIcon: () => <Text>⬇️</Text> }} />
-          <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
-        </Tab.Navigator>
+        </View>
       </NavigationContainer>
     </SafeAreaProvider>
   );

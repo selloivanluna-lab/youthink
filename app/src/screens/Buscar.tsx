@@ -36,6 +36,8 @@ import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { playerStore } from '../lib/playerStore';
+import MarqueeText from '../components/MarqueeText';
 
 // En Android se carga el botón nativo de Chromecast. En web el paquete ni se evalúa.
 const CastButtonHost: any =
@@ -459,14 +461,31 @@ export default function Buscar() {
     AsyncStorage.setItem('qp_playback_speed', r.toString()).catch(() => {});
 
     if (Platform.OS === 'web') {
-      const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
-      if (iframe?.contentWindow) {
-        try {
-          iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r] }), '*');
-        } catch (_) {}
-      }
-      const el = (globalThis as any).document?.querySelector('video') as any;
-      if (el) el.playbackRate = r;
+      const sendIframeSpeed = () => {
+        const iframe = ((globalThis as any).document?.getElementById('yt-player-iframe') || (globalThis as any).document?.querySelector('iframe')) as HTMLIFrameElement | null;
+        if (iframe?.contentWindow) {
+          try {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r] }), '*');
+          } catch (_) {}
+        }
+      };
+      sendIframeSpeed();
+      setTimeout(sendIframeSpeed, 200);
+      setTimeout(sendIframeSpeed, 800);
+
+      // Aplicar incondicionalmente a todos los tags de audio y video
+      try {
+        const medias = (globalThis as any).document?.querySelectorAll('video, audio');
+        if (medias) {
+          medias.forEach((m: any) => {
+            try {
+              m.playbackRate = r;
+              m.defaultPlaybackRate = r;
+            } catch (_) {}
+          });
+        }
+      } catch (_) {}
+
       if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
         try {
           (navigator.mediaSession as any).setPositionState({
@@ -477,7 +496,15 @@ export default function Buscar() {
         } catch (_) {}
       }
     } else {
-      try { player.playbackRate = r; } catch (_) {}
+      try { (player as any).playbackRate = r; } catch (_) {}
+      if (webEmbedUri) {
+        try {
+          webViewCmd(`var vs=document.querySelectorAll('video,audio'); for(var i=0;i<vs.length;i++){ vs[i].playbackRate=${r}; vs[i].defaultPlaybackRate=${r}; }`);
+        } catch (_) {}
+      }
+      if (usarNativoRef.current) {
+        try { (native as any).setSpeed?.(r); } catch (_) {}
+      }
     }
   }
 
@@ -1696,6 +1723,14 @@ export default function Buscar() {
             setReproduciendo(true);
             reproduciendoRef.current = true;
             hasStartedPlayingCurrentTrackRef.current = true;
+            if (velocidadRef.current !== 1) {
+              const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
+              if (el?.contentWindow) {
+                try {
+                  el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
+                } catch (_) {}
+              }
+            }
           } else if (state === 2) {
             setReproduciendo(false);
             reproduciendoRef.current = false;
@@ -2655,6 +2690,28 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     setLyricsData(null);
   }
 
+  // Sincronizar estado y controles con playerStore para el MiniPlayerGlobal en todas las pestañas
+  useEffect(() => {
+    playerStore.setState({
+      actual,
+      reproduciendo,
+      playerVisible,
+      pos,
+      dur,
+    });
+  }, [actual, reproduciendo, playerVisible, pos, dur]);
+
+  useEffect(() => {
+    playerStore.registerControls({
+      togglePlay,
+      abrirPlayer: () => setPlayerVisible(true),
+      cerrar,
+    });
+    return () => {
+      playerStore.unregisterControls();
+    };
+  }, [togglePlay, cerrar]);
+
   // ── Actualizar app (abre enlace de APK) ──
   function actualizarApp() {
     try {
@@ -3291,7 +3348,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         <Pressable focusable={true} onPress={minimizar} style={{ padding: 8, marginRight: 6 }}>
           <Text style={{ color: theme.colors.textDim, fontSize: 22, fontWeight: '700' }}>⌄</Text>
         </Pressable>
-        <Text style={s.modalTitle} numberOfLines={1}>{actual?.title}</Text>
+        <View style={{ flex: 1, marginRight: 8, overflow: 'hidden' }}>
+          <MarqueeText text={actual?.title || ''} style={s.modalTitle} speed={30} />
+        </View>
         {(!soloAudio || modo === 'video') && (
           <Pressable focusable={true}
             onPress={alternarRotacion}
@@ -3572,6 +3631,13 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     <Text style={{ color: '#E5A93C', fontSize: 9, fontWeight: '900' }}>💿 ÁLBUM</Text>
                   </View>
                 ) : null}
+                {(item.duration > 0 || (item as any).durationText) ? (
+                  <View style={{ position: 'absolute', right: 2, bottom: 2, backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>
+                      {item.duration > 0 ? fmtTiempo(item.duration) : (item as any).durationText}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={s.title} numberOfLines={2}>
@@ -3579,7 +3645,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   {item.title}
                 </Text>
                 <Text style={s.sub} numberOfLines={1}>
-                  {item.channel} {item.duration ? `· ${fmtTiempo(item.duration)}` : ''}
+                  {item.channel}
+                  {item.duration > 0 ? ` · ${fmtTiempo(item.duration)}` : ((item as any).durationText ? ` · ${(item as any).durationText}` : '')}
                   {item.isAlbumVideo ? ' · 💿 Álbum Completo' : ''}
                   {item.live ? ' · 🔴 EN VIVO' : ''}
                 </Text>

@@ -573,12 +573,29 @@ async function searchMusic(query, limit = 20) {
       const thumb = thumbs.slice(-1)[0]?.url || (vid ? 'https://i.ytimg.com/vi/' + vid + '/mqdefault.jpg' : '');
       if (vid && title && !seen.has(vid)) {
         seen.add(vid);
+
+        // Extraer duración de YouTube Music si viene en runs de flexColumns o fixedColumns
+        let durText = '';
+        const fixedRuns = it.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs || [];
+        for (const r of fixedRuns) {
+          const txt = String(r?.text || '').trim();
+          if (/^\d+(:\d+)+$/.test(txt)) { durText = txt; break; }
+        }
+        if (!durText) {
+          const flexRuns = it.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+          for (const r of flexRuns) {
+            const txt = String(r?.text || '').trim();
+            if (/^\d+(:\d+)+$/.test(txt)) { durText = txt; break; }
+          }
+        }
+        const durSecs = parseDuration(durText);
+
         results.push({
           id: vid,
           title,
           channel: canal || '',
-          duration: 0,
-          durationText: '',
+          duration: durSecs,
+          durationText: durText,
           thumb,
           url: 'https://www.youtube.com/watch?v=' + vid,
           kind: 'song',
