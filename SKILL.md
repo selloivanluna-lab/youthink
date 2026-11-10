@@ -51,6 +51,11 @@ description: Documentación y referencia técnica completa de la app YouThink (q
    - **Gestión Unificada de Listas:** `abrirGestionPlaylist` y `borrarDePlaylist` en `Buscar.tsx` soportan de forma transparente tanto listas locales/Supabase como listas oficiales de YouTube (`yt_`), leyendo `obtenerItemsPlaylistYouTube` y sincronizando inmediatamente la caché local sin vacíos. Tanto `addToPlaylist` como `agregarItemAPlaylistYouTube` guardan de forma redundante en ambas estructuras de caché local (`qp_cache_yt_items_` y `qp_local_pl_items_`) colocando las canciones nuevas al inicio (`unshift`).
    - **Pestaña Radio Dinámica & Historial de Descubiertos:** al iniciar una estación de radio (desde una canción o playlist en Play), navega automáticamente a la pestaña `Radio`. En dicha pantalla, mediante `useFocusEffect` se sincroniza la cola de la estación en vivo (`qp_radio_cola`), la estación activa (`qp_radio_estacion_nombre`) y una vista dedicada con pestañas internas para "Estación" y "Descubiertos" (`qp_radio_historial_temas`), permitiendo volver a escuchar o gestionar cualquier tema descubierto.
    - **Eliminación del botón Crossover:** botón retirado de la barra de herramientas del reproductor para simplificar la interfaz visual.
+24. **Miniplayer Global Flotante y Control de Velocidad Universal (ExoPlayer + YouTube Web):**
+   - **Miniplayer elevado sobre barra de navegación:** posicionado a `bottom: 74` (en Web portal) y `bottom: 68` (en Android nativo con `MiniPlayerGlobal`), garantizando que flote a 18px por encima de la barra de pestañas (56px) sin pisar ni bloquear los botones en ninguna pantalla.
+   - **Título con scroll animado (`MarqueeText`):** títulos largos se desplazan suavemente en loop en lugar de truncarse con puntos suspensivos.
+   - **Soporte de velocidad en Android Nativo (`qp-audio`):** implementado `setSpeed(speed)` en `QpPlayerService.kt` y expuesto en `QpAudioModule.kt` y `nativeAudio.ts`, aplicando `player.setPlaybackSpeed()` tanto en tiempo real como al inicializar cada nueva pista.
+   - **Soporte de velocidad en Web:** envío múltiple de `setPlaybackRate` a `*` y a `https://www.youtube.com`, compatibilidad con presets oficiales de YouTube (`0.25x` a `2.0x`), y botón directo "🔄 Recargar tema actual a Nx" para forzar la sincronización de velocidad manteniendo la posición exacta de reproducción.
 
 ---
 
@@ -225,6 +230,31 @@ description: Documentación y referencia técnica completa de la app YouThink (q
 
 ---
 
+## ⚠️ Reglas de Oro del Agente
+
+> **SIEMPRE aplicar estas reglas sin excepción. No hay flujo de trabajo que las omita.**
+
+1. **Commitear y pushear ANTES y DESPUÉS de deployar a Vercel.**
+   - Nunca deployar a Vercel sin antes hacer `git add + commit + push origin main`.
+   - El deploy web (`npx expo export + vercel`) NO reemplaza el commit a GitHub.
+   - GitHub push → dispara GitHub Actions → compila el APK de Android.
+   - Sin el push, los cambios existen solo en el bundle de Vercel pero no en el repo ni en el APK.
+   - **Flujo obligatorio:** `git add` → `git commit` → `git push origin main` → `expo export -p web` → `vercel ... --prod` → alias.
+
+2. **Verificar TypeScript antes de cada build web.**
+   - Correr `npx tsc --noEmit` en `app/` y resolver todos los errores antes de exportar.
+
+3. **Siempre reasignar el alias `youthink.quepensabas.mov` después de cada deploy.**
+   - El deploy de Vercel genera una URL aleatoria; sin el alias el dominio queda en la versión anterior.
+
+4. **Nunca usar `&&` para encadenar comandos en PowerShell.**
+   - En PowerShell el operador `&&` no existe. Usar `;` o dos comandos separados.
+
+5. **El directorio `app/android` está en `.gitignore`.**
+   - Cambios en `build.gradle` (ej. versionCode) no se commitean. El versionCode del APK lo gestiona GitHub Actions desde `app.json`.
+
+---
+
 ## Comandos de Mantenimiento Frecuentes
 
 ### Commitear cambios en Celular y disparar nueva compilación de APK:
@@ -241,14 +271,22 @@ Write-Output "Run #$($r.workflow_runs[0].run_number) | Status: $($r.workflow_run
 ```
 
 ### Compilar y desplegar versión Web a producción (Vercel):
+> ⚠️ Regla de oro #1: commitear y pushear PRIMERO, después buildear y deployar.
+
 ```powershell
-Set-Location "C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app\app"
+# 1. Commit y push (dispara GitHub Actions → APK)
+Set-Location "C:\Users\Sello\.config\opencode\proyectos\quepensabas-bajar-app"
+git add app/src app/App.tsx server/src
+git commit -m "feat(web): descripcion del cambio"
+git push origin main
+
+# 2. Build web
+Set-Location "app"
 npx tsc --noEmit
 npx expo export -p web
 Set-Location ".."
-git add .
-git commit -m "feat(web): descripcion del cambio"
-git push origin main
+
+# 3. Deploy Vercel + alias
 npx --yes vercel app/dist --prod --yes --scope quepensabas
 npx --yes vercel alias dist-<id>-quepensabas.vercel.app youthink.quepensabas.mov --scope quepensabas
 ```
