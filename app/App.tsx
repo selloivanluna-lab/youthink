@@ -11,6 +11,8 @@ import LibraryCrew from './src/screens/LibraryCrew';
 import TapTempo from './src/screens/TapTempo';
 import Placeholder from './src/screens/Placeholder';
 import Sesion from './src/screens/Sesion';
+// MiniPlayerGlobal: solo en nativo y solo cuando NO estamos en la tab Play
+// (en web el mini player vive dentro del portal de Buscar.tsx para mantener el iframe vivo)
 import MiniPlayerGlobal from './src/components/MiniPlayerGlobal';
 import { theme } from './src/theme';
 
@@ -34,6 +36,7 @@ const navTheme = {
 
 export default function App() {
   const [initialTab, setInitialTab] = useState<string>('Play');
+  const [currentTab, setCurrentTab] = useState<string>('Play');
   const navigationRef = useNavigationContainerRef();
 
   useEffect(() => {
@@ -79,6 +82,13 @@ export default function App() {
               tabBarActiveTintColor: theme.colors.gold,
               tabBarInactiveTintColor: theme.colors.textDim,
             }}
+            screenListeners={{
+              state: () => {
+                // Registrar tab activo para ocultar MiniPlayerGlobal en tab Play
+                const route = navigationRef.getCurrentRoute() as { name?: string } | undefined;
+                if (route?.name) setCurrentTab(route.name);
+              },
+            }}
           >
             <Tab.Screen
               name="Play"
@@ -100,12 +110,14 @@ export default function App() {
             <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
           </Tab.Navigator>
 
-          {/* Mini-reproductor global: visible en todas las pestañas */}
-          <MiniPlayerGlobal
-            onPressExpand={() => {
-              try { navigationRef.navigate('Play' as never); } catch (_) {}
-            }}
-          />
+          {/* Mini-reproductor global: visible en pestañas distintas a Play (nativo) y nunca en web */}
+          {Platform.OS !== 'web' && currentTab !== 'Play' && (
+            <MiniPlayerGlobal
+              onPressExpand={() => {
+                try { navigationRef.navigate('Play' as never); } catch (_) {}
+              }}
+            />
+          )}
         </View>
       </NavigationContainer>
     </SafeAreaProvider>

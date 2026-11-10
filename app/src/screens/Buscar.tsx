@@ -2790,9 +2790,9 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     setPlaylistModalOpen(true);
     setCargandoPlaylists(true);
 
-    // 1. Mostrar de inmediato la caché local combinada (0ms de espera sin spinner bloqueante)
+    // 1. Mostrar de inmediato usando getPlaylists() que ya filtra tombstones
     try {
-      const locales = await getLocalPlaylists();
+      const locales = await getPlaylists(); // filtra eliminadas
       let cachedYT: Playlist[] = [];
       try {
         const rawYT = await AsyncStorage.getItem('qp_cache_yt_playlists');
@@ -2805,9 +2805,9 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       }
     } catch (_) {}
 
-    // 2. En segundo plano refrescar listas de Supabase y de YouTube con auto-renovación si el token caducó
+    // 2. En segundo plano refrescar listas de Supabase y de YouTube
     try {
-      let data = await getPlaylists();
+      let data = await getPlaylists(); // siempre filtra tombstones
 
       if (data.length === 0) {
         try {
@@ -2832,9 +2832,10 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
       setPlaylists(todas);
     } catch (e) {
+      // Fallback: usar getPlaylists() local que filtra tombstones
       try {
-        const raw = await AsyncStorage.getItem('qp_local_playlists');
-        if (raw) setPlaylists(JSON.parse(raw));
+        const locales = await getPlaylists();
+        setPlaylists(locales);
       } catch (_) {}
     } finally {
       setCargandoPlaylists(false);
@@ -4194,22 +4195,23 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <FlatList
                 data={managingItems}
                 keyExtractor={(it) => it.yt_id}
-                style={{ maxHeight: 400 }}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 4 }}
                 renderItem={({ item }) => (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border, minHeight: 56 }}>
                     {item.thumb ? (
-                      <Image source={{ uri: item.thumb }} style={{ width: 48, height: 36, borderRadius: 4, marginRight: 10 }} />
+                      <Image source={{ uri: item.thumb }} style={{ width: 48, height: 36, borderRadius: 4, marginRight: 10, flexShrink: 0 }} />
                     ) : (
-                      <View style={{ width: 48, height: 36, backgroundColor: theme.colors.surface2, borderRadius: 4, marginRight: 10 }} />
+                      <View style={{ width: 48, height: 36, backgroundColor: theme.colors.surface2, borderRadius: 4, marginRight: 10, flexShrink: 0 }} />
                     )}
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={{ color: theme.colors.text, fontSize: 13 }} numberOfLines={2}>{item.title}</Text>
                       <Text style={{ color: theme.colors.textDim, fontSize: 11 }}>{item.channel}</Text>
                     </View>
                     {/* Botón Reproducir */}
                     <Pressable
                       focusable={true}
-                      style={{ padding: 10 }}
+                      style={{ paddingHorizontal: 10, paddingVertical: 8, flexShrink: 0 }}
                       onPress={() => {
                         setManagingPlaylist(null);
                         const track: YtResult = {
@@ -4229,7 +4231,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     {/* Botón Eliminar */}
                     <Pressable
                       focusable={true}
-                      style={{ padding: 10 }}
+                      style={{ paddingHorizontal: 10, paddingVertical: 8, flexShrink: 0 }}
                       onPress={() => borrarDePlaylist(item.yt_id)}
                       disabled={deletingItem === item.yt_id}
                     >
