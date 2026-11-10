@@ -3846,9 +3846,11 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                       position: 'fixed' as any,
                       // Ubicado EXACTAMENTE detrás del thumbnail del mini player
                       // (tarjeta: bottom 86 + padding 10 => thumb a bottom 96, left 12+10=22).
+                      // En pantallas anchas la tarjeta se centra (maxWidth 720), por eso
+                      // el left usa max() para seguir el borde real de la tarjeta.
                       // Antes estaba a bottom:22 y pisaba la barra de pestañas inferior.
                       bottom: 96,
-                      left: 22,
+                      left: 'max(22px, calc(50vw - 360px + 10px))' as any,
                       width: 44,
                       height: 44,
                       borderRadius: 8,
