@@ -152,6 +152,11 @@ class QpAudioModule : Module() {
       true
     }
 
+    AsyncFunction<Boolean, Double>("setSpeed") { speed ->
+      QpBridge.service?.setSpeed(speed)
+      true
+    }
+
     AsyncFunction<Boolean>("stop") {
       QpBridge.service?.stopPlayback()
       true

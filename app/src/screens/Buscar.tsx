@@ -466,12 +466,21 @@ export default function Buscar() {
         if (iframe?.contentWindow) {
           try {
             iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r] }), '*');
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r] }), 'https://www.youtube.com');
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [r, true] }), '*');
           } catch (_) {}
         }
+        try {
+          if ((window as any).ytPlayer?.setPlaybackRate) {
+            (window as any).ytPlayer.setPlaybackRate(r);
+          }
+        } catch (_) {}
       };
       sendIframeSpeed();
-      setTimeout(sendIframeSpeed, 200);
-      setTimeout(sendIframeSpeed, 800);
+      setTimeout(sendIframeSpeed, 100);
+      setTimeout(sendIframeSpeed, 300);
+      setTimeout(sendIframeSpeed, 700);
+      setTimeout(sendIframeSpeed, 1500);
 
       // Aplicar incondicionalmente a todos los tags de audio y video
       try {
@@ -499,13 +508,24 @@ export default function Buscar() {
       try { (player as any).playbackRate = r; } catch (_) {}
       if (webEmbedUri) {
         try {
-          webViewCmd(`var vs=document.querySelectorAll('video,audio'); for(var i=0;i<vs.length;i++){ vs[i].playbackRate=${r}; vs[i].defaultPlaybackRate=${r}; }`);
+          webViewCmd(`if(window.player && window.player.setPlaybackRate){ window.player.setPlaybackRate(${r}); } else { var vs=document.querySelectorAll('video,audio'); for(var i=0;i<vs.length;i++){ vs[i].playbackRate=${r}; vs[i].defaultPlaybackRate=${r}; } }`);
         } catch (_) {}
       }
       if (usarNativoRef.current) {
-        try { (native as any).setSpeed?.(r); } catch (_) {}
+        try { native.setSpeed(r); } catch (_) {}
       }
     }
+  }
+
+  function recargarConVelocidad(rate: number) {
+    if (!actual) return;
+    aplicarVelocidad(rate);
+    const targetSeek = pos > 0 ? pos : 0;
+    pendingSeekRef.current = targetSeek;
+    aplicar(actual, soloAudio, qIdx, true);
+    setTimeout(() => {
+      saltar(targetSeek);
+    }, 600);
   }
 
   // Audio silencioso persistente para mantener MediaSession viva y controles en pantalla de bloqueo
@@ -3799,26 +3819,6 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         </Pressable>
       ) : null}
 
-      {/* Mini-reproductor flotante para móvil nativo (en Web se gestiona en el portal persistente) */}
-      {actual && !playerVisible && Platform.OS !== 'web' ? (
-        <Pressable focusable={true}
-          style={s.miniPlayer}
-          onPress={() => setPlayerVisible(true)}
-        >
-          <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
-            <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
-          </View>
-          <Pressable focusable={true} onPress={togglePlay} style={{ padding: 8 }}>
-            <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
-          </Pressable>
-          <Pressable focusable={true} onPress={cerrar} style={{ padding: 8 }}>
-            <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
-          </Pressable>
-        </Pressable>
-      ) : null}
-
       {/* ── Reproductor Web persistente via portal (escapa stacking context y mantiene audio en segundo plano) ── */}
       {Platform.OS === 'web' && (actual || mediaUri?.includes('/embed/')) && typeof document !== 'undefined' ? (
         (require('react-dom') as any).createPortal(
@@ -3898,15 +3898,26 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               </View>
             ) : null}
 
-            {/* 3. Mini Player Web (visible cuando playerVisible === false) */}
+            {/* 3. Mini Player Web (flota a 74px del fondo para no pisar las pestañas inferiores) */}
             {!playerVisible && actual ? (
               <Pressable focusable={true}
-                style={[s.miniPlayer, { position: 'fixed' as any, zIndex: 5001 }]}
+                style={[
+                  s.miniPlayer,
+                  {
+                    position: 'fixed' as any,
+                    bottom: 74,
+                    left: 12,
+                    right: 12,
+                    maxWidth: 720,
+                    marginHorizontal: 'auto' as any,
+                    zIndex: 99999,
+                  },
+                ]}
                 onPress={() => setPlayerVisible(true)}
               >
                 <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>{actual.title}</Text>
+                <View style={{ flex: 1, overflow: 'hidden' }}>
+                  <MarqueeText text={actual.title || ''} style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} speed={35} />
                   <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
                 </View>
                 <Pressable focusable={true} onPress={togglePlay} style={{ padding: 8 }}>
@@ -4026,9 +4037,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               <Text style={{ color: theme.colors.gold, fontSize: 22, fontWeight: '900' }}>{velocidad}x</Text>
             </View>
 
-            {/* Presets de velocidad */}
+            {/* Presets de velocidad oficiales compatibles */}
             <View style={s.eqGrid}>
-              {[0.5, 0.75, 0.85, 0.9, 1.0, 1.1, 1.15, 1.25, 1.5, 1.75, 2.0].map((rate) => {
+              {[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0].map((rate) => {
                 const activo = velocidad === rate;
                 return (
                   <Pressable focusable={true}
@@ -4048,23 +4059,48 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 14 }}>
               <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
-                onPress={() => aplicarVelocidad(velocidad - 0.05)}
+                onPress={() => aplicarVelocidad(velocidad - 0.25)}
               >
-                <Text style={s.eqItemText}>-0.05x</Text>
+                <Text style={s.eqItemText}>-0.25x</Text>
               </Pressable>
               <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10, backgroundColor: theme.colors.surface2 }]}
                 onPress={() => aplicarVelocidad(1.0)}
               >
-                <Text style={[s.eqItemText, { color: theme.colors.gold }]}>Restablecer (1x)</Text>
+                <Text style={[s.eqItemText, { color: theme.colors.gold }]}>1.0x Normal</Text>
               </Pressable>
               <Pressable focusable={true}
                 style={[s.eqItem, { flex: 1, paddingVertical: 10 }]}
-                onPress={() => aplicarVelocidad(velocidad + 0.05)}
+                onPress={() => aplicarVelocidad(velocidad + 0.25)}
               >
-                <Text style={s.eqItemText}>+0.05x</Text>
+                <Text style={s.eqItemText}>+0.25x</Text>
               </Pressable>
             </View>
+
+            {/* Recarga forzada opcional: garantiza velocidad si la transmisión en vivo no tomó el cambio al vuelo */}
+            {actual ? (
+              <Pressable focusable={true}
+                style={{
+                  marginTop: 12,
+                  backgroundColor: 'rgba(229, 178, 31, 0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(229, 178, 31, 0.4)',
+                  borderRadius: 10,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+                onPress={() => recargarConVelocidad(velocidad)}
+              >
+                <Text style={{ fontSize: 16 }}>🔄</Text>
+                <Text style={{ color: theme.colors.gold, fontSize: 12, fontWeight: '700' }}>
+                  Recargar tema actual a {velocidad}x
+                </Text>
+              </Pressable>
+            ) : null}
 
             {/* Atajo hacia Tap Tempo */}
             <Pressable focusable={true}
@@ -4538,7 +4574,7 @@ const s = StyleSheet.create({
   eqNote: { color: theme.colors.textDim, fontSize: 12, marginBottom: 8 },
   miniPlayer: {
     position: 'absolute',
-    bottom: 12,
+    bottom: 74,
     left: 16,
     right: 16,
     backgroundColor: theme.colors.surface,

@@ -8,4 +8,7 @@ object QpBridge {
 
   @Volatile
   var pendingGains: IntArray = intArrayOf(0, 0, 0, 0, 0)
+
+  @Volatile
+  var playbackSpeed: Float = 1.0f
 }

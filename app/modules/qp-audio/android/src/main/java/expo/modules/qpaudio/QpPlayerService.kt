@@ -126,6 +126,7 @@ class QpPlayerService : MediaSessionService() {
     })
 
     player = exo
+    exo.setPlaybackSpeed(QpBridge.playbackSpeed)
 
     val sessionCallback = object : MediaSession.Callback {
       override fun onConnect(
@@ -264,6 +265,7 @@ class QpPlayerService : MediaSessionService() {
           )
           .build()
         p.setMediaItem(item)
+        p.setPlaybackSpeed(QpBridge.playbackSpeed)
         p.prepare()
         QpEvents.push(mapOf("resolving" to false, "buffering" to true, "isPlaying" to false, "error" to null))
         p.play()
@@ -312,6 +314,7 @@ class QpPlayerService : MediaSessionService() {
           )
             .build()
           p.setMediaItem(item)
+          p.setPlaybackSpeed(QpBridge.playbackSpeed)
           p.prepare()
           QpEvents.push(mapOf("resolving" to false))
           p.play()
@@ -351,6 +354,15 @@ class QpPlayerService : MediaSessionService() {
   }
 
   fun seek(seconds: Double) { main.post { player?.seekTo((seconds * 1000).toLong()) } }
+
+  fun setSpeed(speed: Double) {
+    val s = speed.toFloat()
+    QpBridge.playbackSpeed = s
+    main.post {
+      player?.setPlaybackSpeed(s)
+      pushState()
+    }
+  }
 
   fun stopPlayback() {
     main.post {

@@ -20,6 +20,7 @@ export function useNativeAudio() {
       pause: () => (QpAudio ? QpAudio.pause() : noop()),
       resume: () => (QpAudio ? QpAudio.resume() : noop()),
       seek: (seconds: number) => (QpAudio ? QpAudio.seek(seconds) : noop()),
+      setSpeed: (speed: number) => (QpAudio ? QpAudio.setSpeed(speed) : noop()),
       stop: () => (QpAudio ? QpAudio.stop() : noop()),
       setEq: (preset: string) => (QpAudio ? QpAudio.setEq(preset) : noop()),
     }),

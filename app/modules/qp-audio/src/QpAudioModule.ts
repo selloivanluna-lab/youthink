@@ -18,6 +18,7 @@ declare class QpAudioModule extends NativeModule<QpAudioEvents> {
   pause(): Promise<boolean>;
   resume(): Promise<boolean>;
   seek(seconds: number): Promise<boolean>;
+  setSpeed(speed: number): Promise<boolean>;
   stop(): Promise<boolean>;
   setEq(preset: string): Promise<boolean>;
 }

@@ -110,8 +110,8 @@ export default function App() {
             <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
           </Tab.Navigator>
 
-          {/* Mini-reproductor global: visible en pestañas distintas a Play (nativo) y nunca en web */}
-          {Platform.OS !== 'web' && currentTab !== 'Play' && (
+          {/* Mini-reproductor global: visible en móvil nativo en todas las pestañas (en web se gestiona en portal) */}
+          {Platform.OS !== 'web' && (
             <MiniPlayerGlobal
               onPressExpand={() => {
                 try { navigationRef.navigate('Play' as never); } catch (_) {}

@@ -42,18 +42,18 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
         Platform.OS === 'web'
           ? ({
               position: 'fixed',
-              bottom: 64,
-              left: 10,
-              right: 10,
+              bottom: 74,
+              left: 12,
+              right: 12,
               maxWidth: 720,
               marginHorizontal: 'auto',
               zIndex: 99999,
             } as any)
           : {
               position: 'absolute',
-              bottom: 60,
-              left: 8,
-              right: 8,
+              bottom: 68,
+              left: 10,
+              right: 10,
               zIndex: 9999,
             },
       ]}
