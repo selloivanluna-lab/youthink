@@ -239,8 +239,9 @@ class QpPlayerService : MediaSessionService() {
 
   private val currentRequestId = java.util.concurrent.atomic.AtomicLong(0)
 
-  fun playVideo(videoId: String, title: String, artist: String = "", artworkUri: String = "") {
+  fun playVideo(videoId: String, title: String, artist: String = "", artworkUri: String = "", startPositionSeconds: Double = 0.0) {
     val reqId = currentRequestId.incrementAndGet()
+    val startMs = if (startPositionSeconds > 0) (startPositionSeconds * 1000).toLong() else 0L
     // Detener y limpiar inmediatamente cualquier reproducción previa para evitar audios simultáneos
     main.post {
       player?.stop()
@@ -264,7 +265,11 @@ class QpPlayerService : MediaSessionService() {
               .build()
           )
           .build()
-        p.setMediaItem(item)
+        if (startMs > 0) {
+          p.setMediaItem(item, startMs)
+        } else {
+          p.setMediaItem(item)
+        }
         p.setPlaybackSpeed(QpBridge.playbackSpeed)
         p.prepare()
         QpEvents.push(mapOf("resolving" to false, "buffering" to true, "isPlaying" to false, "error" to null))
@@ -313,7 +318,11 @@ class QpPlayerService : MediaSessionService() {
               .build()
           )
             .build()
-          p.setMediaItem(item)
+          if (startMs > 0) {
+            p.setMediaItem(item, startMs)
+          } else {
+            p.setMediaItem(item)
+          }
           p.setPlaybackSpeed(QpBridge.playbackSpeed)
           p.prepare()
           QpEvents.push(mapOf("resolving" to false))

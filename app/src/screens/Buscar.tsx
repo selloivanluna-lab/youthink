@@ -38,6 +38,7 @@ import { theme } from '../theme';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { playerStore } from '../lib/playerStore';
 import MarqueeText from '../components/MarqueeText';
+import { guardarProgreso, guardarProgresoInmediato, obtenerProgreso, borrarProgreso } from '../lib/playbackHistory';
 
 // En Android se carga el botón nativo de Chromecast. En web el paquete ni se evalúa.
 const CastButtonHost: any =
@@ -72,8 +73,13 @@ function CargaAnim({ texto = 'Cargando…' }: { texto?: string }) {
 
 function fmtTiempo(seg?: number) {
   if (!seg || seg <= 0 || !isFinite(seg)) return '0:00';
-  const m = Math.floor(seg / 60);
-  const s = Math.floor(seg % 60);
+  const total = Math.floor(seg);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
@@ -207,6 +213,7 @@ export default function Buscar() {
   const crossoverFadeTimerRef = useRef<any>(null);
   const [audioTimeout, setAudioTimeout] = useState(false);
   const audioTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [resumingInfo, setResumingInfo] = useState<{ pos: number; trackId: string } | null>(null);
   // Auto-retry en Source Error: reintentar play hasta 3 veces automáticamente
   const sourceRetryRef = useRef(0);
   const sourceRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -349,10 +356,12 @@ export default function Buscar() {
       setReproduciendo(Boolean(d.p));
       if (d.e) {
         // Igual que en nativo: sólo avanzamos si terminó de verdad (evita
-        // saltear temas cuando el embed falla al instante).
+        // saltear temas cuando el embed falla al instante o en audios largos).
         const t = Number(d.t || 0);
         const dd = Number(d.d || 0);
-        if ((dd > 0 && t >= dd - 6) || t > 15) avanzarPorFin();
+        const dEsperada = Math.max(dd, durRef.current || 0, actualRef.current?.duration || 0);
+        const terminoDeVerdad = dEsperada > 0 ? (t >= dEsperada - 6) : (t > 15);
+        if (terminoDeVerdad) avanzarPorFin();
       }
     } catch (_) {}
   }
@@ -736,6 +745,9 @@ export default function Buscar() {
     if (g.id && g.id === currentTrackIdRef.current && Date.now() - g.at < 4000) return;
     finGuardRef.current = { id: currentTrackIdRef.current, at: Date.now() };
     finDisparadoRef.current = true;
+    if (currentTrackIdRef.current) {
+      borrarProgreso(currentTrackIdRef.current);
+    }
     siguienteRef.current(true);
   }
 
@@ -840,7 +852,8 @@ export default function Buscar() {
             if (sourceRetryTimerRef.current) clearTimeout(sourceRetryTimerRef.current);
             sourceRetryTimerRef.current = setTimeout(async () => {
               try {
-                await native.play(itemToRetry.id, itemToRetry.title, itemToRetry.channel || '', itemToRetry.thumb || '');
+                const retryPos = posRef.current > 0 ? posRef.current : 0;
+                await native.play(itemToRetry.id, itemToRetry.title, itemToRetry.channel || '', itemToRetry.thumb || '', retryPos);
               } catch (_) {}
             }, 800 * retryN); // backoff: 800ms, 1600ms, 2400ms
           } else {
@@ -866,9 +879,16 @@ export default function Buscar() {
         if (st.ended) {
           const ppos = Number(st.position || 0);
           const pdur = Number(st.duration || 0);
-          const terminoDeVerdad = (pdur > 0 && ppos >= pdur - 6) || ppos > 15;
+          const dEsperada = Math.max(pdur, durRef.current || 0, actualRef.current?.duration || 0);
+          const terminoDeVerdad = dEsperada > 0 ? (ppos >= dEsperada - 6) : false;
           if (terminoDeVerdad) {
             avanzarPorFin(evId);
+          } else if (dEsperada > 30 && ppos < dEsperada - 20) {
+            // Fin prematuro por corte de stream HTTP en audios largos: reanudar inmediatamente en la posición actual
+            const tr = actualRetryRef.current;
+            if (tr && !tvRef.current && tr.id === currentTrackIdRef.current) {
+              native.play(tr.id, tr.title, tr.channel || '', tr.thumb || '', ppos).catch(() => {});
+            }
           } else {
             const tr = actualRetryRef.current;
             if (tr && !tvRef.current && tr.id === currentTrackIdRef.current) {
@@ -889,6 +909,16 @@ export default function Buscar() {
   }, []);
 
   useEffect(() => { mediaUriRef.current = mediaUri; }, [mediaUri]);
+
+  // Guardado periódico de progreso cada 4 segundos para recuperación exacta
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (reproduciendoRef.current && actualRef.current?.id && posRef.current > 8) {
+        guardarProgreso(actualRef.current.id, posRef.current, durRef.current, actualRef.current.title);
+      }
+    }, 4000);
+    return () => clearInterval(iv);
+  }, []);
 
   useEffect(() => { colaRef.current = cola; }, [cola]);
   useEffect(() => { idxRef.current = qIdx; }, [qIdx]);
@@ -1701,29 +1731,29 @@ export default function Buscar() {
           }
 
           if (typeof data.info.duration === 'number' && isFinite(data.info.duration) && data.info.duration > 0) {
-            setDur(data.info.duration);
-            durRef.current = data.info.duration;
-            if (actualRef.current && !actualRef.current.duration) {
-              actualRef.current.duration = Math.round(data.info.duration);
+            const newD = data.info.duration;
+            const dActual = durRef.current || 0;
+            // Blindaje contra chunks de buffer en streams/VODs largos (ej: 7 horas):
+            // Solo pisamos si no teníamos duración previa o si el nuevo valor no es drásticamente menor (>= 80%)
+            if (dActual <= 0 || newD >= dActual * 0.8) {
+              setDur(newD);
+              durRef.current = newD;
+              if (actualRef.current && (!actualRef.current.duration || newD > actualRef.current.duration)) {
+                actualRef.current.duration = Math.round(newD);
+              }
             }
           }
 
           if (typeof data.info.currentTime === 'number' && isFinite(data.info.currentTime)) {
             const ct = data.info.currentTime;
-            // Descartar tiempos residuales del tema viejo (ej: > 2s) si la pista actual aún no confirmó inicio
-            if (!hasStartedPlayingCurrentTrackRef.current && ct > 2) {
-              return;
-            }
-            if (ct <= 2) {
-              hasStartedPlayingCurrentTrackRef.current = true;
-            }
+            hasStartedPlayingCurrentTrackRef.current = true;
             setPos(ct);
             posRef.current = ct;
 
-            const d = durRef.current > 0 ? durRef.current : (data.info.duration || 0);
+            const dEsperada = Math.max(durRef.current || 0, actualRef.current?.duration || 0, data.info.duration || 0);
             // Fade suave de crossover (solo volumen, sin adelantar la pista)
-            if (d > 15 && crossoverRef.current && !crossoverFadingRef.current) {
-              const restante = d - ct;
+            if (dEsperada > 15 && crossoverRef.current && !crossoverFadingRef.current) {
+              const restante = dEsperada - ct;
               if (restante <= 4.0 && restante > 2.8) {
                 setWebPlayerVolume(70);
               } else if (restante <= 2.8 && restante > 1.6) {
@@ -1734,7 +1764,7 @@ export default function Buscar() {
               }
             }
             // Fin real según el tiempo que informa YouTube: avanza una única vez.
-            if (d > 5 && ct >= d - 0.3) avanzarPorFin(msgVideoId);
+            if (dEsperada > 5 && ct >= dEsperada - 1.5) avanzarPorFin(msgVideoId);
           }
         }
         if (data.event === 'onStateChange' || data.event === 'initialDelivery') {
@@ -1755,7 +1785,14 @@ export default function Buscar() {
             setReproduciendo(false);
             reproduciendoRef.current = false;
           } else if (state === 0) {
-            avanzarPorFin(msgVideoId);
+            const dEsperada = Math.max(durRef.current || 0, actualRef.current?.duration || 0);
+            const ct = posRef.current || 0;
+            if (dEsperada > 30 && ct < dEsperada - 20) {
+              console.warn('[YouTube Web] Ended prematuro detectado en pos ' + ct + '/' + dEsperada + '. Reanudando...');
+              saltar(ct);
+            } else {
+              avanzarPorFin(msgVideoId);
+            }
           }
         }
         if (data.event === 'onReady') {
@@ -2130,6 +2167,20 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       idxRef.current = idx;
     }
     cargarLyrics(item);
+    // Consultar progreso previo guardado para reanudar en el segundo exacto
+    const savedPos = await obtenerProgreso(item.id);
+    const startSec = (savedPos && savedPos > 8) ? Math.floor(savedPos) : 0;
+    if (startSec > 0) {
+      setResumingInfo({ pos: startSec, trackId: item.id });
+      setPos(startSec);
+      posRef.current = startSec;
+      hasStartedPlayingCurrentTrackRef.current = true;
+    } else {
+      setResumingInfo(null);
+      setPos(0);
+      posRef.current = 0;
+    }
+
     // Timeout de 12s: si en ese tiempo no llegó ningún evento del reproductor nativo,
     // mostramos botón de reintento en lugar del spinner infinito.
     if (isAudio) {
@@ -2150,15 +2201,14 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       const cleanId = (item.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
       const originUrl = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://www.youtube.com';
       const currentHref = typeof window !== 'undefined' && window.location?.href ? window.location.href : originUrl;
-      const embedUrl = `https://www.youtube.com/embed/${cleanId}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(originUrl)}&widget_referrer=${encodeURIComponent(currentHref)}`;
+      const startParam = startSec > 0 ? `&start=${startSec}` : '';
+      const embedUrl = `https://www.youtube.com/embed/${cleanId}?autoplay=1&enablejsapi=1&playsinline=1&controls=1&rel=0&origin=${encodeURIComponent(originUrl)}&widget_referrer=${encodeURIComponent(currentHref)}${startParam}`;
       setMediaUri(embedUrl);
       mediaUriRef.current = embedUrl;
       setReproduciendo(true);
       reproduciendoRef.current = true;
       setError(null);
       setAudioTimeout(false);
-      setPos(0);
-      posRef.current = 0;
       const initialDur = item.duration || 0;
       setDur(initialDur);
       durRef.current = initialDur;
@@ -2180,12 +2230,19 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       const el = (globalThis as any).document?.getElementById('yt-player-iframe') as HTMLIFrameElement | null;
       if (el?.contentWindow) {
         try {
-          el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
+          if (startSec > 0) {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [{ videoId: item.id, startSeconds: startSec }] }), '*');
+          } else {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'loadVideoById', args: [item.id] }), '*');
+          }
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'unMute', args: [] }), '*');
           if (!crossoverRef.current) {
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
           }
           el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          if (startSec > 0) {
+            el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [startSec, true] }), '*');
+          }
           if (velocidadRef.current !== 1) {
             el.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
           }
@@ -2201,6 +2258,9 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
             iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setVolume', args: [100] }), '*');
           }
           iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+          if (startSec > 0) {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [startSec, true] }), '*');
+          }
           if (velocidadRef.current !== 1) {
             iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'setPlaybackRate', args: [velocidadRef.current] }), '*');
           }
@@ -2254,7 +2314,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
           setMediaUri('native:' + item.id);
           setError(null);
           await native.setEq(eqRef.current);
-          if (autoPlay && !tvRef.current) await native.play(item.id, item.title, item.channel || '', item.thumb || '');
+          if (autoPlay && !tvRef.current) await native.play(item.id, item.title, item.channel || '', item.thumb || '', startSec);
           if (audioTimeoutRef.current) { clearTimeout(audioTimeoutRef.current); audioTimeoutRef.current = null; }
           return;
         }
@@ -2545,8 +2605,19 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       try { player.currentTime = target; } catch (e) {}
     }
     setPos(target);
+    posRef.current = target;
+    if (actualRef.current) {
+      if (target > 8) {
+        guardarProgreso(actualRef.current.id, target, durRef.current, actualRef.current.title);
+      } else if (target === 0) {
+        borrarProgreso(actualRef.current.id);
+      }
+    }
   }
   async function togglePlay() {
+    if (reproduciendo && actualRef.current && posRef.current > 8) {
+      guardarProgresoInmediato(actualRef.current.id, posRef.current, durRef.current, actualRef.current.title);
+    }
     // Con Chromecast conectado, play/pausa controla el TV (el reproductor local está pausado).
     if (tvRef.current) {
       if (!tv.sonando && actual) {
@@ -2681,6 +2752,9 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   }
 
   function cerrar() {
+    if (actualRef.current && posRef.current > 8) {
+      guardarProgresoInmediato(actualRef.current.id, posRef.current, durRef.current, actualRef.current.title);
+    }
     if (esLandscape) alternarRotacion();
     if (usarNativoRef.current) native.stop();
     if (webEmbedUri) webViewCmd("var v=document.querySelector('video'); if(v){v.pause();}");
@@ -3098,7 +3172,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
   const idxEfectivo = qIdx >= 0 ? qIdx : 0;
   const enCola = listaActiva.length > 1;
   const proximos = enCola ? listaActiva.slice(idxEfectivo + 1) : [];
-  const durEfectiva = dur > 0 ? dur : (actual?.duration || 0);
+  const durBase = dur > 0 ? dur : (actual?.duration || 0);
+  const durEfectiva = Math.max(durBase, pos > 0 ? pos : 0);
   const estaSonando = Boolean(mediaUri && reproduciendo);
 
   const renderPlayerList = () => (
@@ -3229,6 +3304,22 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   ) : null}
                 </View>
               ) : <CargaAnim texto={nativeResolving ? "Resolviendo audio…" : "Cargando reproducción…"} />
+            ) : null}
+            {resumingInfo && actual && resumingInfo.trackId === actual.id ? (
+              <View style={s.resumingBadge}>
+                <Text style={s.resumingBadgeText}>⏱️ Reanudado desde {fmtTiempo(resumingInfo.pos)}</Text>
+                <Pressable
+                  focusable={true}
+                  style={s.resumingResetBtn}
+                  onPress={() => {
+                    borrarProgreso(actual.id);
+                    setResumingInfo(null);
+                    saltar(0);
+                  }}
+                >
+                  <Text style={s.resumingResetBtnText}>Desde 0:00</Text>
+                </Pressable>
+              </View>
             ) : null}
             <Barra pos={pos} dur={durEfectiva} onSeek={saltar} />
             <View style={s.timeRow}><Text style={s.timeText}>{fmtTiempo(pos)}</Text><Text style={s.timeText}>{fmtTiempo(durEfectiva)}</Text></View>
@@ -4802,6 +4893,35 @@ const s = StyleSheet.create({
   qActionText: {
     color: theme.colors.text,
     fontSize: 12,
+    fontWeight: '700',
+  },
+  resumingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    borderColor: 'rgba(212, 175, 55, 0.4)',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  resumingBadgeText: {
+    color: theme.colors.gold,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  resumingResetBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  resumingResetBtnText: {
+    color: '#fff',
+    fontSize: 11,
     fontWeight: '700',
   },
 });

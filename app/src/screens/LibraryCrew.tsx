@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -25,9 +25,14 @@ function fmtSize(bytes?: number | null) {
 }
 
 function fmtTiempo(seg?: number | null) {
-  if (!seg || seg <= 0) return '';
-  const m = Math.floor(seg / 60);
-  const s = Math.floor(seg % 60);
+  if (!seg || seg <= 0 || !isFinite(seg)) return '';
+  const total = Math.floor(seg);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
