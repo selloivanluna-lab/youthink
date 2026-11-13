@@ -109,6 +109,18 @@ export async function agregarItemAPlaylistYouTube(
       // Colocar al inicio para que el usuario la vea de inmediato arriba
       itemsCache.unshift(nuevo);
       await AsyncStorage.setItem(cacheKey, JSON.stringify(itemsCache));
+
+      // Actualizar conteo en caché de listas de YouTube
+      try {
+        const rawYtPl = await AsyncStorage.getItem('qp_cache_yt_playlists');
+        if (rawYtPl) {
+          const ytPls = JSON.parse(rawYtPl);
+          const updated = ytPls.map((p: any) =>
+            p.id === playlistIdRaw ? { ...p, items_count: Math.max(p.items_count ?? 0, itemsCache.length) } : p
+          );
+          await AsyncStorage.setItem('qp_cache_yt_playlists', JSON.stringify(updated));
+        }
+      } catch (_) {}
     }
 
     // Doble garantía: reflejar también bajo la clave local para pantallas que lean getLocalItems

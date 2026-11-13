@@ -62,6 +62,33 @@ export async function saveLocalItems(playlistId: string, items: PlaylistItem[]):
   await AsyncStorage.setItem(LOCAL_ITEMS_KEY + playlistId, JSON.stringify(items));
 }
 
+// ── Enriquecer listas con conteo exacto de canciones ──
+async function enrichWithCounts(playlists: Playlist[]): Promise<Playlist[]> {
+  return Promise.all(
+    playlists.map(async (p) => {
+      if (p.id.startsWith('yt_')) {
+        const plId = p.id.replace(/^yt_/, '');
+        try {
+          const raw = await AsyncStorage.getItem('qp_cache_yt_items_' + plId);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              return { ...p, items_count: Math.max(p.items_count ?? 0, parsed.length) };
+            }
+          }
+        } catch {}
+        return p;
+      }
+      try {
+        const items = await getLocalItems(p.id);
+        return { ...p, items_count: items.length };
+      } catch {
+        return p;
+      }
+    })
+  );
+}
+
 // ── Listas de reproducción ──
 
 export async function getPlaylists(): Promise<Playlist[]> {
@@ -87,8 +114,9 @@ export async function getPlaylists(): Promise<Playlist[]> {
         // Fusionar remotas con locales para no perder ninguna
         const remoteIds = new Set(remotasFiltradas.map((p) => p.id));
         const merged = [...remotasFiltradas, ...localList.filter((p) => !remoteIds.has(p.id) && !deletedIds.has(p.id))];
-        saveLocalPlaylists(merged).catch(() => {});
-        return merged;
+        const mergedConConteos = await enrichWithCounts(merged);
+        saveLocalPlaylists(mergedConConteos).catch(() => {});
+        return mergedConConteos;
       }
       // Si hay error de Supabase, no lanzar — usar locales como fallback
       if (error) {
@@ -102,8 +130,9 @@ export async function getPlaylists(): Promise<Playlist[]> {
     // No re-lanzar: fallback a storage local
   }
 
-  // Retornar almacenamiento local persistente (filtrando eliminadas)
-  return localList.filter((p) => !deletedIds.has(p.id));
+  // Retornar almacenamiento local persistente (filtrando eliminadas y con conteos)
+  const filtradas = localList.filter((p) => !deletedIds.has(p.id));
+  return enrichWithCounts(filtradas);
 }
 
 export async function createPlaylist(nombre: string): Promise<Playlist> {
@@ -263,6 +292,15 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
     // Reflejar de inmediato en la caché en memoria (así al abrir la lista ya está)
     memItems.set(playlistId, mergeItems(items, memItems.get(playlistId) || []));
 
+    // Actualizar items_count en la lista local de playlists
+    try {
+      const locals = await getLocalPlaylists();
+      const updated = locals.map((p) =>
+        p.id === playlistId ? { ...p, items_count: items.length } : p
+      );
+      await saveLocalPlaylists(updated);
+    } catch {}
+
     // Si es una lista con prefijo de YouTube, reflejar también en la caché de YouTube
     if (playlistId.startsWith('yt_')) {
       const plId = playlistId.replace(/^yt_/, '');
@@ -282,6 +320,16 @@ export async function addToPlaylist(playlistId: string, item: YtResult): Promise
             added_at: newItem.added_at,
           });
           await AsyncStorage.setItem(cacheKey, JSON.stringify(ytCache));
+        }
+
+        // Actualizar conteo en caché de listas de YouTube
+        const rawYtPl = await AsyncStorage.getItem('qp_cache_yt_playlists');
+        if (rawYtPl) {
+          const ytPls = JSON.parse(rawYtPl);
+          const updatedYtPls = ytPls.map((p: any) =>
+            p.id === playlistId ? { ...p, items_count: Math.max(p.items_count ?? 0, ytCache.length) } : p
+          );
+          await AsyncStorage.setItem('qp_cache_yt_playlists', JSON.stringify(updatedYtPls));
         }
       } catch (_) {}
     }
@@ -312,6 +360,15 @@ export async function removeFromPlaylist(playlistId: string, ytId: string): Prom
   await saveLocalItems(playlistId, filtered);
   memItems.set(playlistId, filtered);
 
+  // Actualizar items_count en la lista local de playlists
+  try {
+    const locals = await getLocalPlaylists();
+    const updated = locals.map((p) =>
+      p.id === playlistId ? { ...p, items_count: filtered.length } : p
+    );
+    await saveLocalPlaylists(updated);
+  } catch {}
+
   try {
     await supabase
       .from('youthink_playlist_items')
@@ -331,6 +388,61 @@ export async function updatePlaylist(id: string, newNombre: string): Promise<voi
   try {
     await supabase.from('youthink_playlists').update({ nombre: newNombre }).eq('id', id);
   } catch {}
+}
+
+// ── Guardar una playlist completa encontrada en el buscador directamente en Mis Favoritos ──
+export async function guardarPlaylistCompleta(
+  nombre: string,
+  tracks: YtResult[]
+): Promise<Playlist> {
+  const pl = await createPlaylist(nombre);
+  if (!tracks || tracks.length === 0) return pl;
+
+  const now = new Date().toISOString();
+  const items: PlaylistItem[] = tracks.map((t, idx) => {
+    const cleanId = (t.id || '').trim().replace(/^.*[?&]v=/, '').split('&')[0].split('?')[0];
+    return {
+      id: 'item_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).slice(2, 6),
+      playlist_id: pl.id,
+      yt_id: cleanId,
+      title: t.title,
+      channel: t.channel || '',
+      thumb: t.thumb || `https://i.ytimg.com/vi/${cleanId}/mqdefault.jpg`,
+      duration: t.duration || 0,
+      added_at: now,
+    };
+  });
+
+  // Guardar en almacenamiento local
+  await saveLocalItems(pl.id, items);
+  memItems.set(pl.id, items);
+
+  // Actualizar conteo en la lista de playlists
+  pl.items_count = items.length;
+  try {
+    const locals = await getLocalPlaylists();
+    const updated = locals.map((p) => (p.id === pl.id ? { ...p, items_count: items.length } : p));
+    await saveLocalPlaylists(updated);
+  } catch {}
+
+  // Sincronizar en segundo plano con Supabase si hay sesión activa
+  (async () => {
+    try {
+      const inserts = items.map((it) => ({
+        id: it.id,
+        playlist_id: pl.id,
+        yt_id: it.yt_id,
+        title: it.title,
+        channel: it.channel,
+        thumb: it.thumb,
+        duration: it.duration,
+        added_at: it.added_at,
+      }));
+      await supabase.from('youthink_playlist_items').upsert(inserts, { onConflict: 'playlist_id,yt_id', ignoreDuplicates: true });
+    } catch (_) {}
+  })();
+
+  return pl;
 }
 
 // ── Importar lista de YouTube por URL o ID (ej: https://www.youtube.com/playlist?list=PL...) ──

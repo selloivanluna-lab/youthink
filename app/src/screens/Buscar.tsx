@@ -27,8 +27,9 @@ const NativeWebView: any =
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { buscarLyrics, traducirLyrics, LyricsData } from '../lib/lyrics';
-import { getPlaylists, getLocalPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, deletePlaylist, Playlist, PlaylistItem } from '../lib/playlists';
+import { getPlaylists, getLocalPlaylists, createPlaylist, addToPlaylist, getPlaylistItems, removeFromPlaylist, updatePlaylist, deletePlaylist, guardarPlaylistCompleta, Playlist, PlaylistItem } from '../lib/playlists';
 import { obtenerListasYouTube, agregarItemAPlaylistYouTube, obtenerItemsPlaylistYouTube, CACHE_YT_ITEMS_PREFIX } from '../lib/youtubeAuth';
+import { sintonizarRadioInteligente, extenderRadioDiverso } from '../lib/radioAlgorithm';
 import { useCast, CAST_ANDROID } from '../lib/cast';
 import { TvPressable } from '../lib/useTvFocus';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -174,6 +175,17 @@ export default function Buscar() {
   const [results, setResults] = useState<YtResult[]>([]);
   const [searchType, setSearchType] = useState<'all' | 'videos' | 'songs' | 'playlists'>('all');
   const [cargandoPlaylistId, setCargandoPlaylistId] = useState<string | null>(null);
+  const [guardandoPlaylistId, setGuardandoPlaylistId] = useState<string | null>(null);
+  const [favoritosListasIds, setFavoritosListasIds] = useState<Set<string>>(new Set());
+
+  // Cargar IDs de playlists marcadas como favoritas
+  useEffect(() => {
+    AsyncStorage.getItem('qp_favoritos_playlists_ids').then((raw) => {
+      if (raw) {
+        try { setFavoritosListasIds(new Set(JSON.parse(raw))); } catch (_) {}
+      }
+    }).catch(() => {});
+  }, []);
   const [nextPage, setNextPage] = useState<string | null>(null);
   const searchReqRef = useRef(0);
   const [recomendaciones, setRecomendaciones] = useState<YtResult[]>([]);
@@ -1295,7 +1307,7 @@ export default function Buscar() {
     setCargandoRecomendaciones(false);
   }
 
-  // Iniciar estación de radio a partir de una canción
+  // Iniciar estación de radio a partir de una canción con algoritmo diverso y semántico
   async function iniciarRadioDesdeActual(track: YtResult) {
     if (!track) return;
     setIniciandoRadio(true);
@@ -1311,48 +1323,29 @@ export default function Buscar() {
     const trackItem: YtResult = { ...track, kind: 'song' };
     // Reproducir inmediatamente el tema seleccionado en modo audio
     reproducir([trackItem], 0, true, true);
-    // Navegar a la tab Radio para mostrar la estación ahí
-    const estacionNombre = (track.channel && !track.channel.toLowerCase().includes('topic'))
-      ? `📻 ${track.channel}`
-      : `📻 ${track.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()}`;
-    AsyncStorage.setItem('qp_radio_estacion_nombre', estacionNombre).catch(() => {});
-    AsyncStorage.setItem('qp_radio_cola', JSON.stringify([trackItem])).catch(() => {});
+
     navigation.navigate('Radio' as never);
     try {
-      let tracksRadio: YtResult[] = [];
-      try {
-        const res = await api.radio(track.id, 25);
-        if (res.ok && res.tracks && res.tracks.length > 0) {
-          tracksRadio = res.tracks;
-        }
-      } catch (_) {
-        // Render backend /api/radio puede fallar si YouTube bloquea IP de datacenter
-      }
+      const { tracks: tracksRadio, nombreEstacion } = await sintonizarRadioInteligente(
+        track,
+        radioLikedArtists,
+        radioDislikesRef.current,
+        radioDislikedArtistsRef.current
+      );
 
-      if (tracksRadio.length === 0) {
-        // Fallback por búsqueda de YouTube (scraping directo / NewPipe sin 502)
-        const q = (track.channel && !track.channel.toLowerCase().includes('topic'))
-          ? `${track.channel} mix`
-          : `${track.title.replace(/\[.*?\]|\(.*?\)|official|video|audio|remix|lyric/gi, '').trim()} mix`;
-        try {
-          const busq = await api.search(q, 20);
-          if (busq.ok && busq.results && busq.results.length > 0) {
-            tracksRadio = busq.results.filter((r) => r.id !== track.id);
-          }
-        } catch (_) {}
-      }
+      AsyncStorage.setItem('qp_radio_estacion_nombre', nombreEstacion).catch(() => {});
 
       if (tracksRadio.length > 0) {
-        // Encolar los temas de la estación después de la canción que ya está sonando asegurando kind song
         const radioSongs = tracksRadio.map((r) => ({ ...r, kind: 'song' as const }));
         const colaFinal = [trackItem, ...radioSongs];
         setCola(colaFinal);
         colaRef.current = colaFinal;
-        // Persistir la cola completa para que Radio.tsx la lea
         AsyncStorage.setItem('qp_radio_cola', JSON.stringify(colaFinal)).catch(() => {});
+      } else {
+        AsyncStorage.setItem('qp_radio_cola', JSON.stringify([trackItem])).catch(() => {});
       }
     } catch (e) {
-      console.warn('[Iniciar Radio]', e);
+      console.warn('[Iniciar Radio Inteligente]', e);
     } finally {
       setIniciandoRadio(false);
     }
@@ -2408,53 +2401,20 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     }
 
     // Extender la "estación" solo si la cola fue generada automáticamente
-    // (radio/recomendados). Una lista del usuario se respeta tal cual.
+    // (radio/recomendados) usando el algoritmo diverso
     if (autoExtenderRef.current && i >= c.length - 2 && c[i]?.id) {
       const cur = c[i];
       (async () => {
-        let nuevos: YtResult[] = [];
-
-        // Semilla principal: canción actual
         try {
-          const res = await api.radio(cur.id, 20);
-          if (res.ok && res.tracks && res.tracks.length > 0) nuevos = res.tracks;
-        } catch (_) {}
-
-        // Semilla aleatoria de la cola actual para diversidad de estilo
-        if (c.length >= 6) {
-          const randomIdx = Math.floor(Math.random() * Math.max(1, c.length - 2));
-          const randomSeed = c[randomIdx];
-          if (randomSeed?.id && randomSeed.id !== cur.id) {
-            try {
-              const res2 = await api.radio(randomSeed.id, 10);
-              if (res2.ok && res2.tracks?.length > 0) nuevos = [...nuevos, ...res2.tracks];
-            } catch (_) {}
-          }
-        }
-
-        if (nuevos.length === 0) {
-          try {
-            const q = (cur.channel && !cur.channel.toLowerCase().includes('topic'))
-              ? `${cur.channel} mix`
-              : `${cur.title.replace(/\[.*?\]|\(.*?\)|official|video|audio/gi, '').trim()} mix`;
-            const busq = await api.search(q, 15);
-            if (busq.ok && busq.results && busq.results.length > 0) nuevos = busq.results;
-          } catch (_) {}
-        }
-
-        if (nuevos.length > 0) {
-          const idsExistentes = new Set(colaRef.current.map((t) => t.id));
-          // Filtrar: excluir dislikes (ID y artista) y ya existentes
-          const filtrados = nuevos.filter((t) =>
-            !idsExistentes.has(t.id) &&
-            !radioDislikesRef.current.has(t.id) &&
-            !(t.channel && radioDislikedArtistsRef.current.has(t.channel))
+          const ordenados = await extenderRadioDiverso(
+            cur,
+            colaRef.current,
+            radioLikedArtists,
+            radioDislikesRef.current,
+            radioDislikedArtistsRef.current
           );
-          if (filtrados.length > 0) {
-            // Priorizar artistas con likes: ponerlos primero
-            const conLike = filtrados.filter((t) => t.channel && radioLikedArtists.has(t.channel));
-            const sinLike = filtrados.filter((t) => !t.channel || !radioLikedArtists.has(t.channel));
-            const ordenados = [...conLike, ...sinLike];
+
+          if (ordenados.length > 0) {
             setCola((prev) => {
               const actualizada = [...prev, ...ordenados];
               colaRef.current = actualizada;
@@ -2462,7 +2422,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
               return actualizada;
             });
           }
-        }
+        } catch (_) {}
       })();
     }
 
@@ -2947,6 +2907,13 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
         const res = await agregarItemAPlaylistYouTube(playlist.id, actual);
         setPlaylistModalOpen(false);
         setNuevaListaNombre('');
+        setPlaylists((prev) =>
+          prev.map((p) =>
+            p.id === playlist.id
+              ? { ...p, items_count: (p.items_count ?? 0) + 1 }
+              : p
+          )
+        );
         Alert.alert(
           '✅ Agregada',
           `"${actual.title}" se añadió a tu lista "${playlist.nombre}"${res.enYt ? ' en YouTube 🎵' : ' (localmente — se sincronizará cuando haya conexión)'}`
@@ -2956,6 +2923,13 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
         await addToPlaylist(playlist.id, actual);
         setPlaylistModalOpen(false);
         setNuevaListaNombre('');
+        setPlaylists((prev) =>
+          prev.map((p) =>
+            p.id === playlist.id
+              ? { ...p, items_count: (p.items_count ?? 0) + 1 }
+              : p
+          )
+        );
         Alert.alert('✅ Agregada', `"${actual.title}" se añadió a "${playlist.nombre}"`);
       }
     } catch (e: any) {
@@ -3067,10 +3041,68 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
         await removeFromPlaylist(managingPlaylist.id, ytId);
         setManagingItems((prev) => prev.filter((it) => it.yt_id !== ytId));
       }
+      setPlaylists((prev) =>
+        prev.map((p) =>
+          p.id === managingPlaylist.id
+            ? { ...p, items_count: Math.max(0, (p.items_count ?? 1) - 1) }
+            : p
+        )
+      );
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'No se pudo borrar');
     }
     setDeletingItem(null);
+  }
+
+  // ── Guardar una playlist de YouTube completa en Mis Listas / Favoritos ──
+  async function guardarPlaylistEnFavoritos(item: YtResult) {
+    if (!item?.id) return;
+    setGuardandoPlaylistId(item.id);
+    try {
+      let tracks: YtResult[] = [];
+      try {
+        const res = await api.playlist(item.id);
+        if (res.ok && Array.isArray(res.tracks) && res.tracks.length > 0) {
+          tracks = res.tracks;
+        }
+      } catch (_) {}
+
+      // Si la API no devolvió tracks pero hay firstVideoId
+      if (tracks.length === 0 && item.firstVideoId) {
+        tracks = [{
+          id: item.firstVideoId,
+          title: item.title,
+          channel: item.channel || '',
+          duration: item.duration || 0,
+          thumb: item.thumb,
+          url: 'https://www.youtube.com/watch?v=' + item.firstVideoId,
+          kind: 'song',
+        }];
+      }
+
+      const tituloLimpio = item.title.replace(/^Lista\s*-\s*/i, '').trim();
+      const pl = await guardarPlaylistCompleta(tituloLimpio, tracks);
+
+      // Actualizar listas en el estado inmediatamente
+      setPlaylists((prev) => [pl, ...prev.filter((p) => p.id !== pl.id)]);
+
+      // Marcar en favoritos local
+      setFavoritosListasIds((prev) => {
+        const next = new Set(prev);
+        next.add(item.id);
+        AsyncStorage.setItem('qp_favoritos_playlists_ids', JSON.stringify([...next])).catch(() => {});
+        return next;
+      });
+
+      Alert.alert(
+        '⭐ Agregada a tus listas',
+        `"${tituloLimpio}" (${tracks.length} ${tracks.length === 1 ? 'canción' : 'canciones'}) ya está guardada en tus listas de reproducción favoritas.`
+      );
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'No se pudo guardar la lista de reproducción');
+    } finally {
+      setGuardandoPlaylistId(null);
+    }
   }
 
   function abrirRenombrar(playlist: Playlist) {
@@ -3683,6 +3715,8 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
         renderItem={({ item, index }) => {
           const esPlaylist = item.kind === 'playlist' || item.kind === 'album';
           const esCargando = cargandoPlaylistId === item.id;
+          const esGuardando = guardandoPlaylistId === item.id;
+          const esFavorita = favoritosListasIds.has(item.id);
           const modoItem = searchType === 'videos' ? false : (searchType === 'songs' || searchType === 'playlists') ? true : soloAudio;
 
           if (esPlaylist) {
@@ -3714,6 +3748,32 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   </View>
                 </TvPressable>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                  <TvPressable
+                    onPress={() => guardarPlaylistEnFavoritos(item)}
+                    style={{
+                      paddingHorizontal: 9,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      backgroundColor: esFavorita ? 'rgba(212, 175, 55, 0.18)' : theme.colors.surface2,
+                      borderWidth: 1,
+                      borderColor: esFavorita ? theme.colors.gold : theme.colors.border,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    disabled={esGuardando}
+                  >
+                    {esGuardando ? (
+                      <ActivityIndicator size="small" color={theme.colors.gold} />
+                    ) : (
+                      <>
+                        <Text style={{ fontSize: 13 }}>{esFavorita ? '⭐' : '☆'}</Text>
+                        <Text style={{ color: esFavorita ? theme.colors.gold : theme.colors.text, fontSize: 12, fontWeight: '700' }}>
+                          {esFavorita ? 'Guardada' : 'Favorito'}
+                        </Text>
+                      </>
+                    )}
+                  </TvPressable>
                   <TvPressable
                     onPress={() => reproducirPlaylist(item)}
                     style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.surface2, flexDirection: 'row', alignItems: 'center', gap: 4 }}
@@ -4283,7 +4343,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                         <View style={{ flex: 1 }}>
                           <Text style={s.plItemText} numberOfLines={1}>{item.nombre}</Text>
                           <Text style={{ color: theme.colors.textDim, fontSize: 11, marginTop: 1 }}>
-                            {esYT ? (item.items_count !== undefined ? `${item.items_count} temas · YouTube` : 'YouTube') : 'YouThink'}
+                            {item.items_count !== undefined
+                              ? `${item.items_count} ${item.items_count === 1 ? 'tema' : 'temas'} · ${esYT ? 'YouTube' : 'YouThink'}`
+                              : (esYT ? 'YouTube' : 'YouThink')}
                           </Text>
                         </View>
                         {addingToPlaylist ? <ActivityIndicator color={theme.colors.gold} size="small" /> : <Text style={s.plItemArrow}>›</Text>}

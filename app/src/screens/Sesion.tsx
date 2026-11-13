@@ -237,6 +237,7 @@ export default function Sesion() {
     setCreandoLista(true);
     try {
       const pl = await createPlaylist(nom);
+      pl.items_count = 0;
       setPlaylists((prev) => [pl, ...prev.filter((p) => p.id !== pl.id)]);
       setNuevaLista('');
     } catch {}
@@ -287,6 +288,13 @@ export default function Sesion() {
     if (!listaSeleccionada) return;
     await removeFromPlaylist(listaSeleccionada.id, ytId);
     setItemsLista((prev) => prev.filter((it) => it.yt_id !== ytId));
+    setPlaylists((prev) =>
+      prev.map((p) =>
+        p.id === listaSeleccionada.id
+          ? { ...p, items_count: Math.max(0, (p.items_count ?? 1) - 1) }
+          : p
+      )
+    );
   };
 
   const borrarItemYT = async (videoId: string) => {
@@ -296,6 +304,13 @@ export default function Sesion() {
 
     // 1. Eliminar inmediatamente del estado visual
     setYtItems((prev) => prev.filter((it) => it.id !== cleanId && it.yt_id !== cleanId && it.id !== videoId));
+    setListasYT((prev) =>
+      prev.map((p) =>
+        p.id === ytListaSeleccionada.id
+          ? { ...p, items_count: Math.max(0, (p.items_count ?? 1) - 1) }
+          : p
+      )
+    );
 
     // 2. Eliminar de la caché local de YouTube y local general
     try {
@@ -606,7 +621,9 @@ export default function Sesion() {
                     <Pressable style={{ flex: 1 }} onPress={() => estaAbierta ? cerrarLista() : verItems(p)}>
                       <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>🎵 {p.nombre}</Text>
                       <Text style={{ color: theme.colors.textDim, fontSize: 12, marginTop: 2 }}>
-                        {estaAbierta ? (itemsLista.length > 0 ? `${itemsLista.length} canciones · Tocar para cerrar` : 'Tocar para cerrar') : 'Tocar para ver canciones'}
+                        {estaAbierta
+                          ? (itemsLista.length > 0 ? `${itemsLista.length} canciones · Tocar para cerrar` : 'Tocar para cerrar')
+                          : (p.items_count !== undefined ? `${p.items_count} ${p.items_count === 1 ? 'canción' : 'canciones'} · Tocar para ver` : 'Tocar para ver canciones')}
                       </Text>
                     </Pressable>
                     <Pressable onPress={() => borrarLista(p.id)} style={{ padding: 6 }}>

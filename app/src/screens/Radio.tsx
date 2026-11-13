@@ -14,6 +14,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, YtResult } from '../lib/api';
 import { theme } from '../theme';
+import { sintonizarRadioInteligente } from '../lib/radioAlgorithm';
 
 const GENEROS = [
   { id: 'rock-nacional', nombre: '🇦🇷 Rock Nacional', seed: 'Spinetta Charly Fito Soda' },
@@ -78,16 +79,37 @@ export default function Radio() {
     setVistaActiva('estacion');
     try {
       let tracksRadio: YtResult[] = [];
-      try {
-        const res = await api.radio(seed, 30);
-        if (res.ok && res.tracks && res.tracks.length > 0) {
-          tracksRadio = res.tracks;
-        }
-      } catch (_) {}
 
+      // Si seed parece un ID de YouTube (11 caracteres alfanuméricos)
+      if (/^[a-zA-Z0-9_-]{11}$/.test(seed.trim())) {
+        try {
+          const res = await sintonizarRadioInteligente({
+            id: seed.trim(),
+            title: nombreVisible,
+            channel: '',
+            thumb: '',
+            url: '',
+            duration: 0,
+            kind: 'song',
+          });
+          tracksRadio = res.tracks;
+        } catch (_) {}
+      } else {
+        // Buscar un track representativo para nutrir el algoritmo semántico
+        try {
+          const busq = await api.search(seed, 5, 'songs');
+          if (busq.ok && busq.results && busq.results.length > 0) {
+            const seedTrack = busq.results[0];
+            const res = await sintonizarRadioInteligente(seedTrack);
+            tracksRadio = [seedTrack, ...res.tracks.filter((t) => t.id !== seedTrack.id)];
+          }
+        } catch (_) {}
+      }
+
+      // Fallback si la búsqueda semántica no devolvió resultados
       if (tracksRadio.length === 0) {
         try {
-          const busq = await api.search(`${seed} mix`, 25);
+          const busq = await api.search(`${seed} mix`, 25, 'songs');
           if (busq.ok && busq.results && busq.results.length > 0) {
             tracksRadio = busq.results;
           }
