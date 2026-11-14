@@ -51,6 +51,7 @@ export default function LibraryCrew() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState('');
   const webAudioRef = useRef<any>(null);
 
@@ -106,6 +107,7 @@ export default function LibraryCrew() {
 
     setUploading(true);
     setUploadProgress(0);
+    setUploadError(null);
     try {
       // Upload proxeado por el server (evita CORS de R2 en web/iPhone)
       await api.crewUpload({
@@ -120,13 +122,19 @@ export default function LibraryCrew() {
       });
       setUploadProgress(100);
 
+      setTimeout(() => {
+        setUploadOpen(false);
+        setUTitle(''); setUArtist(''); setUFile(null);
+        setUploading(false);
+        setUploadProgress(0);
+        cargar();
+      }, 500);
+
       Alert.alert('¡Listo!', `"${uTitle}" subido a Library Crew 👥`);
-      setUploadOpen(false);
-      setUTitle(''); setUArtist(''); setUFile(null);
-      cargar();
     } catch (e: any) {
-      Alert.alert('Error al subir', e?.message || 'Error desconocido');
-    } finally {
+      const msg = e?.message || 'Error desconocido';
+      setUploadError(msg);
+      Alert.alert('Error al subir', msg);
       setUploading(false);
       setUploadProgress(0);
     }
@@ -226,7 +234,7 @@ export default function LibraryCrew() {
 
       {/* Barra de acciones */}
       <View style={s.actionRow}>
-        <Pressable focusable={true} style={s.uploadBtn} onPress={() => setUploadOpen(true)}>
+        <Pressable focusable={true} style={s.uploadBtn} onPress={() => { setUploadError(null); setUploadOpen(true); }}>
           <Text style={s.uploadBtnText}>⬆️  Subir track</Text>
         </Pressable>
         <Pressable focusable={true} style={s.refreshBtn} onPress={cargar} disabled={loading}>
@@ -290,6 +298,12 @@ export default function LibraryCrew() {
               onChangeText={setUArtist}
               editable={!uploading}
             />
+
+            {uploadError ? (
+              <View style={{ backgroundColor: '#3a1515', padding: 8, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#ff4444' }}>
+                <Text style={{ color: '#ff8888', fontSize: 12 }}>⚠️ {uploadError}</Text>
+              </View>
+            ) : null}
 
             {/* Progress bar */}
             {uploading ? (

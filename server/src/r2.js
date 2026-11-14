@@ -29,6 +29,15 @@ function sha256hex(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
+/** Derivación estándar AWS Signature V4 */
+function getSignatureKey(key, dateStamp, regionName, serviceName) {
+  const kDate = hmac(Buffer.from(`AWS4${key}`), dateStamp);
+  const kRegion = hmac(kDate, regionName);
+  const kService = hmac(kRegion, serviceName);
+  const kSigning = hmac(kService, 'aws4_request');
+  return kSigning;
+}
+
 /** Genera presigned URL para PUT (subir) o GET (descargar).
  *  expiresIn: segundos de validez (máx. 604800 = 7 días para R2) */
 function presignedUrl({ key, method = 'PUT', expiresIn = 3600, contentType }) {
@@ -71,8 +80,7 @@ function presignedUrl({ key, method = 'PUT', expiresIn = 3600, contentType }) {
   ].join('\n');
 
   // Derivar signing key
-  const signingKey = ['aws4', dateStamp, R2_REGION, R2_SERVICE, 'aws4_request']
-    .reduce((k, data) => hmac(k, data), Buffer.from(`AWS4${secretKey}`));
+  const signingKey = getSignatureKey(secretKey, dateStamp, R2_REGION, R2_SERVICE);
 
   const signature = hmac(signingKey, stringToSign, 'hex');
 
@@ -96,13 +104,15 @@ async function deleteObject(key) {
   const credScope = `${dateStamp}/${R2_REGION}/${R2_SERVICE}/aws4_request`;
   const objPath   = `/${bucket}/${key}`;
 
+  const emptyHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
   const canonicalReq = [
     'DELETE',
     objPath,
     '',
-    `host:${host}\nx-amz-date:${amzDate}\n`,
-    'host;x-amz-date',
-    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', // sha256('')
+    `host:${host}\nx-amz-content-sha256:${emptyHash}\nx-amz-date:${amzDate}\n`,
+    'host;x-amz-content-sha256;x-amz-date',
+    emptyHash,
   ].join('\n');
 
   const stringToSign = [
@@ -112,12 +122,11 @@ async function deleteObject(key) {
     sha256hex(canonicalReq),
   ].join('\n');
 
-  const signingKey = ['aws4', dateStamp, R2_REGION, R2_SERVICE, 'aws4_request']
-    .reduce((k, data) => hmac(k, data), Buffer.from(`AWS4${secretKey}`));
+  const signingKey = getSignatureKey(secretKey, dateStamp, R2_REGION, R2_SERVICE);
 
   const signature = hmac(signingKey, stringToSign, 'hex');
 
-  const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope},SignedHeaders=host;x-amz-date,Signature=${signature}`;
+  const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope},SignedHeaders=host;x-amz-content-sha256;x-amz-date,Signature=${signature}`;
 
   const url = `https://${host}${objPath}`;
   const resp = await fetch(url, {
@@ -125,6 +134,7 @@ async function deleteObject(key) {
     headers: {
       'Host': host,
       'X-Amz-Date': amzDate,
+      'X-Amz-Content-Sha256': emptyHash,
       'Authorization': authHeader,
     },
   });
@@ -136,7 +146,7 @@ async function putObject(key, buffer, contentType) {
   const { accessKey, secretKey, bucket } = getR2Creds();
   const host      = r2Host();
   const now       = new Date();
-  const amzDate   = now.toISOString().replace(/[-:]|\\.\\d{3}/g, '').slice(0, 15) + 'Z';
+  const amzDate   = now.toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
   const dateStamp = amzDate.slice(0, 8);
   const credScope = `${dateStamp}/${R2_REGION}/${R2_SERVICE}/aws4_request`;
   const objPath   = `/${bucket}/${key}`;
@@ -158,8 +168,7 @@ async function putObject(key, buffer, contentType) {
     sha256hex(canonicalReq),
   ].join('\n');
 
-  const signingKey = ['aws4', dateStamp, R2_REGION, R2_SERVICE, 'aws4_request']
-    .reduce((k, data) => hmac(k, data), Buffer.from(`AWS4${secretKey}`));
+  const signingKey = getSignatureKey(secretKey, dateStamp, R2_REGION, R2_SERVICE);
 
   const signature = hmac(signingKey, stringToSign, 'hex');
   const authHeader = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credScope},SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,Signature=${signature}`;
