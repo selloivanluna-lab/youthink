@@ -20,6 +20,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { api, YtResult } from '../lib/api';
+import { downloadFile } from '../lib/downloads';
 // WebView: fallback de reproducción en Android cuando el módulo nativo no está
 // disponible. Se carga sólo en nativo para no romper el bundle de web.
 const NativeWebView: any =
@@ -708,6 +709,8 @@ export default function Buscar() {
 
   // Descarga
   const [descargando, setDescargando] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0); // 0–100
+  const [downloadDone, setDownloadDone] = useState(false);
 
   // Info (IA sobre artista/canción)
   const [infoOpen, setInfoOpen] = useState(false);
@@ -2777,65 +2780,64 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   async function descargar() {
     if (!actual) return;
     setDescargando(true);
+    setDownloadProgress(0);
+    setDownloadDone(false);
+
     const cleanTitle = (actual.title || actual.id).replace(/[/\\:*?"<>|]/g, '_').slice(0, 80);
-    const ext = soloAudio ? '.m4a' : '.mp4';
-    const filename = cleanTitle + ext;
-    const url = (soloAudio ? api.audioClipUrl(actual.id) : api.clipUrl(actual.id)) + `&dl=1&nombre=${encodeURIComponent(filename)}`;
+    const filename = cleanTitle + '.mp3';
 
     try {
-      // Android con módulo nativo: resolvemos el stream EN EL TELÉFONO (IP real,
-      // sin el bloqueo que YouTube aplica a los servidores de Render) y dejamos
-      // que Android lo descargue/abra. Evita el backend roto por completo.
+      let audioUrl: string;
+
+      // Android con módulo nativo: resolver la URL directamente en el teléfono
+      // (IP residencial, sin bloqueos de servidor)
       if (Platform.OS !== 'web' && QpAudio) {
         try {
-          const r: any = soloAudio
-            ? await QpAudio.resolveAudio(actual.id)
-            : await QpAudio.resolveVideo(actual.id);
+          const r: any = await QpAudio.resolveAudio(actual.id);
           if (r && r.url) {
-            await Linking.openURL(r.url);
-            return;
+            audioUrl = r.url;
+          } else {
+            const res = await api.previewAudio(actual.id);
+            audioUrl = res.audio;
           }
-        } catch (_) {
-          // Si el módulo no puede resolverlo, probamos el backend de siempre.
+        } catch {
+          const res = await api.previewAudio(actual.id);
+          audioUrl = res.audio;
         }
+      } else if (Platform.OS === 'web') {
+        // Web: usar endpoint del backend con Content-Disposition attachment
+        audioUrl =
+          api.audioClipUrl(actual.id) +
+          `&dl=1&nombre=${encodeURIComponent(filename)}`;
+      } else {
+        const res = await api.previewAudio(actual.id);
+        audioUrl = res.audio;
       }
 
-      // 1. Asegurar que el backend haya generado el clip en disco (evita error de archivo inexistente)
-      if (soloAudio) {
-        await api.previewAudio(actual.id);
-      } else {
-        await api.preview(actual.id);
-      }
+      await downloadFile(
+        audioUrl,
+        filename,
+        {
+          id: actual.id,
+          title: actual.title || actual.id,
+          artist: actual.channel || '',
+          thumb: actual.thumb,
+          source: 'youtube',
+          duration: actual.duration,
+        },
+        (p) => setDownloadProgress(Math.round(p * 100)),
+      );
 
-      // 2. Disparar descarga directa
-      if (Platform.OS === 'web') {
-        const a = (globalThis as any).document?.createElement('a');
-        if (a) {
-          a.href = url;
-          a.download = filename;
-          (globalThis as any).document.body?.appendChild(a);
-          a.click();
-          setTimeout(() => a.remove(), 1000);
-        } else {
-          (globalThis as any).window?.open(url, '_blank');
-        }
-      } else {
-        await Linking.openURL(url);
-      }
+      setDownloadDone(true);
+      setTimeout(() => {
+        setDownloadDone(false);
+        setDownloadProgress(0);
+      }, 3000);
     } catch (e: any) {
-      console.warn('[Descarga] Advertencia en pre-generación:', e);
-      // Intento directo vía enlace URL (el servidor ahora también autogenera en /api/aclip y /api/clip)
-      try {
-        if (Platform.OS === 'web') {
-          (globalThis as any).window?.open(url, '_blank');
-        } else {
-          await Linking.openURL(url);
-        }
-      } catch (_) {
-        Alert.alert('Descarga', 'El servidor está procesando el archivo. Por favor reintentá en unos segundos.');
-      }
+      console.warn('[Descarga] Error:', e);
+      Alert.alert('Error de descarga', e?.message || 'No se pudo descargar el audio.');
     } finally {
-      setTimeout(() => setDescargando(false), 2000);
+      setDescargando(false);
     }
   }
 
@@ -3379,7 +3381,15 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 disabled={!mediaUri || descargando}
               >
                 <Text style={s.actionBtnIcon}>⬇️</Text>
-                <Text style={s.actionBtnText}>{descargando ? 'Descargando…' : 'Descargar'}</Text>
+                <Text style={s.actionBtnText}>
+                  {downloadDone
+                    ? '✓ Guardado'
+                    : descargando && downloadProgress > 0
+                    ? `Guardando ${downloadProgress}%`
+                    : descargando
+                    ? 'Preparando…'
+                    : 'Descargar'}
+                </Text>
               </Pressable>
               <Pressable focusable={true}
                 style={s.actionBtn}

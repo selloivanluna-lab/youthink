@@ -37,8 +37,8 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
 
   // En Web, si la fuente NO es 'crew', el miniplayer de YouTube lo renderiza el portal
   // persistente de Buscar.tsx para mantener el iframe montado sin duplicar la interfaz.
-  // Pero cuando suena Library Crew, MiniPlayerGlobal se encarga de mostrarlo tanto en Web como en móvil.
-  if (Platform.OS === 'web' && actual.source !== 'crew') {
+  // Pero cuando suena Library Crew o una Descarga, MiniPlayerGlobal se encarga de mostrarlo tanto en Web como en móvil.
+  if (Platform.OS === 'web' && actual.source !== 'crew' && actual.source !== 'download') {
     return null;
   }
 

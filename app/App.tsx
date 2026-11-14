@@ -9,7 +9,7 @@ import Buscar from './src/screens/Buscar';
 import Radio from './src/screens/Radio';
 import LibraryCrew from './src/screens/LibraryCrew';
 import TapTempo from './src/screens/TapTempo';
-import Placeholder from './src/screens/Placeholder';
+import Descargas from './src/screens/Descargas';
 import Sesion from './src/screens/Sesion';
 // MiniPlayerGlobal: solo en nativo y solo cuando NO estamos en la tab Play
 // (en web el mini player vive dentro del portal de Buscar.tsx para mantener el iframe vivo)
@@ -18,10 +18,6 @@ import { playerStore } from './src/lib/playerStore';
 import { theme } from './src/theme';
 
 const Tab = createBottomTabNavigator();
-
-function Descargas() {
-  return <Placeholder title="Descargas" emoji="⬇️" nota="Biblioteca offline (expo-file-system) — Fase 5." />;
-}
 
 const navTheme = {
   ...DarkTheme,
@@ -117,6 +113,8 @@ export default function App() {
               const act = playerStore.getState().actual;
               if (act?.source === 'crew') {
                 try { navigationRef.navigate('Library Crew' as never); } catch (_) {}
+              } else if (act?.source === 'download') {
+                try { navigationRef.navigate('Descargas' as never); } catch (_) {}
               } else {
                 try { navigationRef.navigate('Play' as never); } catch (_) {}
               }

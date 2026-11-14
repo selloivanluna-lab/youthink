@@ -14,6 +14,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import { api, CrewTrack } from '../lib/api';
+import { downloadFile } from '../lib/downloads';
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import { playerStore } from '../lib/playerStore';
 import { theme } from '../theme';
@@ -743,6 +744,33 @@ export default function LibraryCrew() {
   }
 
   // ─── Renders ────────────────────────────────────────────────────────────────
+  async function descargarTrackCrew(track: CrewTrack) {
+    if (!track.audio_url) {
+      Alert.alert('Error', 'No hay URL de audio disponible para este track.');
+      return;
+    }
+    const cleanTitle = (track.title || track.id).replace(/[/\\:*?"<>|]/g, '_').slice(0, 80);
+    const filename = `crew_${cleanTitle}.mp3`;
+    try {
+      Alert.alert('Descargando', `Iniciando descarga de "${track.title}"…`);
+      await downloadFile(
+        track.audio_url,
+        filename,
+        {
+          id: track.id,
+          title: track.title,
+          artist: track.artist || track.uploaded_by || 'Library Crew',
+          thumb: track.cover_url || undefined,
+          source: 'crew',
+          duration: track.duration ?? undefined,
+        },
+      );
+      Alert.alert('✅ Guardado', `"${track.title}" se guardó en tus descargas.`);
+    } catch (e: any) {
+      Alert.alert('Error', 'No se pudo descargar: ' + (e?.message || String(e)));
+    }
+  }
+
   const playingTrack = useMemo(() => {
     return tracks.find(t => t.id === playingId) || null;
   }, [tracks, playingId]);
@@ -796,6 +824,14 @@ export default function LibraryCrew() {
             hitSlop={8}
           >
             <Text style={s.actionIconText}>➕📂</Text>
+          </Pressable>
+          <Pressable
+            focusable={true}
+            style={s.actionIconBtn}
+            onPress={() => descargarTrackCrew(item)}
+            hitSlop={8}
+          >
+            <Text style={s.actionIconText}>⬇️</Text>
           </Pressable>
           {soyUploader ? (
             <Pressable focusable={true} style={s.actionIconBtn} onPress={() => eliminar(item)} hitSlop={8}>
