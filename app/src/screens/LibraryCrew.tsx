@@ -752,6 +752,32 @@ export default function LibraryCrew() {
   }
 
   async function eliminar(track: CrewTrack) {
+    const proceder = async () => {
+      try {
+        await api.crewDeleteTrack(track.id);
+        if (playingId === track.id) detenerAudioCrew();
+        setTracks(prev => prev.filter(t => t.id !== track.id));
+        const actualizadas = playlists.map(pl => ({
+          ...pl,
+          trackIds: pl.trackIds.filter(id => id !== track.id),
+        }));
+        persistirPlaylists(actualizadas);
+        if (Platform.OS === 'web') {
+          (globalThis as any).alert?.(`"${track.title}" eliminado de Library Crew.`);
+        }
+      } catch (e: any) {
+        const msg = e?.message || 'No se pudo eliminar';
+        if (Platform.OS === 'web') (globalThis as any).alert?.(msg);
+        else Alert.alert('Error', msg);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const ok = (globalThis as any).confirm?.(`¿Eliminar "${track.title}" de Library Crew? Esta acción no se puede deshacer.`);
+      if (ok) proceder();
+      return;
+    }
+
     Alert.alert(
       'Eliminar track',
       `¿Eliminar "${track.title}" de Library Crew? Esta acción no se puede deshacer.`,
@@ -759,20 +785,7 @@ export default function LibraryCrew() {
         { text: 'Cancelar', style: 'cancel' },
         {
           text: 'Eliminar', style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.crewDeleteTrack(track.id);
-              if (playingId === track.id) detenerAudioCrew();
-              setTracks(prev => prev.filter(t => t.id !== track.id));
-              const actualizadas = playlists.map(pl => ({
-                ...pl,
-                trackIds: pl.trackIds.filter(id => id !== track.id),
-              }));
-              persistirPlaylists(actualizadas);
-            } catch (e: any) {
-              Alert.alert('Error', e?.message || 'No se pudo eliminar');
-            }
-          },
+          onPress: proceder,
         },
       ]
     );
@@ -876,11 +889,9 @@ export default function LibraryCrew() {
           >
             <Text style={s.actionIconText}>⬇️</Text>
           </Pressable>
-          {soyUploader ? (
-            <Pressable focusable={true} style={s.actionIconBtn} onPress={() => eliminar(item)} hitSlop={8}>
-              <Text style={s.actionIconText}>🗑</Text>
-            </Pressable>
-          ) : null}
+          <Pressable focusable={true} style={s.actionIconBtn} onPress={() => eliminar(item)} hitSlop={8}>
+            <Text style={s.actionIconText}>🗑</Text>
+          </Pressable>
         </View>
       </View>
     );

@@ -588,6 +588,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (p === '/api/debug-ytdlp') {
+    const id = (url.searchParams.get('id') || 'dQw4w9WgXcQ').trim();
+    const ytdlp = findBin('yt-dlp');
+    const deno = findDeno();
+    const client = url.searchParams.get('client') || 'web_embedded';
+    const args = [];
+    if (deno) args.push('--js-runtimes', 'deno:' + deno);
+    if (client !== 'none') args.push('--extractor-args', 'youtube:player_client=' + client);
+    args.push('-g', '-f', ytStreamFormat('audio'), '--no-warnings', '--no-playlist', 'https://www.youtube.com/watch?v=' + id);
+    const t0 = Date.now();
+    let pProc;
+    try { pProc = cp.spawn(ytdlp, args); } catch (e) { respond(res, 500, { error: e.message }); return; }
+    let out = '', err = '', done = false;
+    pProc.stdout.on('data', d => out += d);
+    pProc.stderr.on('data', d => err += d);
+    pProc.on('close', code => {
+      if (done) return; done = true;
+      respond(res, 200, { ok: code === 0, ms: Date.now() - t0, code, out: out.trim(), err: err.trim(), args });
+    });
+    setTimeout(() => {
+      if (done) return; done = true;
+      try { pProc.kill('SIGKILL'); } catch (_) {}
+      respond(res, 504, { ok: false, ms: Date.now() - t0, timeout: true, out: out.trim(), err: err.trim() });
+    }, 20000);
+    return;
+  }
+
   // Página principal de la app YouThink (requerido por Google Verification)
   if (p === '/' || p === '/home') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
