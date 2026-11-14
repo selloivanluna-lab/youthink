@@ -14,12 +14,13 @@ import MarqueeText from './MarqueeText';
 
 interface MiniPlayerGlobalProps {
   onPressExpand?: () => void;
+  currentTab?: string;
 }
 
 // Altura por defecto de la barra de pestañas de React Navigation (bottom-tabs v6)
 const TAB_BAR_HEIGHT = 49;
 
-export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProps) {
+export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlayerGlobalProps) {
   const [state, setState] = useState<PlayerState>(playerStore.getState());
   const insets = useSafeAreaInsets();
 
@@ -35,7 +36,18 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
     return null;
   }
 
-  // En Web, si la fuente NO es 'crew', el miniplayer de YouTube lo renderiza el portal
+  // Si suena Library Crew y estamos dentro de la pestaña Library Crew,
+  // la propia pantalla ya muestra su barra completa con seekbar y ecualizador.
+  if (actual.source === 'crew' && currentTab === 'Library Crew') {
+    return null;
+  }
+
+  // Si suena YouTube y estamos en la pestaña Play, Buscar.tsx ya tiene su reproductor.
+  if (actual.source !== 'crew' && actual.source !== 'download' && currentTab === 'Play') {
+    return null;
+  }
+
+  // En Web, si la fuente NO es 'crew' ni 'download', el miniplayer de YouTube lo renderiza el portal
   // persistente de Buscar.tsx para mantener el iframe montado sin duplicar la interfaz.
   // Pero cuando suena Library Crew o una Descarga, MiniPlayerGlobal se encarga de mostrarlo tanto en Web como en móvil.
   if (Platform.OS === 'web' && actual.source !== 'crew' && actual.source !== 'download') {

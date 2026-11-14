@@ -787,7 +787,9 @@ export default function LibraryCrew() {
     const cleanTitle = (track.title || track.id).replace(/[/\\:*?"<>|]/g, '_').slice(0, 80);
     const filename = `crew_${cleanTitle}.mp3`;
     try {
-      Alert.alert('Descargando', `Iniciando descarga de "${track.title}"…`);
+      if (Platform.OS !== 'web') {
+        Alert.alert('Descargando', `Iniciando descarga de "${track.title}"…`);
+      }
       await downloadFile(
         track.audio_url,
         filename,
@@ -800,9 +802,15 @@ export default function LibraryCrew() {
           duration: track.duration ?? undefined,
         },
       );
-      Alert.alert('✅ Guardado', `"${track.title}" se guardó en tus descargas.`);
+      if (Platform.OS === 'web') {
+        (globalThis as any).alert?.(`"${track.title}" guardado en tus descargas y en tu equipo.`);
+      } else {
+        Alert.alert('✅ Guardado', `"${track.title}" se guardó en tus descargas.`);
+      }
     } catch (e: any) {
-      Alert.alert('Error', 'No se pudo descargar: ' + (e?.message || String(e)));
+      const msg = 'No se pudo descargar: ' + (e?.message || String(e));
+      if (Platform.OS === 'web') (globalThis as any).alert?.(msg);
+      else Alert.alert('Error', msg);
     }
   }
 

@@ -109,6 +109,7 @@ export default function App() {
 
           {/* Mini-reproductor global: visible en móvil nativo en todas las pestañas, y en web cuando suena Library Crew */}
           <MiniPlayerGlobal
+            currentTab={currentTab}
             onPressExpand={() => {
               const act = playerStore.getState().actual;
               if (act?.source === 'crew') {
