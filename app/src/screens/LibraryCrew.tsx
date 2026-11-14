@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import { api, CrewTrack } from '../lib/api';
 import { downloadFile } from '../lib/downloads';
+import { supabase } from '../lib/supabase';
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import { playerStore } from '../lib/playerStore';
 import { theme } from '../theme';
@@ -127,6 +128,7 @@ export default function LibraryCrew() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState('');
+  const [myUploadedTrackIds, setMyUploadedTrackIds] = useState<Set<string>>(new Set());
   const webAudioRef = useRef<any>(null);
 
   // Campos del modal de subida
@@ -144,6 +146,19 @@ export default function LibraryCrew() {
 
   useEffect(() => {
     AsyncStorage.getItem('qp_user_email').then(v => { if (v) setUserEmail(v.trim()); }).catch(() => {});
+    AsyncStorage.getItem('qp_my_uploaded_track_ids').then(raw => {
+      if (raw) {
+        try { setMyUploadedTrackIds(new Set(JSON.parse(raw))); } catch (_) {}
+      }
+    }).catch(() => {});
+    supabase.auth.getUser().then((res: any) => {
+      const u = res?.data?.user;
+      if (u?.email) {
+        const em = u.email.trim();
+        setUserEmail(em);
+        AsyncStorage.setItem('qp_user_email', em).catch(() => {});
+      }
+    }).catch(() => {});
     cargar();
     cargarPlaylists();
 
@@ -383,13 +398,22 @@ export default function LibraryCrew() {
     return ids;
   }, [playlists]);
 
+  // Determinar si el usuario actual es el uploader de este track
+  const checkSoyUploader = useCallback((t: CrewTrack) => {
+    if (userEmail && t.uploaded_by && t.uploaded_by.toLowerCase() === userEmail.toLowerCase()) return true;
+    if (myUploadedTrackIds.has(t.id)) return true;
+    // Si el track no tiene uploader asignado en la BD o es 'Crew Member' y estamos en este dispositivo
+    if (!t.uploaded_by || t.uploaded_by === 'Crew Member') return true;
+    return false;
+  }, [userEmail, myUploadedTrackIds]);
+
   // 3. Filtrar catálogo de canciones según regla:
   // - Un track es visible para la Crew si está en al menos una playlist pública.
   // - Los tracks que no tengan playlist o sean de playlist privada sólo los ve su uploader.
   const visibleTracks = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return tracks.filter(t => {
-      const soyUploader = userEmail && t.uploaded_by && t.uploaded_by.toLowerCase() === userEmail.toLowerCase();
+      const soyUploader = checkSoyUploader(t);
       const estaEnPublica = trackIdsEnPlaylistsPublicas.has(t.id);
       const estaEnAlguna = trackIdsEnCualquierPlaylist.has(t.id);
 
@@ -415,16 +439,15 @@ export default function LibraryCrew() {
 
       return true;
     });
-  }, [tracks, userEmail, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist, trackFilter, searchQuery]);
+  }, [tracks, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist, trackFilter, searchQuery]);
 
   // Conteo de tracks del usuario que están ocultos (sin playlist)
   const misTracksOcultosCount = useMemo(() => {
-    if (!userEmail) return 0;
     return tracks.filter(t => {
-      const soyUploader = t.uploaded_by && t.uploaded_by.toLowerCase() === userEmail.toLowerCase();
+      const soyUploader = checkSoyUploader(t);
       return soyUploader && !trackIdsEnCualquierPlaylist.has(t.id);
     }).length;
-  }, [tracks, userEmail, trackIdsEnCualquierPlaylist]);
+  }, [tracks, checkSoyUploader, trackIdsEnCualquierPlaylist]);
 
   // ─── Reproducción & Controles Avanzados ──────────────────────────────────────
   function detenerAudioCrew() {
@@ -682,21 +705,33 @@ export default function LibraryCrew() {
     const ext = uFile.name.split('.').pop()?.toLowerCase() || 'mp3';
     const contentType = MIME_MAP[ext] || 'audio/mpeg';
 
+    const uploaderName = userEmail || 'Crew Member';
+
     setUploading(true);
     setUploadProgress(0);
     setUploadError(null);
     try {
-      await api.crewUpload({
+      const resp = await api.crewUpload({
         fileUri: uFile.uri,
         filename: uFile.name,
         contentType,
         title: uTitle.trim(),
         artist: uArtist.trim(),
         crew_id: 'main',
-        uploaded_by: userEmail,
+        uploaded_by: uploaderName,
         onProgress: (pct) => setUploadProgress(pct),
       });
       setUploadProgress(100);
+
+      if (resp?.track?.id) {
+        try {
+          const raw = await AsyncStorage.getItem('qp_my_uploaded_track_ids');
+          const list: string[] = raw ? JSON.parse(raw) : [];
+          if (!list.includes(resp.track.id)) list.push(resp.track.id);
+          await AsyncStorage.setItem('qp_my_uploaded_track_ids', JSON.stringify(list));
+          setMyUploadedTrackIds(new Set(list));
+        } catch (_) {}
+      }
 
       setTimeout(() => {
         setUploadOpen(false);
@@ -777,7 +812,7 @@ export default function LibraryCrew() {
 
   const renderTrack = useCallback(({ item }: { item: CrewTrack }) => {
     const isPlaying = playingId === item.id;
-    const soyUploader = userEmail && item.uploaded_by && item.uploaded_by.toLowerCase() === userEmail.toLowerCase();
+    const soyUploader = checkSoyUploader(item);
     const estaEnPublica = trackIdsEnPlaylistsPublicas.has(item.id);
     const estaEnAlguna = trackIdsEnCualquierPlaylist.has(item.id);
 
@@ -841,7 +876,7 @@ export default function LibraryCrew() {
         </View>
       </View>
     );
-  }, [playingId, userEmail, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
+  }, [playingId, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
 
   const renderPlaylistCard = useCallback(({ item }: { item: CrewPlaylist }) => {
     const totalTracks = item.trackIds.filter(id => tracks.some(t => t.id === id)).length;

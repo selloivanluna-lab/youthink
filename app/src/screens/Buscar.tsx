@@ -2805,7 +2805,18 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
           audioUrl = res.audio;
         }
       } else if (Platform.OS === 'web') {
-        // Web: usar endpoint del backend con Content-Disposition attachment
+        // Web: verificar primero con el servidor para evitar descargar archivos con errores 502
+        setDownloadProgress(25);
+        try {
+          await api.previewAudio(actual.id);
+        } catch (err: any) {
+          const m = err?.message || '';
+          if (/timeout|anti-bot|puerta de enlace|502|bloqueo/i.test(m)) {
+            throw new Error('El servidor está resolviendo el enlace de YouTube. Por favor reintentá en unos segundos.');
+          }
+          throw err;
+        }
+        setDownloadProgress(75);
         audioUrl =
           api.audioClipUrl(actual.id) +
           `&dl=1&nombre=${encodeURIComponent(filename)}`;
@@ -2835,7 +2846,12 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
       }, 3000);
     } catch (e: any) {
       console.warn('[Descarga] Error:', e);
-      Alert.alert('Error de descarga', e?.message || 'No se pudo descargar el audio.');
+      const msg = e?.message || 'No se pudo descargar el audio.';
+      if (Platform.OS === 'web') {
+        (globalThis as any).alert?.(msg);
+      } else {
+        Alert.alert('Error de descarga', msg);
+      }
     } finally {
       setDescargando(false);
     }

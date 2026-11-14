@@ -83,21 +83,24 @@ export async function downloadFile(
   onProgress?: (progress: number) => void,
 ): Promise<string> {
   if (Platform.OS === 'web') {
-    // En web: usar elemento <a> para descarga
+    // En web: usar elemento <a> para descarga directa del navegador
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    // Guardar en metadata con localPath indicando que es web
-    const fakeLocal = `web://${filename}`;
+    setTimeout(() => {
+      try { document.body.removeChild(a); } catch (_) {}
+    }, 1000);
+
+    // Guardar URL directa si es HTTP (ej. Cloudflare R2 de Crew) para reproducción en la web
+    const savedPath = url.startsWith('http') ? url : `web://${filename}`;
     await saveDownloadMeta({
       ...meta,
-      localPath: fakeLocal,
+      localPath: savedPath,
       downloadedAt: new Date().toISOString(),
     });
-    return fakeLocal;
+    return savedPath;
   }
 
   const FS = await import('expo-file-system/legacy');

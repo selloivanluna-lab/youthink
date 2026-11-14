@@ -503,7 +503,7 @@ function pipeRemoteMedia(req, res, mediaUrl, contentType, downloadFilename, onFa
 // que tardaba >100s y hacía fallar las descargas desde el celular).
 // Presupuesto corto: si YouTube bloquea al servidor, la app recibe el error en
 // ~18s en vez de quedarse colgada dos minutos.
-const STREAM_RESOLVE_MS = Math.max(6000, Number(process.env.STREAM_RESOLVE_MS || 18000));
+const STREAM_RESOLVE_MS = Math.max(6000, Number(process.env.STREAM_RESOLVE_MS || 45000));
 
 function streamYtMedia(req, res, id, kind, downloadFilename) {
   const key = (kind === 'video' ? 'v:' : 'a:') + id;

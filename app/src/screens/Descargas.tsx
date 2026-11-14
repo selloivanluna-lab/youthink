@@ -84,31 +84,53 @@ export default function Descargas() {
   }
 
   function reproducir(track: DownloadedTrack) {
-    if (track.localPath.startsWith('web://')) {
-      Alert.alert(
-        'Guardado en web',
-        'Esta descarga fue guardada desde el navegador. Para escucharla, buscala en la carpeta de Descargas de tu dispositivo.'
-      );
-      return;
-    }
-
     if (Platform.OS === 'web') {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (playingId === track.id) {
-        setPlayingId(null);
+      if (track.source === 'youtube') {
+        playerStore.setState({
+          actual: {
+            id: track.id,
+            title: track.title,
+            channel: track.artist,
+            thumb: track.thumb || '',
+            url: `https://www.youtube.com/watch?v=${track.id}`,
+            kind: 'song' as const,
+            source: 'youtube' as const,
+            duration: track.duration || 0,
+          },
+          reproduciendo: true,
+          playerVisible: true,
+        });
+        setPlayingId(track.id);
         return;
       }
-      const audio = new (globalThis as any).Audio(track.localPath) as HTMLAudioElement;
-      audioRef.current = audio;
-      audio.play();
-      setPlayingId(track.id);
-      audio.onended = () => {
-        setPlayingId(null);
-        audioRef.current = null;
-      };
+
+      // Track de Library Crew o con URL HTTP directa
+      const audioUrl = track.localPath.startsWith('http') ? track.localPath : null;
+      if (audioUrl) {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+        if (playingId === track.id) {
+          setPlayingId(null);
+          return;
+        }
+        const audio = new (globalThis as any).Audio(audioUrl) as HTMLAudioElement;
+        audioRef.current = audio;
+        audio.play().catch((err: any) => {
+          console.warn('[Descargas] Error reproduciendo audio web:', err);
+        });
+        setPlayingId(track.id);
+        audio.onended = () => {
+          setPlayingId(null);
+          audioRef.current = null;
+        };
+        return;
+      }
+
+      (globalThis as any).alert?.(
+        `"${track.title}" fue descargado por tu navegador. Podés encontrar el archivo en la carpeta Descargas de tu equipo.`
+      );
       return;
     }
 
