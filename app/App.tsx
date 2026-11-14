@@ -14,6 +14,7 @@ import Sesion from './src/screens/Sesion';
 // MiniPlayerGlobal: solo en nativo y solo cuando NO estamos en la tab Play
 // (en web el mini player vive dentro del portal de Buscar.tsx para mantener el iframe vivo)
 import MiniPlayerGlobal from './src/components/MiniPlayerGlobal';
+import { playerStore } from './src/lib/playerStore';
 import { theme } from './src/theme';
 
 const Tab = createBottomTabNavigator();
@@ -110,14 +111,17 @@ export default function App() {
             <Tab.Screen name="Sesión" component={Sesion} options={{ tabBarIcon: () => <Text>👤</Text> }} />
           </Tab.Navigator>
 
-          {/* Mini-reproductor global: visible en móvil nativo en todas las pestañas (en web se gestiona en portal) */}
-          {Platform.OS !== 'web' && (
-            <MiniPlayerGlobal
-              onPressExpand={() => {
+          {/* Mini-reproductor global: visible en móvil nativo en todas las pestañas, y en web cuando suena Library Crew */}
+          <MiniPlayerGlobal
+            onPressExpand={() => {
+              const act = playerStore.getState().actual;
+              if (act?.source === 'crew') {
+                try { navigationRef.navigate('Library Crew' as never); } catch (_) {}
+              } else {
                 try { navigationRef.navigate('Play' as never); } catch (_) {}
-              }}
-            />
-          )}
+              }
+            }}
+          />
         </View>
       </NavigationContainer>
     </SafeAreaProvider>

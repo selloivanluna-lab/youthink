@@ -9,6 +9,7 @@ export type YtResult = {
   thumb: string;
   /** Origen del resultado: video normal, Short o canción de YouTube Music. */
   kind?: 'video' | 'short' | 'song' | 'playlist' | 'album';
+  source?: 'youtube' | 'crew';
   itemCountText?: string;
   firstVideoId?: string;
   isAlbumVideo?: boolean;

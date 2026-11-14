@@ -15,9 +15,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import { api, CrewTrack } from '../lib/api';
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
+import { playerStore } from '../lib/playerStore';
 import { theme } from '../theme';
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
+export interface CrewPlaylist {
+  id: string;
+  nombre: string;
+  creadaEn: string;
+  trackIds: string[];
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtSize(bytes?: number | null) {
   if (!bytes) return '';
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -41,13 +50,30 @@ const MIME_MAP: Record<string, string> = {
   m4a: 'audio/mp4', ogg: 'audio/ogg', aac: 'audio/aac',
 };
 
-// ─── Componente principal ─────────────────────────────────────────────────────
+// ─── Componente Principal ─────────────────────────────────────────────────────
 export default function LibraryCrew() {
   const native = useNativeAudio();
   const [tracks, setTracks] = useState<CrewTrack[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+
+  // Sub-tabs de Library Crew: 'tracks' o 'playlists'
+  const [activeTab, setActiveTab] = useState<'tracks' | 'playlists'>('tracks');
+
+  // Playlists exclusivas de Library Crew
+  const [playlists, setPlaylists] = useState<CrewPlaylist[]>([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<CrewPlaylist | null>(null);
+  const [addToPlaylistModalOpen, setAddToPlaylistModalOpen] = useState(false);
+  const [targetTrack, setTargetTrack] = useState<CrewTrack | null>(null);
+  const [crearPlaylistModalOpen, setCrearPlaylistModalOpen] = useState(false);
+  const [nombreNuevaPlaylist, setNombreNuevaPlaylist] = useState('');
+
+  // Cola de reproducción de playlist
+  const [playlistPlayingInfo, setPlaylistPlayingInfo] = useState<{ id: string; nombre: string; index: number; total: number } | null>(null);
+  const playlistQueueRef = useRef<{ id: string; nombre: string; trackIds: string[]; index: number } | null>(null);
+
+  // Upload modal
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -63,6 +89,22 @@ export default function LibraryCrew() {
   useEffect(() => {
     AsyncStorage.getItem('qp_user_email').then(v => { if (v) setUserEmail(v); }).catch(() => {});
     cargar();
+    cargarPlaylists();
+
+    // Sincronizar estado con playerStore
+    const unsub = playerStore.subscribe((st) => {
+      if (!st.actual || st.actual.source !== 'crew') {
+        setPlayingId(null);
+        setPlaylistPlayingInfo(null);
+      } else {
+        const cId = st.actual.id.replace(/^crew_/, '');
+        setPlayingId(st.reproduciendo ? cId : null);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
   }, []);
 
   async function cargar() {
@@ -78,6 +120,236 @@ export default function LibraryCrew() {
     }
   }
 
+  // ─── Playlists de Library Crew (AsyncStorage) ──────────────────────────────
+  async function cargarPlaylists() {
+    try {
+      const raw = await AsyncStorage.getItem('qp_crew_playlists_v1');
+      if (raw) setPlaylists(JSON.parse(raw));
+    } catch (_) {}
+  }
+
+  async function persistirPlaylists(nuevas: CrewPlaylist[]) {
+    setPlaylists(nuevas);
+    try {
+      await AsyncStorage.setItem('qp_crew_playlists_v1', JSON.stringify(nuevas));
+    } catch (_) {}
+  }
+
+  async function crearNuevaPlaylist() {
+    const nombre = nombreNuevaPlaylist.trim();
+    if (!nombre) return;
+    const nueva: CrewPlaylist = {
+      id: 'cpl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      nombre,
+      creadaEn: new Date().toLocaleDateString(),
+      trackIds: targetTrack ? [targetTrack.id] : [],
+    };
+    const actualizadas = [nueva, ...playlists];
+    await persistirPlaylists(actualizadas);
+    setNombreNuevaPlaylist('');
+    setCrearPlaylistModalOpen(false);
+    if (targetTrack) {
+      Alert.alert('¡Añadido!', `"${targetTrack.title}" añadido a "${nombre}" 👥`);
+      setAddToPlaylistModalOpen(false);
+      setTargetTrack(null);
+    }
+  }
+
+  async function alternarTrackEnPlaylist(pl: CrewPlaylist, trackId: string) {
+    const yaEsta = pl.trackIds.includes(trackId);
+    const nuevosIds = yaEsta
+      ? pl.trackIds.filter(id => id !== trackId)
+      : [...pl.trackIds, trackId];
+    const actualizadas = playlists.map(p => p.id === pl.id ? { ...p, trackIds: nuevosIds } : p);
+    await persistirPlaylists(actualizadas);
+    if (selectedPlaylist?.id === pl.id) {
+      setSelectedPlaylist({ ...selectedPlaylist, trackIds: nuevosIds });
+    }
+  }
+
+  async function eliminarPlaylist(pl: CrewPlaylist) {
+    Alert.alert(
+      'Eliminar Playlist',
+      `¿Eliminar la playlist "${pl.nombre}" de Library Crew?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar', style: 'destructive',
+          onPress: async () => {
+            const actualizadas = playlists.filter(p => p.id !== pl.id);
+            await persistirPlaylists(actualizadas);
+            if (selectedPlaylist?.id === pl.id) setSelectedPlaylist(null);
+            if (playlistQueueRef.current?.id === pl.id) detenerAudioCrew();
+          }
+        }
+      ]
+    );
+  }
+
+  // ─── Reproducción & MiniPlayer ──────────────────────────────────────────────
+  function detenerAudioCrew() {
+    if (webAudioRef.current) {
+      try { webAudioRef.current.pause(); } catch (_) {}
+      webAudioRef.current = null;
+    }
+    if (NATIVE_AUDIO) {
+      native.stop();
+    }
+    playlistQueueRef.current = null;
+    setPlayingId(null);
+    setPlaylistPlayingInfo(null);
+    playerStore.setState({ actual: null, reproduciendo: false, pos: 0, dur: 0 });
+  }
+
+  function reproducirTrackEnLista(nextIndex: number, queue: { id: string; nombre: string; trackIds: string[]; index: number }) {
+    if (nextIndex >= queue.trackIds.length) {
+      detenerAudioCrew();
+      return;
+    }
+    const nextTrackId = queue.trackIds[nextIndex];
+    const track = tracks.find(t => t.id === nextTrackId);
+    if (!track) {
+      reproducirTrackEnLista(nextIndex + 1, queue);
+      return;
+    }
+    reproducir(track, { ...queue, index: nextIndex });
+  }
+
+  async function reproducir(track: CrewTrack, queueContext?: { id: string; nombre: string; trackIds: string[]; index: number }) {
+    // Si ya está sonando este mismo track y no viene de forzar cola:
+    if (playingId === track.id && !queueContext) {
+      if (!NATIVE_AUDIO && webAudioRef.current) {
+        if (webAudioRef.current.paused) {
+          await webAudioRef.current.play();
+          playerStore.setState({ reproduciendo: true });
+        } else {
+          webAudioRef.current.pause();
+          playerStore.setState({ reproduciendo: false });
+        }
+        return;
+      } else if (NATIVE_AUDIO) {
+        native.toggle();
+        return;
+      }
+    }
+
+    // Detenemos audio anterior
+    if (webAudioRef.current) {
+      try { webAudioRef.current.pause(); } catch (_) {}
+      webAudioRef.current = null;
+    }
+
+    if (queueContext) {
+      playlistQueueRef.current = queueContext;
+      setPlaylistPlayingInfo({
+        id: queueContext.id,
+        nombre: queueContext.nombre,
+        index: queueContext.index + 1,
+        total: queueContext.trackIds.length,
+      });
+    } else {
+      playlistQueueRef.current = null;
+      setPlaylistPlayingInfo(null);
+    }
+
+    setPlayingId(track.id);
+
+    // Registro en playerStore: activa inmediatamente el MiniPlayer flotante
+    const itemActual: any = {
+      id: 'crew_' + track.id,
+      title: track.title,
+      channel: track.artist || (track.uploaded_by ? `Crew · ${track.uploaded_by}` : 'Library Crew'),
+      duration: track.duration || 0,
+      url: track.audio_url,
+      thumb: track.cover_url || '',
+      kind: 'song',
+      source: 'crew',
+    };
+
+    playerStore.setState({
+      actual: itemActual,
+      reproduciendo: true,
+      playerVisible: false,
+      pos: 0,
+      dur: track.duration || 0,
+    });
+
+    playerStore.registerControls({
+      togglePlay: () => {
+        if (!NATIVE_AUDIO && webAudioRef.current) {
+          if (webAudioRef.current.paused) {
+            webAudioRef.current.play();
+            playerStore.setState({ reproduciendo: true });
+          } else {
+            webAudioRef.current.pause();
+            playerStore.setState({ reproduciendo: false });
+          }
+        } else if (NATIVE_AUDIO) {
+          native.toggle();
+        }
+      },
+      abrirPlayer: () => {},
+      cerrar: () => detenerAudioCrew(),
+    });
+
+    if (!NATIVE_AUDIO) {
+      if (typeof window !== 'undefined' && typeof (window as any).Audio !== 'undefined') {
+        try {
+          const a = new Audio(track.audio_url);
+          webAudioRef.current = a;
+          a.onplay = () => playerStore.setState({ reproduciendo: true });
+          a.onpause = () => playerStore.setState({ reproduciendo: false });
+          a.ontimeupdate = () => {
+            playerStore.setState({
+              pos: Math.floor(a.currentTime || 0),
+              dur: Math.floor(a.duration || track.duration || 0),
+            });
+          };
+          a.onended = () => {
+            if (playlistQueueRef.current) {
+              const q = playlistQueueRef.current;
+              reproducirTrackEnLista(q.index + 1, q);
+            } else {
+              setPlayingId(null);
+              playerStore.setState({ reproduciendo: false, actual: null });
+            }
+          };
+          a.onerror = () => {
+            Alert.alert('Error', 'No se pudo reproducir en el navegador');
+            detenerAudioCrew();
+          };
+          await a.play();
+          return;
+        } catch (e: any) {
+          Alert.alert('Error', e?.message || 'Error en reproductor web');
+          detenerAudioCrew();
+          return;
+        }
+      }
+      Alert.alert('Solo disponible en Android', 'Library Crew se reproduce con el reproductor nativo en segundo plano.');
+      return;
+    }
+
+    // Android Nativo
+    try {
+      await native.play(track.audio_url, track.title, track.artist || 'Library Crew', track.cover_url || undefined);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'No se pudo reproducir');
+      detenerAudioCrew();
+    }
+  }
+
+  function reproducirPlaylistCompleta(pl: CrewPlaylist) {
+    const validTrackIds = pl.trackIds.filter(id => tracks.some(t => t.id === id));
+    if (validTrackIds.length === 0) {
+      Alert.alert('Playlist vacía', 'Esta playlist aún no tiene canciones.');
+      return;
+    }
+    const primerTrack = tracks.find(t => t.id === validTrackIds[0])!;
+    reproducir(primerTrack, { id: pl.id, nombre: pl.nombre, trackIds: validTrackIds, index: 0 });
+  }
+
+  // ─── Subida de Archivos ─────────────────────────────────────────────────────
   async function elegirArchivo() {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -87,7 +359,6 @@ export default function LibraryCrew() {
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
       setUFile({ uri: asset.uri, name: asset.name, size: asset.size });
-      // Auto-completar título con el nombre del archivo
       if (!uTitle) {
         const nombre = asset.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ');
         setUTitle(nombre);
@@ -109,7 +380,6 @@ export default function LibraryCrew() {
     setUploadProgress(0);
     setUploadError(null);
     try {
-      // Upload proxeado por el server (evita CORS de R2 en web/iPhone)
       await api.crewUpload({
         fileUri: uFile.uri,
         filename: uFile.name,
@@ -140,43 +410,6 @@ export default function LibraryCrew() {
     }
   }
 
-  async function reproducir(track: CrewTrack) {
-    if (!NATIVE_AUDIO) {
-      if (typeof window !== 'undefined' && typeof (window as any).Audio !== 'undefined') {
-        try {
-          if (webAudioRef.current) {
-            webAudioRef.current.pause();
-            webAudioRef.current = null;
-          }
-          if (playingId === track.id) {
-            setPlayingId(null);
-            return;
-          }
-          const a = new Audio(track.audio_url);
-          webAudioRef.current = a;
-          a.onended = () => setPlayingId(null);
-          a.onerror = () => { Alert.alert('Error', 'No se pudo reproducir en el navegador'); setPlayingId(null); };
-          setPlayingId(track.id);
-          await a.play();
-          return;
-        } catch (e: any) {
-          Alert.alert('Error', e?.message || 'Error en reproductor web');
-          setPlayingId(null);
-          return;
-        }
-      }
-      Alert.alert('Solo disponible en Android', 'Library Crew se reproduce con el reproductor nativo en segundo plano.');
-      return;
-    }
-    try {
-      setPlayingId(track.id);
-      await native.play(track.audio_url, track.title);
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'No se pudo reproducir');
-      setPlayingId(null);
-    }
-  }
-
   async function eliminar(track: CrewTrack) {
     Alert.alert(
       'Eliminar track',
@@ -188,8 +421,14 @@ export default function LibraryCrew() {
           onPress: async () => {
             try {
               await api.crewDeleteTrack(track.id);
-              if (playingId === track.id) setPlayingId(null);
+              if (playingId === track.id) detenerAudioCrew();
               setTracks(prev => prev.filter(t => t.id !== track.id));
+              // Quitar de playlists locales si estaba
+              const actualizadas = playlists.map(pl => ({
+                ...pl,
+                trackIds: pl.trackIds.filter(id => id !== track.id),
+              }));
+              persistirPlaylists(actualizadas);
             } catch (e: any) {
               Alert.alert('Error', e?.message || 'No se pudo eliminar');
             }
@@ -199,16 +438,17 @@ export default function LibraryCrew() {
     );
   }
 
+  // ─── Renders ────────────────────────────────────────────────────────────────
   const renderTrack = useCallback(({ item }: { item: CrewTrack }) => {
     const isPlaying = playingId === item.id;
     return (
-      <View style={s.trackRow}>
+      <View style={[s.trackRow, isPlaying && s.trackRowActive]}>
         <Pressable focusable={true} style={s.trackInfo} onPress={() => reproducir(item)}>
-          <View style={s.trackIcon}>
+          <View style={[s.trackIcon, isPlaying && s.trackIconActive]}>
             <Text style={s.trackIconText}>{isPlaying ? '▶️' : '🎵'}</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={s.trackTitle} numberOfLines={1}>{item.title}</Text>
+            <Text style={[s.trackTitle, isPlaying && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
             <Text style={s.trackMeta} numberOfLines={1}>
               {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
             </Text>
@@ -217,29 +457,151 @@ export default function LibraryCrew() {
             ) : null}
           </View>
         </Pressable>
-        <Pressable focusable={true} style={s.deleteBtn} onPress={() => eliminar(item)} hitSlop={8}>
-          <Text style={s.deleteBtnText}>🗑</Text>
-        </Pressable>
+
+        <View style={s.trackActions}>
+          <Pressable
+            focusable={true}
+            style={s.actionIconBtn}
+            onPress={() => {
+              setTargetTrack(item);
+              setAddToPlaylistModalOpen(true);
+            }}
+            hitSlop={8}
+          >
+            <Text style={s.actionIconText}>➕📂</Text>
+          </Pressable>
+          <Pressable focusable={true} style={s.actionIconBtn} onPress={() => eliminar(item)} hitSlop={8}>
+            <Text style={s.actionIconText}>🗑</Text>
+          </Pressable>
+        </View>
       </View>
     );
-  }, [playingId]);
+  }, [playingId, tracks, playlists]);
+
+  const renderPlaylistCard = useCallback(({ item }: { item: CrewPlaylist }) => {
+    const totalTracks = item.trackIds.filter(id => tracks.some(t => t.id === id)).length;
+    const isPlayingThis = playlistPlayingInfo?.id === item.id;
+    return (
+      <View style={[s.playlistCard, isPlayingThis && s.playlistCardActive]}>
+        <Pressable
+          focusable={true}
+          style={s.playlistCardHeader}
+          onPress={() => setSelectedPlaylist(item)}
+        >
+          <View style={s.playlistCardIcon}>
+            <Text style={{ fontSize: 24 }}>📑</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.playlistCardTitle} numberOfLines={1}>{item.nombre}</Text>
+            <Text style={s.playlistCardSub}>
+              {totalTracks} {totalTracks === 1 ? 'track' : 'tracks'} · Creada el {item.creadaEn}
+            </Text>
+          </View>
+        </Pressable>
+
+        <View style={s.playlistCardActions}>
+          <Pressable
+            focusable={true}
+            style={s.playlistPlayBtn}
+            onPress={() => reproducirPlaylistCompleta(item)}
+          >
+            <Text style={s.playlistPlayBtnText}>
+              {isPlayingThis ? '⏸ Pausar' : '▶ Reproducir'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            focusable={true}
+            style={s.playlistOpenBtn}
+            onPress={() => setSelectedPlaylist(item)}
+          >
+            <Text style={s.playlistOpenBtnText}>Ver canciones</Text>
+          </Pressable>
+
+          <Pressable
+            focusable={true}
+            style={s.playlistDeleteBtn}
+            onPress={() => eliminarPlaylist(item)}
+            hitSlop={8}
+          >
+            <Text style={{ fontSize: 16 }}>🗑</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }, [tracks, playlistPlayingInfo, playlists]);
 
   return (
     <View style={s.container}>
       {/* Header */}
       <View style={s.header}>
-        <Text style={s.headerTitle}>👥 Library Crew</Text>
-        <Text style={s.headerSub}>Bóveda privada de música & stems</Text>
-      </View>
-
-      {/* Barra de acciones */}
-      <View style={s.actionRow}>
-        <Pressable focusable={true} style={s.uploadBtn} onPress={() => { setUploadError(null); setUploadOpen(true); }}>
-          <Text style={s.uploadBtnText}>⬆️  Subir track</Text>
-        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={s.headerTitle}>👥 Library Crew</Text>
+          <Text style={s.headerSub}>Bóveda privada de música & stems</Text>
+        </View>
         <Pressable focusable={true} style={s.refreshBtn} onPress={cargar} disabled={loading}>
           <Text style={s.refreshBtnText}>{loading ? '…' : '↻'}</Text>
         </Pressable>
+      </View>
+
+      {/* Selector de Sub-pestañas: Tracks vs Playlists */}
+      <View style={s.tabSelector}>
+        <Pressable
+          focusable={true}
+          style={[s.tabBtn, activeTab === 'tracks' && s.tabBtnActive]}
+          onPress={() => { setActiveTab('tracks'); setSelectedPlaylist(null); }}
+        >
+          <Text style={[s.tabBtnText, activeTab === 'tracks' && s.tabBtnTextActive]}>
+            🎵 Tracks ({tracks.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          focusable={true}
+          style={[s.tabBtn, activeTab === 'playlists' && s.tabBtnActive]}
+          onPress={() => setActiveTab('playlists')}
+        >
+          <Text style={[s.tabBtnText, activeTab === 'playlists' && s.tabBtnTextActive]}>
+            📑 Playlists Crew ({playlists.length})
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Banner de Playlist en Reproducción Continua */}
+      {playlistPlayingInfo ? (
+        <View style={s.playlistBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.playlistBannerTitle} numberOfLines={1}>
+              ▶ Playlist: {playlistPlayingInfo.nombre}
+            </Text>
+            <Text style={s.playlistBannerSub}>
+              Pista {playlistPlayingInfo.index} de {playlistPlayingInfo.total}
+            </Text>
+          </View>
+          <Pressable focusable={true} style={s.playlistBannerStop} onPress={detenerAudioCrew}>
+            <Text style={s.playlistBannerStopText}>⏹ Detener</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Barra de Acciones según pestaña */}
+      <View style={s.actionRow}>
+        {activeTab === 'tracks' ? (
+          <Pressable focusable={true} style={s.uploadBtn} onPress={() => { setUploadError(null); setUploadOpen(true); }}>
+            <Text style={s.uploadBtnText}>⬆️  Subir track</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            focusable={true}
+            style={s.uploadBtn}
+            onPress={() => {
+              setTargetTrack(null);
+              setNombreNuevaPlaylist('');
+              setCrearPlaylistModalOpen(true);
+            }}
+          >
+            <Text style={s.uploadBtnText}>➕  Nueva Playlist Crew</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Error */}
@@ -250,26 +612,219 @@ export default function LibraryCrew() {
         </View>
       ) : null}
 
-      {/* Lista */}
-      {loading && !tracks.length ? (
-        <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 40 }} />
-      ) : tracks.length === 0 && !loading ? (
-        <View style={s.emptyBox}>
-          <Text style={s.emptyIcon}>🎵</Text>
-          <Text style={s.emptyText}>Library Crew está vacía</Text>
-          <Text style={s.emptySub}>Subí los primeros tracks de tu crew con el botón de arriba</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={tracks}
-          keyExtractor={t => t.id}
-          renderItem={renderTrack}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          ItemSeparatorComponent={() => <View style={s.sep} />}
-        />
+      {/* CONTENIDO: Pestaña Tracks */}
+      {activeTab === 'tracks' && (
+        <>
+          {loading && !tracks.length ? (
+            <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 40 }} />
+          ) : tracks.length === 0 && !loading ? (
+            <View style={s.emptyBox}>
+              <Text style={s.emptyIcon}>🎵</Text>
+              <Text style={s.emptyText}>Library Crew está vacía</Text>
+              <Text style={s.emptySub}>Subí los primeros tracks de tu crew con el botón de arriba</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={tracks}
+              keyExtractor={t => t.id}
+              renderItem={renderTrack}
+              contentContainerStyle={{ paddingBottom: 110 }}
+              ItemSeparatorComponent={() => <View style={s.sep} />}
+            />
+          )}
+        </>
       )}
 
-      {/* Modal de subida */}
+      {/* CONTENIDO: Pestaña Playlists */}
+      {activeTab === 'playlists' && (
+        <>
+          {selectedPlaylist ? (
+            // Vista de Detalle de Playlist seleccionada
+            <View style={{ flex: 1 }}>
+              <View style={s.playlistDetailHeader}>
+                <Pressable
+                  focusable={true}
+                  style={s.backBtn}
+                  onPress={() => setSelectedPlaylist(null)}
+                >
+                  <Text style={s.backBtnText}>← Volver a Playlists</Text>
+                </Pressable>
+                <Text style={s.playlistDetailTitle}>{selectedPlaylist.nombre}</Text>
+                <Pressable
+                  focusable={true}
+                  style={s.playlistPlayAllBtn}
+                  onPress={() => reproducirPlaylistCompleta(selectedPlaylist)}
+                >
+                  <Text style={s.playlistPlayAllBtnText}>▶ Reproducir Todo</Text>
+                </Pressable>
+              </View>
+
+              {(() => {
+                const playlistTracks = tracks.filter(t => selectedPlaylist.trackIds.includes(t.id));
+                if (playlistTracks.length === 0) {
+                  return (
+                    <View style={s.emptyBox}>
+                      <Text style={s.emptyIcon}>📂</Text>
+                      <Text style={s.emptyText}>Esta playlist no tiene canciones</Text>
+                      <Text style={s.emptySub}>Andá a la pestaña "Tracks" y tocá ➕📂 para agregar canciones aquí</Text>
+                    </View>
+                  );
+                }
+                return (
+                  <FlatList
+                    data={playlistTracks}
+                    keyExtractor={t => t.id}
+                    renderItem={({ item }) => {
+                      const isPlaying = playingId === item.id;
+                      return (
+                        <View style={[s.trackRow, isPlaying && s.trackRowActive]}>
+                          <Pressable focusable={true} style={s.trackInfo} onPress={() => reproducir(item)}>
+                            <View style={[s.trackIcon, isPlaying && s.trackIconActive]}>
+                              <Text style={s.trackIconText}>{isPlaying ? '▶️' : '🎵'}</Text>
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[s.trackTitle, isPlaying && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
+                              <Text style={s.trackMeta} numberOfLines={1}>
+                                {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
+                              </Text>
+                            </View>
+                          </Pressable>
+                          <Pressable
+                            focusable={true}
+                            style={s.actionIconBtn}
+                            onPress={() => alternarTrackEnPlaylist(selectedPlaylist, item.id)}
+                            hitSlop={8}
+                          >
+                            <Text style={{ color: '#ff6666', fontSize: 13, fontWeight: '700' }}>Quitar</Text>
+                          </Pressable>
+                        </View>
+                      );
+                    }}
+                    contentContainerStyle={{ paddingBottom: 110 }}
+                    ItemSeparatorComponent={() => <View style={s.sep} />}
+                  />
+                );
+              })()}
+            </View>
+          ) : (
+            // Lista de todas las Playlists de Library Crew
+            <>
+              {playlists.length === 0 ? (
+                <View style={s.emptyBox}>
+                  <Text style={s.emptyIcon}>📑</Text>
+                  <Text style={s.emptyText}>No tenés playlists en Library Crew</Text>
+                  <Text style={s.emptySub}>Creá listas para organizar stems, sesiones y pistas de tu crew</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={playlists}
+                  keyExtractor={p => p.id}
+                  renderItem={renderPlaylistCard}
+                  contentContainerStyle={{ padding: 12, paddingBottom: 110 }}
+                  ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+                />
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {/* Modal: Añadir Track a Playlist Crew */}
+      <Modal visible={addToPlaylistModalOpen} transparent animationType="slide" onRequestClose={() => setAddToPlaylistModalOpen(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalBox}>
+            <Text style={s.modalTitle}>➕ Añadir a Playlist Crew</Text>
+            {targetTrack ? (
+              <Text style={{ color: theme.colors.gold, fontSize: 14, marginBottom: 16 }}>
+                🎵 {targetTrack.title}
+              </Text>
+            ) : null}
+
+            <Pressable
+              focusable={true}
+              style={s.createInModalBtn}
+              onPress={() => {
+                setNombreNuevaPlaylist('');
+                setCrearPlaylistModalOpen(true);
+              }}
+            >
+              <Text style={s.createInModalBtnText}>✨ + Crear Nueva Playlist Crew</Text>
+            </Pressable>
+
+            {playlists.length === 0 ? (
+              <Text style={{ color: theme.colors.textDim, marginVertical: 14, textAlign: 'center' }}>
+                Aún no creaste ninguna playlist en Library Crew.
+              </Text>
+            ) : (
+              <FlatList
+                data={playlists}
+                keyExtractor={p => p.id}
+                style={{ maxHeight: 240 }}
+                renderItem={({ item }) => {
+                  const yaEsta = targetTrack ? item.trackIds.includes(targetTrack.id) : false;
+                  return (
+                    <Pressable
+                      focusable={true}
+                      style={[s.playlistOptionRow, yaEsta && s.playlistOptionRowActive]}
+                      onPress={() => {
+                        if (targetTrack) alternarTrackEnPlaylist(item, targetTrack.id);
+                      }}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.playlistOptionTitle, yaEsta && { color: theme.colors.gold }]}>
+                          {item.nombre}
+                        </Text>
+                        <Text style={s.playlistOptionSub}>
+                          {item.trackIds.length} canciones
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 18, color: yaEsta ? theme.colors.gold : theme.colors.textDim }}>
+                        {yaEsta ? '✓ Incluida' : '＋ Agregar'}
+                      </Text>
+                    </Pressable>
+                  );
+                }}
+              />
+            )}
+
+            <Pressable focusable={true} style={s.modalCloseBtn} onPress={() => setAddToPlaylistModalOpen(false)}>
+              <Text style={s.modalCloseBtnText}>Cerrar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: Crear Nueva Playlist Crew */}
+      <Modal visible={crearPlaylistModalOpen} transparent animationType="fade" onRequestClose={() => setCrearPlaylistModalOpen(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalBox}>
+            <Text style={s.modalTitle}>📑 Nueva Playlist de Library Crew</Text>
+            <TextInput
+              style={s.modalInput}
+              placeholder="Nombre de la playlist (ej. Baterías, Stems Proyecto X)"
+              placeholderTextColor={theme.colors.textDim}
+              value={nombreNuevaPlaylist}
+              onChangeText={setNombreNuevaPlaylist}
+              autoFocus
+            />
+            <View style={s.modalBtns}>
+              <Pressable focusable={true} style={s.cancelBtn} onPress={() => setCrearPlaylistModalOpen(false)}>
+                <Text style={s.cancelBtnText}>Cancelar</Text>
+              </Pressable>
+              <Pressable
+                focusable={true}
+                style={[s.confirmBtn, !nombreNuevaPlaylist.trim() && s.btnDisabled]}
+                onPress={creNueva => crearNuevaPlaylist()}
+                disabled={!nombreNuevaPlaylist.trim()}
+              >
+                <Text style={s.confirmBtnText}>Crear</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: Subida de Track */}
       <Modal visible={uploadOpen} transparent animationType="slide" onRequestClose={() => !uploading && setUploadOpen(false)}>
         <View style={s.modalOverlay}>
           <View style={s.modalBox}>
@@ -334,35 +889,230 @@ export default function LibraryCrew() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.bg },
-  header: { padding: 20, paddingBottom: 8, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+    backgroundColor: theme.colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   headerTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.gold },
   headerSub: { fontSize: 13, color: theme.colors.textDim, marginTop: 2 },
+  refreshBtn: {
+    backgroundColor: theme.colors.bg,
+    borderRadius: 8,
+    padding: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  refreshBtnText: { color: theme.colors.text, fontSize: 18 },
+
+  // Selector de tabs
+  tabSelector: {
+    flexDirection: 'row',
+    backgroundColor: theme.colors.surface,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: theme.colors.bg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  tabBtnActive: {
+    backgroundColor: 'rgba(229, 178, 31, 0.15)',
+    borderColor: theme.colors.gold,
+  },
+  tabBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textDim,
+  },
+  tabBtnTextActive: {
+    color: theme.colors.gold,
+    fontWeight: '700',
+  },
+
+  // Banner de Playlist en reproducción
+  playlistBanner: {
+    backgroundColor: '#1b2416',
+    borderBottomWidth: 1,
+    borderColor: '#4caf50',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  playlistBannerTitle: {
+    color: '#a5d6a7',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  playlistBannerSub: {
+    color: '#81c784',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  playlistBannerStop: {
+    backgroundColor: '#2e3d25',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  playlistBannerStopText: {
+    color: '#a5d6a7',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
   actionRow: { flexDirection: 'row', padding: 12, gap: 10 },
   uploadBtn: { flex: 1, backgroundColor: theme.colors.gold, borderRadius: 10, padding: 12, alignItems: 'center' },
-  uploadBtnText: { color: '#000', fontWeight: '700', fontSize: 15 },
-  refreshBtn: { backgroundColor: theme.colors.surface, borderRadius: 10, padding: 12, paddingHorizontal: 18, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
-  refreshBtnText: { color: theme.colors.text, fontSize: 18 },
+  uploadBtnText: { color: '#000', fontWeight: '700', fontSize: 14 },
   errorBox: { margin: 16, padding: 14, backgroundColor: '#3a1515', borderRadius: 10, borderWidth: 1, borderColor: '#ff4444' },
   errorText: { color: '#ff8888', marginBottom: 8 },
   retryText: { color: theme.colors.gold, fontWeight: '700' },
   emptyBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
-  emptyIcon: { fontSize: 48, marginBottom: 12 },
-  emptyText: { fontSize: 18, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
+  emptyIcon: { fontSize: 44, marginBottom: 12 },
+  emptyText: { fontSize: 17, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
   emptySub: { fontSize: 13, color: theme.colors.textDim, textAlign: 'center' },
+
+  // Track row
   trackRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  trackRowActive: { backgroundColor: 'rgba(229, 178, 31, 0.08)' },
   trackInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   trackIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border },
-  trackIconText: { fontSize: 20 },
+  trackIconActive: { borderColor: theme.colors.gold, backgroundColor: 'rgba(229, 178, 31, 0.2)' },
+  trackIconText: { fontSize: 18 },
   trackTitle: { fontSize: 15, fontWeight: '600', color: theme.colors.text },
+  trackTitleActive: { color: theme.colors.gold },
   trackMeta: { fontSize: 12, color: theme.colors.textDim, marginTop: 2 },
   trackUploader: { fontSize: 11, color: theme.colors.gold + '99', marginTop: 1 },
-  deleteBtn: { padding: 8 },
-  deleteBtnText: { fontSize: 18 },
+  trackActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  actionIconBtn: { padding: 8 },
+  actionIconText: { fontSize: 16 },
   sep: { height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16 },
+
+  // Tarjetas de Playlists Crew
+  playlistCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 14,
+  },
+  playlistCardActive: {
+    borderColor: theme.colors.gold,
+  },
+  playlistCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
+  playlistCardIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: theme.colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  playlistCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  playlistCardSub: {
+    fontSize: 12,
+    color: theme.colors.textDim,
+    marginTop: 2,
+  },
+  playlistCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  playlistPlayBtn: {
+    flex: 1,
+    backgroundColor: theme.colors.gold,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  playlistPlayBtnText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  playlistOpenBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: theme.colors.bg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+  },
+  playlistOpenBtnText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  playlistDeleteBtn: {
+    padding: 8,
+  },
+
+  // Detalle de Playlist seleccionada
+  playlistDetailHeader: {
+    padding: 14,
+    backgroundColor: theme.colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    gap: 8,
+  },
+  backBtn: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  backBtnText: {
+    color: theme.colors.gold,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  playlistDetailTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  playlistPlayAllBtn: {
+    backgroundColor: theme.colors.gold,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  playlistPlayAllBtnText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
   // Modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   modalBox: { backgroundColor: theme.colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 40 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.gold, marginBottom: 20 },
+  modalTitle: { fontSize: 19, fontWeight: '700', color: theme.colors.gold, marginBottom: 14 },
   filePicker: { backgroundColor: theme.colors.bg, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, borderStyle: 'dashed', padding: 16, alignItems: 'center', marginBottom: 14 },
   filePickerText: { color: theme.colors.text, fontSize: 15 },
   fileSizeText: { color: theme.colors.textDim, fontSize: 12, marginTop: 4 },
@@ -376,4 +1126,58 @@ const s = StyleSheet.create({
   confirmBtn: { flex: 1, padding: 14, borderRadius: 10, backgroundColor: theme.colors.gold, alignItems: 'center' },
   confirmBtnText: { color: '#000', fontWeight: '700' },
   btnDisabled: { opacity: 0.4 },
+
+  createInModalBtn: {
+    backgroundColor: 'rgba(229, 178, 31, 0.15)',
+    borderWidth: 1,
+    borderColor: theme.colors.gold,
+    borderRadius: 8,
+    padding: 10,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  createInModalBtnText: {
+    color: theme.colors.gold,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  playlistOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: theme.colors.bg,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  playlistOptionRowActive: {
+    borderColor: theme.colors.gold,
+    backgroundColor: 'rgba(229, 178, 31, 0.08)',
+  },
+  playlistOptionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.colors.text,
+  },
+  playlistOptionSub: {
+    fontSize: 11,
+    color: theme.colors.textDim,
+    marginTop: 1,
+  },
+  modalCloseBtn: {
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: theme.colors.bg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  modalCloseBtnText: {
+    color: theme.colors.text,
+    fontWeight: '600',
+    fontSize: 14,
+  },
 });

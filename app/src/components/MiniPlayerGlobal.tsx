@@ -35,6 +35,13 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
     return null;
   }
 
+  // En Web, si la fuente NO es 'crew', el miniplayer de YouTube lo renderiza el portal
+  // persistente de Buscar.tsx para mantener el iframe montado sin duplicar la interfaz.
+  // Pero cuando suena Library Crew, MiniPlayerGlobal se encarga de mostrarlo tanto en Web como en móvil.
+  if (Platform.OS === 'web' && actual.source !== 'crew') {
+    return null;
+  }
+
   // El miniplayer debe flotar POR ENCIMA de la barra de pestañas en cualquier
   // dispositivo: la tab bar mide 49px + el inset inferior del sistema (gestos
   // Android ~24-48px o home indicator de iPhone ~34px). Sin el inset, el
@@ -83,7 +90,9 @@ export default function MiniPlayerGlobal({ onPressExpand }: MiniPlayerGlobalProp
             style={s.thumb}
           />
         ) : (
-          <View style={[s.thumb, { backgroundColor: '#111' }]} />
+          <View style={[s.thumb, { backgroundColor: '#181e26', alignItems: 'center', justifyContent: 'center' }]}>
+            <Text style={{ fontSize: 20 }}>👥</Text>
+          </View>
         )}
 
         <View style={s.info}>
