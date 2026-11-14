@@ -878,6 +878,7 @@ export default function LibraryCrew() {
               setAddToPlaylistModalOpen(true);
             }}
             hitSlop={8}
+            accessibilityLabel="Añadir a playlist"
           >
             <Text style={s.actionIconText}>➕📂</Text>
           </Pressable>
@@ -886,11 +887,18 @@ export default function LibraryCrew() {
             style={s.actionIconBtn}
             onPress={() => descargarTrackCrew(item)}
             hitSlop={8}
+            accessibilityLabel="Descargar track"
           >
             <Text style={s.actionIconText}>⬇️</Text>
           </Pressable>
-          <Pressable focusable={true} style={s.actionIconBtn} onPress={() => eliminar(item)} hitSlop={8}>
-            <Text style={s.actionIconText}>🗑</Text>
+          <Pressable
+            focusable={true}
+            style={[s.actionIconBtn, s.deleteTrackBtn]}
+            onPress={() => eliminar(item)}
+            hitSlop={8}
+            accessibilityLabel="Eliminar track"
+          >
+            <Text style={{ fontSize: 16 }}>🗑</Text>
           </Pressable>
         </View>
       </View>
@@ -1187,14 +1195,25 @@ export default function LibraryCrew() {
                               </Text>
                             </View>
                           </Pressable>
-                          <Pressable
-                            focusable={true}
-                            style={s.actionIconBtn}
-                            onPress={() => alternarTrackEnPlaylist(selectedPlaylist, item.id)}
-                            hitSlop={8}
-                          >
-                            <Text style={{ color: '#ff6666', fontSize: 13, fontWeight: '700' }}>Quitar</Text>
-                          </Pressable>
+                          <View style={s.trackActions}>
+                            <Pressable
+                              focusable={true}
+                              style={s.actionIconBtn}
+                              onPress={() => alternarTrackEnPlaylist(selectedPlaylist, item.id)}
+                              hitSlop={8}
+                            >
+                              <Text style={{ color: '#ffaa66', fontSize: 13, fontWeight: '700' }}>Quitar</Text>
+                            </Pressable>
+                            <Pressable
+                              focusable={true}
+                              style={[s.actionIconBtn, s.deleteTrackBtn]}
+                              onPress={() => eliminar(item)}
+                              hitSlop={8}
+                              accessibilityLabel="Eliminar track"
+                            >
+                              <Text style={{ fontSize: 16 }}>🗑</Text>
+                            </Pressable>
+                          </View>
                         </View>
                       );
                     }}
@@ -1275,9 +1294,20 @@ export default function LibraryCrew() {
               </Text>
             </View>
 
-            <Pressable focusable={true} style={s.playerBarClose} onPress={detenerAudioCrew} hitSlop={8}>
-              <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Pressable
+                focusable={true}
+                style={[s.playerBarClose, s.deleteTrackBtn]}
+                onPress={() => eliminar(playingTrack)}
+                hitSlop={8}
+                accessibilityLabel="Eliminar track"
+              >
+                <Text style={{ fontSize: 16 }}>🗑</Text>
+              </Pressable>
+              <Pressable focusable={true} style={s.playerBarClose} onPress={detenerAudioCrew} hitSlop={8}>
+                <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
+              </Pressable>
+            </View>
           </View>
 
           {/* Fila de controles: Shuffle, Prev, Play/Pause, Next, Repeat, EQ */}
@@ -1792,6 +1822,12 @@ const s = StyleSheet.create({
   trackUploader: { fontSize: 11, color: theme.colors.gold + '99' },
   trackActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   actionIconBtn: { padding: 8 },
+  deleteTrackBtn: {
+    backgroundColor: 'rgba(255, 68, 68, 0.12)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.35)',
+  },
   actionIconText: { fontSize: 16 },
   sep: { height: 1, backgroundColor: theme.colors.border, marginHorizontal: 16 },
 

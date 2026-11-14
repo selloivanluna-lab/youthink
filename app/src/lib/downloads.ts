@@ -83,21 +83,48 @@ export async function downloadFile(
   onProgress?: (progress: number) => void,
 ): Promise<string> {
   if (Platform.OS === 'web') {
-    // En web: usar elemento <a> para descarga directa del navegador
+    onProgress?.(0.3);
+    let blobUrl = url;
+    let fileSize: number | undefined;
+
+    if (url.startsWith('http')) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          let errJson: any;
+          try { errJson = await resp.json(); } catch (_) {}
+          throw new Error(errJson?.error || `Error HTTP ${resp.status} al descargar.`);
+        }
+        onProgress?.(0.7);
+        const blob = await resp.blob();
+        fileSize = blob.size;
+        blobUrl = URL.createObjectURL(blob);
+      } catch (err: any) {
+        console.warn('[downloads.ts] fetch directo falló:', err);
+        throw err;
+      }
+    }
+
+    onProgress?.(0.9);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = blobUrl;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
       try { document.body.removeChild(a); } catch (_) {}
-    }, 1000);
+      if (blobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(blobUrl);
+      }
+    }, 3000);
 
-    // Guardar URL directa si es HTTP (ej. Cloudflare R2 de Crew) para reproducción en la web
+    onProgress?.(1);
+
     const savedPath = url.startsWith('http') ? url : `web://${filename}`;
     await saveDownloadMeta({
       ...meta,
       localPath: savedPath,
+      fileSize,
       downloadedAt: new Date().toISOString(),
     });
     return savedPath;

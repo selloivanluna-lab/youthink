@@ -249,8 +249,8 @@ class QpPlayerService : MediaSessionService() {
       pushState()
     }
 
-    // Si ya es una URL directa (ej: Cloudflare R2, HTTP stream), reproducir sin pasar por NewPipe
-    if (videoId.startsWith("http://") || videoId.startsWith("https://")) {
+    // Si ya es una URL directa (ej: Cloudflare R2, HTTP stream, archivo local offline), reproducir sin pasar por NewPipe
+    if (videoId.startsWith("http://") || videoId.startsWith("https://") || videoId.startsWith("file://") || videoId.startsWith("/")) {
       main.post {
         if (reqId != currentRequestId.get()) return@post
         val p = player ?: return@post

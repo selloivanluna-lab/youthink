@@ -75,6 +75,7 @@ function respond(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Cache-Control': 'no-store',
   });
   res.end(JSON.stringify(obj));
@@ -100,6 +101,14 @@ function findDeno() {
   ];
   for (const c of cands) { try { if (c && fs.existsSync(c)) return c; } catch (e) {} }
   return null;
+}
+
+function getJsRuntimeArgs() {
+  const node = findBin('node') || process.execPath;
+  if (node) return ['--js-runtimes', 'node:' + node];
+  const deno = findDeno();
+  if (deno) return ['--js-runtimes', 'deno:' + deno];
+  return [];
 }
 
 // ── cookies para yt-dlp (Cookie Keeper desde Supabase) ───────────────
@@ -187,13 +196,12 @@ function runYtSearch(q, n, cb) {
   const ytdlp = findBin('yt-dlp');
   if (!ytdlp) return cb(new Error('yt-dlp no encontrado en PATH'));
   const args = [];
-  const deno = findDeno();
-  if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...getJsRuntimeArgs());
   args.push(...ytExtraArgs());
-  args.push('--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
+  args.push('--socket-timeout', '12', '--force-ipv4', '--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
     'ytsearch' + n + ':' + q);
   let p;
-  try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return cb(e); }
+  try { p = cp.spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { return cb(e); }
   let out = '', err = '', done = false;
   const finish = (e, r) => { if (done) return; done = true; cb(e, r); };
   const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de búsqueda (>30s)')); }, 30000);
@@ -226,13 +234,12 @@ function runYtPlaylist(plId, cb) {
   const ytdlp = findBin('yt-dlp');
   if (!ytdlp) return cb(new Error('yt-dlp no encontrado en PATH'));
   const args = [];
-  const deno = findDeno();
-  if (deno) args.push('--js-runtimes', 'deno:' + deno);
+  args.push(...getJsRuntimeArgs());
   args.push(...ytExtraArgs());
-  args.push('--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
+  args.push('--socket-timeout', '12', '--force-ipv4', '--flat-playlist', '--dump-single-json', '--no-warnings', '--ignore-errors',
     'https://www.youtube.com/playlist?list=' + plId);
   let p;
-  try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return cb(e); }
+  try { p = cp.spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { return cb(e); }
   let out = '', err = '', done = false;
   const finish = (e, r) => { if (done) return; done = true; cb(e, r); };
   const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} finish(new Error('timeout de playlist (>35s)')); }, 35000);
@@ -399,7 +406,6 @@ function runYtUrl(id, kind, cb, maxMs) {
   if (hit && hit.exp > Date.now()) return cb(null, hit.url);
   const ytdlp = findBin('yt-dlp');
   if (!ytdlp) return cb(new Error('yt-dlp no encontrado en PATH'));
-  const deno = findDeno();
   let lastErr = null;
   const t0 = Date.now();
   // Presupuesto total: permite fallar rápido (la app no debe esperar 2 minutos).
@@ -408,14 +414,14 @@ function runYtUrl(id, kind, cb, maxMs) {
     if (i >= YT_ATTEMPTS.length) return cb(lastErr || new Error('yt-dlp agotó los clientes'));
     const att = YT_ATTEMPTS[i];
     const args = [];
-    if (deno) args.push('--js-runtimes', 'deno:' + deno);
+    args.push(...getJsRuntimeArgs());
     args.push(...ytExtractorArgs(att.client));
     args.push(...ytProxyArgs());
     if (att.cookies && process.env.YT_COOKIES !== '0') args.push(...cookieArgs());
-    args.push('-g', '-f', ytStreamFormat(kind), '--no-warnings', '--no-playlist',
+    args.push('--socket-timeout', '12', '--force-ipv4', '-g', '-f', ytStreamFormat(kind), '--no-warnings', '--no-playlist',
       'https://www.youtube.com/watch?v=' + id);
     let p;
-    try { p = cp.spawn(ytdlp, args, { windowsHide: true }); } catch (e) { return cb(e); }
+    try { p = cp.spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { return cb(e); }
     let out = '', err = '', settled = false;
     const timer = setTimeout(() => {
       if (settled) return; settled = true;
@@ -423,7 +429,7 @@ function runYtUrl(id, kind, cb, maxMs) {
       lastErr = new Error('timeout al resolver la URL');
       if (i + 1 < YT_ATTEMPTS.length && Date.now() - t0 < totalMs) return attempt(i + 1);
       cb(lastErr);
-    }, Math.max(6000, Math.min(20000, totalMs - (Date.now() - t0))));
+    }, Math.max(4000, Math.min(12000, totalMs - (Date.now() - t0))));
     p.stdout.on('data', (d) => { out += d.toString(); });
     p.stderr.on('data', (d) => { err += d.toString(); });
     p.on('error', (e) => { clearTimeout(timer); if (settled) return; settled = true; cb(e); });
@@ -570,7 +576,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Content-Range, Accept-Ranges',
     });
     res.end();
@@ -580,7 +586,7 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
   if (p === '/api/health') {
     respond(res, 200, {
-      ok: true, ts: Date.now(), ytdlp: !!findBin('yt-dlp'), ffmpeg: !!findBin('ffmpeg'), deno: !!findDeno(),
+      ok: true, ts: Date.now(), ytdlp: !!findBin('yt-dlp'), ffmpeg: !!findBin('ffmpeg'), deno: !!findDeno(), node: process.version,
       // Diagnóstico del deploy: commit que corre Render y config de YouTube (sin secretos).
       commit: process.env.RENDER_GIT_COMMIT || null,
       yt: { clientes: YT_CLIENT_SETS, intentos: YT_ATTEMPTS.map((a) => a.client + (a.cookies ? '+cookies' : '')), cookies: process.env.YT_COOKIES !== '0', proxy: !!process.env.YT_PROXY },
@@ -589,17 +595,26 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (p === '/api/debug-ytdlp') {
-    const id = (url.searchParams.get('id') || 'dQw4w9WgXcQ').trim();
     const ytdlp = findBin('yt-dlp');
-    const deno = findDeno();
+    const cmd = url.searchParams.get('cmd') || '';
+    if (cmd === 'version') {
+      let ver = '';
+      try {
+        const proc = cp.spawnSync(ytdlp, ['--version'], { encoding: 'utf8', timeout: 5000 });
+        ver = proc.stdout.trim() || proc.stderr.trim();
+      } catch (e) { ver = e.message; }
+      respond(res, 200, { ok: true, ytdlp, version: ver, node: process.version, execPath: process.execPath });
+      return;
+    }
+    const id = (url.searchParams.get('id') || 'dQw4w9WgXcQ').trim();
     const client = url.searchParams.get('client') || 'web_embedded';
     const args = [];
-    if (deno) args.push('--js-runtimes', 'deno:' + deno);
-    if (client !== 'none') args.push('--extractor-args', 'youtube:player_client=' + client);
-    args.push('-g', '-f', ytStreamFormat('audio'), '--no-warnings', '--no-playlist', 'https://www.youtube.com/watch?v=' + id);
+    args.push(...getJsRuntimeArgs());
+    if (client !== 'none') args.push(...ytExtractorArgs(client));
+    args.push('--socket-timeout', '10', '--force-ipv4', '-g', '-f', ytStreamFormat('audio'), '--no-warnings', '--no-playlist', 'https://www.youtube.com/watch?v=' + id);
     const t0 = Date.now();
     let pProc;
-    try { pProc = cp.spawn(ytdlp, args); } catch (e) { respond(res, 500, { error: e.message }); return; }
+    try { pProc = cp.spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { respond(res, 500, { error: e.message }); return; }
     let out = '', err = '', done = false;
     pProc.stdout.on('data', d => out += d);
     pProc.stderr.on('data', d => err += d);
@@ -611,7 +626,7 @@ const server = http.createServer(async (req, res) => {
       if (done) return; done = true;
       try { pProc.kill('SIGKILL'); } catch (_) {}
       respond(res, 504, { ok: false, ms: Date.now() - t0, timeout: true, out: out.trim(), err: err.trim() });
-    }, 20000);
+    }, 12000);
     return;
   }
 

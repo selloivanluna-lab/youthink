@@ -16,6 +16,7 @@ import {
 import { deleteDownload, DownloadedTrack, getDownloads } from '../lib/downloads';
 import { theme } from '../theme';
 import { playerStore } from '../lib/playerStore';
+import { useNativeAudio } from '../lib/nativeAudio';
 
 function fmtBytes(b?: number): string {
   if (!b) return '';
@@ -40,6 +41,7 @@ export default function Descargas() {
   const [loading, setLoading] = useState(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const native = useNativeAudio();
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -79,12 +81,62 @@ export default function Descargas() {
     if (Platform.OS === 'web' && audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
+    } else {
+      native.stop();
     }
+    playerStore.setState({ reproduciendo: false });
     setPlayingId(null);
   }
 
   function reproducir(track: DownloadedTrack) {
     if (Platform.OS === 'web') {
+      const audioUrl = track.localPath.startsWith('http') ? track.localPath : null;
+      if (audioUrl) {
+        if (playingId === track.id) {
+          if (audioRef.current && !audioRef.current.paused) {
+            audioRef.current.pause();
+            playerStore.setState({ reproduciendo: false });
+          } else if (audioRef.current) {
+            audioRef.current.play();
+            playerStore.setState({ reproduciendo: true });
+          }
+          return;
+        }
+
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+
+        const audio = new (globalThis as any).Audio(audioUrl) as HTMLAudioElement;
+        audioRef.current = audio;
+        audio.play().catch((err: any) => {
+          console.warn('[Descargas] Error reproduciendo audio web:', err);
+        });
+        setPlayingId(track.id);
+        playerStore.setState({
+          actual: {
+            id: track.id,
+            title: track.title,
+            channel: track.artist,
+            thumb: track.thumb || '',
+            url: audioUrl,
+            kind: 'song' as const,
+            source: 'download' as const,
+            duration: track.duration || 0,
+          },
+          reproduciendo: true,
+          playerVisible: false,
+        });
+
+        audio.onended = () => {
+          setPlayingId(null);
+          audioRef.current = null;
+          playerStore.setState({ reproduciendo: false });
+        };
+        return;
+      }
+
       if (track.source === 'youtube') {
         playerStore.setState({
           actual: {
@@ -104,30 +156,6 @@ export default function Descargas() {
         return;
       }
 
-      // Track de Library Crew o con URL HTTP directa
-      const audioUrl = track.localPath.startsWith('http') ? track.localPath : null;
-      if (audioUrl) {
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current = null;
-        }
-        if (playingId === track.id) {
-          setPlayingId(null);
-          return;
-        }
-        const audio = new (globalThis as any).Audio(audioUrl) as HTMLAudioElement;
-        audioRef.current = audio;
-        audio.play().catch((err: any) => {
-          console.warn('[Descargas] Error reproduciendo audio web:', err);
-        });
-        setPlayingId(track.id);
-        audio.onended = () => {
-          setPlayingId(null);
-          audioRef.current = null;
-        };
-        return;
-      }
-
       (globalThis as any).alert?.(
         `"${track.title}" fue descargado por tu navegador. Podés encontrar el archivo en la carpeta Descargas de tu equipo.`
       );
@@ -136,11 +164,18 @@ export default function Descargas() {
 
     // Android: si ya está reproduciendo este track, toggle play/pause
     if (playingId === track.id) {
-      playerStore.togglePlay();
+      if (playerStore.getState().reproduciendo) {
+        native.pause();
+        playerStore.setState({ reproduciendo: false });
+      } else {
+        native.resume();
+        playerStore.setState({ reproduciendo: true });
+      }
       return;
     }
 
-    // Registrar en playerStore para MiniPlayer
+    // Reproducir offline con ExoPlayer directamente desde track.localPath
+    native.play(track.localPath, track.title, track.artist, track.thumb || '');
     playerStore.setState({
       actual: {
         id: track.id,
@@ -153,6 +188,7 @@ export default function Descargas() {
         duration: track.duration || 0,
       },
       reproduciendo: true,
+      playerVisible: false,
     });
     setPlayingId(track.id);
   }

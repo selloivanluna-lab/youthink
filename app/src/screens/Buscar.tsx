@@ -2788,10 +2788,13 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
     try {
       let audioUrl: string;
+      const esCrew = (actual as any).source === 'crew' || !!(actual as any).audio_url || actual.url?.includes('r2.cloudflarestorage.com');
 
-      // Android con módulo nativo: resolver la URL directamente en el teléfono
-      // (IP residencial, sin bloqueos de servidor)
-      if (Platform.OS !== 'web' && QpAudio) {
+      if (esCrew) {
+        audioUrl = (actual as any).audio_url || actual.url;
+      } else if (Platform.OS !== 'web' && QpAudio) {
+        // Android con módulo nativo: resolver la URL directamente en el teléfono
+        // (IP residencial, sin bloqueos de servidor)
         try {
           const r: any = await QpAudio.resolveAudio(actual.id);
           if (r && r.url) {
@@ -2806,7 +2809,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
         }
       } else if (Platform.OS === 'web') {
         // Web / Computadora: disparar descarga directa al navegador para que muestre el diálogo de Guardar Como
-        setDownloadProgress(50);
+        setDownloadProgress(30);
         audioUrl =
           api.audioClipUrl(actual.id) +
           `&dl=1&nombre=${encodeURIComponent(filename)}`;
@@ -2823,7 +2826,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
           title: actual.title || actual.id,
           artist: actual.channel || '',
           thumb: actual.thumb,
-          source: 'youtube',
+          source: esCrew ? 'crew' : 'youtube',
           duration: actual.duration,
         },
         (p) => setDownloadProgress(Math.round(p * 100)),
