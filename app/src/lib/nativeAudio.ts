@@ -14,8 +14,16 @@ const noop = () => Promise.resolve(true);
 export function useNativeAudio() {
   return useMemo(
     () => ({
-      play: (videoId: string, title: string, artist?: string, artworkUri?: string, startPos?: number) =>
-        QpAudio ? QpAudio.play(videoId, title, artist, artworkUri, startPos) : noop(),
+      play: (videoId: string, title?: string, artist?: string, artworkUri?: string, startPos?: number) =>
+        QpAudio
+          ? QpAudio.play(
+              videoId,
+              title || '',
+              artist || '',
+              artworkUri || '',
+              startPos ?? 0
+            )
+          : noop(),
       toggle: () => (QpAudio ? QpAudio.togglePlay() : noop()),
       pause: () => (QpAudio ? QpAudio.pause() : noop()),
       resume: () => (QpAudio ? QpAudio.resume() : noop()),

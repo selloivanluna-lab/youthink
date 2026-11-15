@@ -6,6 +6,7 @@ export type PlayerState = {
   playerVisible: boolean;
   pos: number;
   dur: number;
+  activeTab?: string;
 };
 
 type Listener = (state: PlayerState) => void;

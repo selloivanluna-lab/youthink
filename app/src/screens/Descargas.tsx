@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { deleteDownload, DownloadedTrack, getDownloads } from '../lib/downloads';
+import { useFocusEffect } from '@react-navigation/native';
 import { theme } from '../theme';
 import { playerStore } from '../lib/playerStore';
 import { useNativeAudio } from '../lib/nativeAudio';
@@ -49,6 +50,12 @@ export default function Descargas() {
     setTracks(list);
     setLoading(false);
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      playerStore.setState({ activeTab: 'Descargas' });
+    }, [])
+  );
 
   useEffect(() => {
     cargar();

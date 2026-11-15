@@ -16,6 +16,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import { api, CrewTrack } from '../lib/api';
 import { downloadFile } from '../lib/downloads';
 import { supabase } from '../lib/supabase';
+import { useFocusEffect } from '@react-navigation/native';
+import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import { playerStore } from '../lib/playerStore';
 import { theme } from '../theme';
@@ -180,6 +182,57 @@ export default function LibraryCrew() {
     return () => {
       unsub();
     };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      playerStore.setState({ activeTab: 'Library Crew' });
+    }, [])
+  );
+
+  // Sincronizar progreso y fin de canción con QpAudio nativo en Android
+  useEffect(() => {
+    if (!NATIVE_AUDIO || !QpAudio || typeof (QpAudio as any).addListener !== 'function') return;
+    try {
+      const sub = (QpAudio as any).addListener('onPlaybackState', (st: any) => {
+        const curActual = playerStore.getState().actual;
+        if (curActual?.source !== 'crew') return;
+
+        if (typeof st.isPlaying === 'boolean') {
+          playerStore.setState({ reproduciendo: st.isPlaying });
+        }
+        if (isFinite(st.position) && st.position >= 0) {
+          const p = Math.floor(st.position);
+          setCurrentPos(p);
+          playerStore.setState({ pos: p });
+        }
+        if (isFinite(st.duration) && st.duration > 0) {
+          const d = Math.floor(st.duration);
+          setCurrentDur(d);
+          playerStore.setState({ dur: d });
+        }
+        if (st.ended) {
+          if (repeatRef.current === 'one') {
+            native.seek(0);
+            native.resume();
+            return;
+          }
+          if (playlistQueueRef.current) {
+            const q = playlistQueueRef.current;
+            let nextIdx = q.index + 1;
+            if (shuffleRef.current && q.trackIds.length > 1) {
+              nextIdx = Math.floor(Math.random() * q.trackIds.length);
+            }
+            reproducirTrackEnLista(nextIdx, q);
+          } else {
+            detenerAudioCrew();
+          }
+        }
+      });
+      return () => {
+        try { sub?.remove?.(); } catch (_) {}
+      };
+    } catch (_) {}
   }, []);
 
   async function cargar() {
@@ -611,7 +664,12 @@ export default function LibraryCrew() {
 
     // Android Nativo
     try {
-      await native.play(track.audio_url, track.title, track.artist || 'Library Crew', track.cover_url || undefined);
+      await native.play(
+        track.audio_url,
+        track.title || 'Library Crew',
+        track.artist || (track.uploaded_by ? `Crew · ${track.uploaded_by}` : 'Library Crew'),
+        track.cover_url || ''
+      );
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'No se pudo reproducir');
       detenerAudioCrew();

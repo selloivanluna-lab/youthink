@@ -36,14 +36,16 @@ export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlay
     return null;
   }
 
+  const currentActiveTab = state.activeTab || currentTab;
+
   // Si suena Library Crew y estamos dentro de la pestaña Library Crew,
   // la propia pantalla ya muestra su barra completa con seekbar y ecualizador.
-  if (actual.source === 'crew' && currentTab === 'Library Crew') {
+  if (actual.source === 'crew' && currentActiveTab === 'Library Crew') {
     return null;
   }
 
   // Si suena YouTube y estamos en la pestaña Play, Buscar.tsx ya tiene su reproductor.
-  if (actual.source !== 'crew' && actual.source !== 'download' && currentTab === 'Play') {
+  if (actual.source !== 'crew' && actual.source !== 'download' && currentActiveTab === 'Play') {
     return null;
   }
 

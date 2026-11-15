@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -37,7 +37,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { supabase } from '../lib/supabase';
 import { API_URL, GEMINI_KEY } from '../config';
 import { theme } from '../theme';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { playerStore } from '../lib/playerStore';
 import MarqueeText from '../components/MarqueeText';
 import { guardarProgreso, guardarProgresoInmediato, obtenerProgreso, borrarProgreso } from '../lib/playbackHistory';
@@ -829,6 +829,12 @@ export default function Buscar() {
     setReproduciendo(true);
   }
 
+  useFocusEffect(
+    useCallback(() => {
+      playerStore.setState({ activeTab: 'Play' });
+    }, [])
+  );
+
   // Estado del reproductor nativo: llega por eventos (se actualiza fuera del render).
   useEffect(() => {
     if (!NATIVE_AUDIO || !QpAudio || typeof (QpAudio as any).addListener !== 'function') return;
@@ -846,9 +852,15 @@ export default function Buscar() {
 
         if (modoRef.current !== 'audio') return;
 
+        // Si lo que está sonando en playerStore es de Library Crew o Descargas, Buscar.tsx no debe intervenir
+        const actualStore = playerStore.getState().actual;
+        if (actualStore?.source === 'crew' || actualStore?.source === 'download') return;
+
         // Ignorar eventos que llegan tarde de la pista anterior (mediaId distinto).
         const evId = st.mediaId ? String(st.mediaId) : '';
         if (evId && currentTrackIdRef.current && evId !== currentTrackIdRef.current) return;
+        // Si no hay pista activa de YouTube en Buscar, ignorar eventos ajenos
+        if (!currentTrackIdRef.current) return;
 
         if (typeof st.isPlaying === 'boolean') setReproduciendo(st.isPlaying);
         if (isFinite(st.position) && st.position >= 0) {

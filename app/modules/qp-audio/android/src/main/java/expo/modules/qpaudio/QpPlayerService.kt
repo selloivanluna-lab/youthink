@@ -239,7 +239,7 @@ class QpPlayerService : MediaSessionService() {
 
   private val currentRequestId = java.util.concurrent.atomic.AtomicLong(0)
 
-  fun playVideo(videoId: String, title: String, artist: String = "", artworkUri: String = "", startPositionSeconds: Double = 0.0) {
+  fun playVideo(videoId: String, title: String, artist: String = "", artworkUri: String? = "", startPositionSeconds: Double = 0.0) {
     val reqId = currentRequestId.incrementAndGet()
     val startMs = if (startPositionSeconds > 0) (startPositionSeconds * 1000).toLong() else 0L
     // Detener y limpiar inmediatamente cualquier reproducción previa para evitar audios simultáneos
@@ -261,7 +261,7 @@ class QpPlayerService : MediaSessionService() {
             MediaMetadata.Builder()
               .setTitle(title)
               .setArtist(artist)
-              .setArtworkUri(if (artworkUri.isNotEmpty()) android.net.Uri.parse(artworkUri) else null)
+              .setArtworkUri(if (!artworkUri.isNullOrEmpty()) android.net.Uri.parse(artworkUri) else null)
               .build()
           )
           .build()
@@ -314,7 +314,7 @@ class QpPlayerService : MediaSessionService() {
             MediaMetadata.Builder()
               .setTitle(title.ifEmpty { r.title })
               .setArtist(artist)
-              .setArtworkUri(if (artworkUri.isNotEmpty()) android.net.Uri.parse(artworkUri) else null)
+              .setArtworkUri(if (!artworkUri.isNullOrEmpty()) android.net.Uri.parse(artworkUri) else null)
               .build()
           )
             .build()
