@@ -2761,6 +2761,12 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
 
   // Sincronizar estado y controles con playerStore para el MiniPlayerGlobal en todas las pestañas
   useEffect(() => {
+    // Si la pista activa en playerStore es de Library Crew o Descargas, y Buscar no está reproduciendo activamente,
+    // no pisar el store con el estado inactivo de YouTube.
+    const curActual = playerStore.getState().actual;
+    if (curActual && (curActual.source === 'crew' || curActual.source === 'download') && !reproduciendo) {
+      return;
+    }
     playerStore.setState({
       actual,
       reproduciendo,
@@ -2771,6 +2777,10 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
   }, [actual, reproduciendo, playerVisible, pos, dur]);
 
   useEffect(() => {
+    const curActual = playerStore.getState().actual;
+    if (curActual && (curActual.source === 'crew' || curActual.source === 'download') && !reproduciendo) {
+      return;
+    }
     playerStore.registerControls({
       togglePlay,
       abrirPlayer: () => setPlayerVisible(true),
@@ -2779,7 +2789,7 @@ async function buscar(tipo?: 'all' | 'videos' | 'songs' | 'playlists', mas = fal
     return () => {
       playerStore.unregisterControls();
     };
-  }, [togglePlay, cerrar]);
+  }, [togglePlay, cerrar, reproduciendo]);
 
   // ── Actualizar app (abre enlace de APK) ──
   function actualizarApp() {

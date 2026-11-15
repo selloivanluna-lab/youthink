@@ -87,6 +87,7 @@ export default function LibraryCrew() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [reproduciendo, setReproduciendo] = useState(false);
 
   // Sub-tabs de Library Crew: 'tracks' o 'playlists'
   const [activeTab, setActiveTab] = useState<'tracks' | 'playlists'>('tracks');
@@ -132,6 +133,7 @@ export default function LibraryCrew() {
   const [userEmail, setUserEmail] = useState('');
   const [myUploadedTrackIds, setMyUploadedTrackIds] = useState<Set<string>>(new Set());
   const webAudioRef = useRef<any>(null);
+  const lastPlayTapRef = useRef<number>(0);
 
   // Campos del modal de subida
   const [uTitle, setUTitle] = useState('');
@@ -168,12 +170,14 @@ export default function LibraryCrew() {
     const unsub = playerStore.subscribe((st) => {
       if (!st.actual || st.actual.source !== 'crew') {
         setPlayingId(null);
+        setReproduciendo(false);
         setPlaylistPlayingInfo(null);
         setCurrentPos(0);
         setCurrentDur(0);
       } else {
         const cId = st.actual.id.replace(/^crew_/, '');
-        setPlayingId(st.reproduciendo ? cId : null);
+        setPlayingId(cId);
+        setReproduciendo(!!st.reproduciendo);
         setCurrentPos(st.pos || 0);
         setCurrentDur(st.dur || 0);
       }
@@ -199,6 +203,7 @@ export default function LibraryCrew() {
         if (curActual?.source !== 'crew') return;
 
         if (typeof st.isPlaying === 'boolean') {
+          setReproduciendo(st.isPlaying);
           playerStore.setState({ reproduciendo: st.isPlaying });
         }
         if (isFinite(st.position) && st.position >= 0) {
@@ -513,6 +518,7 @@ export default function LibraryCrew() {
     }
     playlistQueueRef.current = null;
     setPlayingId(null);
+    setReproduciendo(false);
     setPlaylistPlayingInfo(null);
     setCurrentPos(0);
     setCurrentDur(0);
@@ -537,22 +543,32 @@ export default function LibraryCrew() {
     reproducir(track, { ...queue, index: nextIndex });
   }
 
-  async function reproducir(track: CrewTrack, queueContext?: { id: string; nombre: string; trackIds: string[]; index: number }) {
-    // Si ya está sonando este mismo track y no viene de forzar cola:
-    if (playingId === track.id && !queueContext) {
-      if (!NATIVE_AUDIO && webAudioRef.current) {
-        if (webAudioRef.current.paused) {
-          await webAudioRef.current.play();
-          playerStore.setState({ reproduciendo: true });
-        } else {
-          webAudioRef.current.pause();
-          playerStore.setState({ reproduciendo: false });
-        }
-        return;
-      } else if (NATIVE_AUDIO) {
-        native.toggle();
-        return;
+  function alternarPlayPausaCentral() {
+    if (!NATIVE_AUDIO && webAudioRef.current) {
+      if (webAudioRef.current.paused) {
+        try { webAudioRef.current.play(); } catch (_) {}
+        setReproduciendo(true);
+        playerStore.setState({ reproduciendo: true });
+      } else {
+        try { webAudioRef.current.pause(); } catch (_) {}
+        setReproduciendo(false);
+        playerStore.setState({ reproduciendo: false });
       }
+    } else if (NATIVE_AUDIO) {
+      native.toggle();
+    }
+  }
+
+  async function reproducir(track: CrewTrack, queueContext?: { id: string; nombre: string; trackIds: string[]; index: number }) {
+    if (!track) return;
+    const now = Date.now();
+    if (now - lastPlayTapRef.current < 250 && playingId === track.id) return;
+    lastPlayTapRef.current = now;
+
+    // Si ya está sonando este mismo track y no viene de forzar cola: alternar play / pausa
+    if (playingId === track.id && !queueContext) {
+      alternarPlayPausaCentral();
+      return;
     }
 
     // Detenemos audio anterior
@@ -575,6 +591,7 @@ export default function LibraryCrew() {
     }
 
     setPlayingId(track.id);
+    setReproduciendo(true);
 
     // Registro en playerStore: activa inmediatamente el MiniPlayer flotante
     const itemActual: any = {
@@ -597,19 +614,7 @@ export default function LibraryCrew() {
     });
 
     playerStore.registerControls({
-      togglePlay: () => {
-        if (!NATIVE_AUDIO && webAudioRef.current) {
-          if (webAudioRef.current.paused) {
-            webAudioRef.current.play();
-            playerStore.setState({ reproduciendo: true });
-          } else {
-            webAudioRef.current.pause();
-            playerStore.setState({ reproduciendo: false });
-          }
-        } else if (NATIVE_AUDIO) {
-          native.toggle();
-        }
-      },
+      togglePlay: alternarPlayPausaCentral,
       abrirPlayer: () => {},
       cerrar: () => detenerAudioCrew(),
     });
@@ -619,8 +624,14 @@ export default function LibraryCrew() {
         try {
           const a = new Audio(track.audio_url);
           webAudioRef.current = a;
-          a.onplay = () => playerStore.setState({ reproduciendo: true });
-          a.onpause = () => playerStore.setState({ reproduciendo: false });
+          a.onplay = () => {
+            setReproduciendo(true);
+            playerStore.setState({ reproduciendo: true });
+          };
+          a.onpause = () => {
+            setReproduciendo(false);
+            playerStore.setState({ reproduciendo: false });
+          };
           a.ontimeupdate = () => {
             const p = Math.floor(a.currentTime || 0);
             const d = Math.floor(a.duration || track.duration || 0);
@@ -643,6 +654,7 @@ export default function LibraryCrew() {
               reproducirTrackEnLista(nextIdx, q);
             } else {
               setPlayingId(null);
+              setReproduciendo(false);
               playerStore.setState({ reproduciendo: false, actual: null });
             }
           };
@@ -890,19 +902,20 @@ export default function LibraryCrew() {
   }, [tracks, playingId]);
 
   const renderTrack = useCallback(({ item }: { item: CrewTrack }) => {
-    const isPlaying = playingId === item.id;
+    const isCurrent = playingId === item.id;
+    const isPlaying = isCurrent && reproduciendo;
     const soyUploader = checkSoyUploader(item);
     const estaEnPublica = trackIdsEnPlaylistsPublicas.has(item.id);
     const estaEnAlguna = trackIdsEnCualquierPlaylist.has(item.id);
 
     return (
-      <View style={[s.trackRow, isPlaying && s.trackRowActive]}>
-        <Pressable focusable={true} style={s.trackInfo} onPress={() => reproducir(item)}>
-          <View style={[s.trackIcon, isPlaying && s.trackIconActive]}>
-            <Text style={s.trackIconText}>{isPlaying ? '▶️' : '🎵'}</Text>
+      <View style={[s.trackRow, isCurrent && s.trackRowActive]}>
+        <Pressable style={s.trackInfo} onPress={() => reproducir(item)}>
+          <View style={[s.trackIcon, isCurrent && s.trackIconActive]}>
+            <Text style={s.trackIconText}>{isPlaying ? '⏸' : (isCurrent ? '▶️' : '🎵')}</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[s.trackTitle, isPlaying && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
+            <Text style={[s.trackTitle, isCurrent && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
             <Text style={s.trackMeta} numberOfLines={1}>
               {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
             </Text>
@@ -961,7 +974,7 @@ export default function LibraryCrew() {
         </View>
       </View>
     );
-  }, [playingId, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
+  }, [playingId, reproduciendo, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
 
   const renderPlaylistCard = useCallback(({ item }: { item: CrewPlaylist }) => {
     const totalTracks = item.trackIds.filter(id => tracks.some(t => t.id === id)).length;
@@ -1168,6 +1181,7 @@ export default function LibraryCrew() {
               data={visibleTracks}
               keyExtractor={t => t.id}
               renderItem={renderTrack}
+              keyboardShouldPersistTaps="handled"
               contentContainerStyle={{ paddingBottom: playingTrack ? 190 : 120 }}
               ItemSeparatorComponent={() => <View style={s.sep} />}
             />
@@ -1238,16 +1252,18 @@ export default function LibraryCrew() {
                   <FlatList
                     data={playlistTracks}
                     keyExtractor={t => t.id}
+                    keyboardShouldPersistTaps="handled"
                     renderItem={({ item }) => {
-                      const isPlaying = playingId === item.id;
+                      const isCurrent = playingId === item.id;
+                      const isPlaying = isCurrent && reproduciendo;
                       return (
-                        <View style={[s.trackRow, isPlaying && s.trackRowActive]}>
-                          <Pressable focusable={true} style={s.trackInfo} onPress={() => reproducir(item)}>
-                            <View style={[s.trackIcon, isPlaying && s.trackIconActive]}>
-                              <Text style={s.trackIconText}>{isPlaying ? '▶️' : '🎵'}</Text>
+                        <View style={[s.trackRow, isCurrent && s.trackRowActive]}>
+                          <Pressable style={s.trackInfo} onPress={() => reproducir(item)}>
+                            <View style={[s.trackIcon, isCurrent && s.trackIconActive]}>
+                              <Text style={s.trackIconText}>{isPlaying ? '⏸' : (isCurrent ? '▶️' : '🎵')}</Text>
                             </View>
                             <View style={{ flex: 1 }}>
-                              <Text style={[s.trackTitle, isPlaying && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
+                              <Text style={[s.trackTitle, isCurrent && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
                               <Text style={s.trackMeta} numberOfLines={1}>
                                 {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
                               </Text>
@@ -1333,7 +1349,7 @@ export default function LibraryCrew() {
       {playingTrack ? (
         <View style={s.playerBarContainer}>
           {/* Seekbar interactivo */}
-          <Pressable focusable={true} style={s.seekbarArea} onPress={onSeekbarPress}>
+          <Pressable focusable={Platform.isTV} style={s.seekbarArea} onPress={onSeekbarPress}>
             <View style={s.seekbarTrack}>
               <View
                 style={[
@@ -1354,7 +1370,7 @@ export default function LibraryCrew() {
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Pressable
-                focusable={true}
+                focusable={Platform.isTV}
                 style={[s.playerBarClose, s.deleteTrackBtn]}
                 onPress={() => eliminar(playingTrack)}
                 hitSlop={8}
@@ -1362,7 +1378,7 @@ export default function LibraryCrew() {
               >
                 <Text style={{ fontSize: 16 }}>🗑</Text>
               </Pressable>
-              <Pressable focusable={true} style={s.playerBarClose} onPress={detenerAudioCrew} hitSlop={8}>
+              <Pressable focusable={Platform.isTV} style={s.playerBarClose} onPress={detenerAudioCrew} hitSlop={8}>
                 <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
               </Pressable>
             </View>
@@ -1372,7 +1388,7 @@ export default function LibraryCrew() {
           <View style={s.playerControlsRow}>
             {/* Shuffle */}
             <Pressable
-              focusable={true}
+              focusable={Platform.isTV}
               style={[s.playerCtrlBtn, shuffle && s.playerCtrlBtnActive]}
               onPress={() => setShuffle(!shuffle)}
               hitSlop={8}
@@ -1381,30 +1397,30 @@ export default function LibraryCrew() {
             </Pressable>
 
             {/* Anterior */}
-            <Pressable focusable={true} style={s.playerCtrlBtn} onPress={pistaAnterior} hitSlop={8}>
+            <Pressable focusable={Platform.isTV} style={s.playerCtrlBtn} onPress={pistaAnterior} hitSlop={8}>
               <Text style={s.playerCtrlText}>⏮</Text>
             </Pressable>
 
             {/* Play/Pausa central */}
             <Pressable
-              focusable={true}
+              focusable={Platform.isTV}
               style={s.playerPlayCentralBtn}
-              onPress={() => reproducir(playingTrack)}
+              onPress={alternarPlayPausaCentral}
               hitSlop={8}
             >
               <Text style={s.playerPlayCentralText}>
-                {playerStore.getState().reproduciendo ? '⏸' : '▶'}
+                {reproduciendo ? '⏸' : '▶'}
               </Text>
             </Pressable>
 
             {/* Siguiente */}
-            <Pressable focusable={true} style={s.playerCtrlBtn} onPress={pistaSiguiente} hitSlop={8}>
+            <Pressable focusable={Platform.isTV} style={s.playerCtrlBtn} onPress={pistaSiguiente} hitSlop={8}>
               <Text style={s.playerCtrlText}>⏭</Text>
             </Pressable>
 
             {/* Repeat */}
             <Pressable
-              focusable={true}
+              focusable={Platform.isTV}
               style={[s.playerCtrlBtn, repeat !== 'off' && s.playerCtrlBtnActive]}
               onPress={alternarRepeat}
               hitSlop={8}
@@ -1416,7 +1432,7 @@ export default function LibraryCrew() {
 
             {/* Ecualizador */}
             <Pressable
-              focusable={true}
+              focusable={Platform.isTV}
               style={[s.playerCtrlBtn, eq !== 'flat' && s.playerCtrlBtnActive]}
               onPress={() => setEqModalOpen(true)}
               hitSlop={8}
