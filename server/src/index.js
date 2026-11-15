@@ -607,26 +607,28 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const id = (url.searchParams.get('id') || 'dQw4w9WgXcQ').trim();
-    const client = url.searchParams.get('client') || 'web_embedded';
-    const args = [];
-    args.push(...getJsRuntimeArgs());
-    if (client !== 'none') args.push(...ytExtractorArgs(client));
-    args.push('--socket-timeout', '10', '--force-ipv4', '-g', '-f', ytStreamFormat('audio'), '--no-warnings', '--no-playlist', 'https://www.youtube.com/watch?v=' + id);
+    const client = url.searchParams.get('client') || '';
+    const js = url.searchParams.get('js') || 'none';
+    const args = ['-v', '--socket-timeout', '6'];
+    if (js === 'node') args.push(...getJsRuntimeArgs());
+    if (js === 'deno') { const d = findDeno(); if (d) args.push('--js-runtimes', 'deno:' + d); }
+    if (client && client !== 'none') args.push(...ytExtractorArgs(client));
+    args.push('-g', '-f', 'ba/b', '--no-playlist', 'https://www.youtube.com/watch?v=' + id);
     const t0 = Date.now();
-    let pProc;
-    try { pProc = cp.spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); } catch (e) { respond(res, 500, { error: e.message }); return; }
-    let out = '', err = '', done = false;
-    pProc.stdout.on('data', d => out += d);
-    pProc.stderr.on('data', d => err += d);
-    pProc.on('close', code => {
-      if (done) return; done = true;
-      respond(res, 200, { ok: code === 0, ms: Date.now() - t0, code, out: out.trim(), err: err.trim(), args });
-    });
-    setTimeout(() => {
-      if (done) return; done = true;
-      try { pProc.kill('SIGKILL'); } catch (_) {}
-      respond(res, 504, { ok: false, ms: Date.now() - t0, timeout: true, out: out.trim(), err: err.trim() });
-    }, 12000);
+    try {
+      const proc = cp.spawnSync(ytdlp, args, { encoding: 'utf8', timeout: 9000, maxBuffer: 1024 * 1024 });
+      respond(res, 200, {
+        ok: proc.status === 0,
+        ms: Date.now() - t0,
+        status: proc.status,
+        error: proc.error ? proc.error.message : null,
+        stdout: (proc.stdout || '').trim(),
+        stderr: (proc.stderr || '').trim(),
+        args
+      });
+    } catch (e) {
+      respond(res, 500, { error: e.message });
+    }
     return;
   }
 
