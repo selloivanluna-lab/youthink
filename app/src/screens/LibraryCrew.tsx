@@ -21,6 +21,8 @@ import QpAudio from '../../modules/qp-audio/src/QpAudioModule';
 import { NATIVE_AUDIO, useNativeAudio } from '../lib/nativeAudio';
 import { playerStore } from '../lib/playerStore';
 import { theme } from '../theme';
+import StarRating from '../components/StarRating';
+import { useRatings } from '../lib/ratingsStore';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface CrewPlaylist {
@@ -88,6 +90,8 @@ export default function LibraryCrew() {
   const [error, setError] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [reproduciendo, setReproduciendo] = useState(false);
+  const { getRating, setRating } = useRatings();
+  const [calificandoTrack, setCalificandoTrack] = useState<CrewTrack | null>(null);
 
   // Sub-tabs de Library Crew: 'tracks' o 'playlists'
   const [activeTab, setActiveTab] = useState<'tracks' | 'playlists'>('tracks');
@@ -919,7 +923,12 @@ export default function LibraryCrew() {
             <Text style={s.trackMeta} numberOfLines={1}>
               {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
+              {getRating(item.id) > 0 ? (
+                <View style={{ backgroundColor: 'rgba(229,178,31,0.18)', borderWidth: 1, borderColor: 'rgba(229,178,31,0.4)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
+                  <Text style={{ color: theme.colors.gold, fontSize: 11, fontWeight: '800' }}>★ {getRating(item.id)}</Text>
+                </View>
+              ) : null}
               {estaEnPublica ? (
                 <View style={s.badgePublic}>
                   <Text style={s.badgePublicText}>🌐 Compartido</Text>
@@ -942,7 +951,18 @@ export default function LibraryCrew() {
 
         <View style={s.trackActions}>
           <Pressable
-            focusable={true}
+            focusable={Platform.isTV}
+            style={s.actionIconBtn}
+            onPress={() => setCalificandoTrack(item)}
+            hitSlop={8}
+            accessibilityLabel="Calificar canción"
+          >
+            <Text style={{ fontSize: 16, color: getRating(item.id) > 0 ? theme.colors.gold : 'rgba(255,255,255,0.3)' }}>
+              {getRating(item.id) > 0 ? '★' : '☆'}
+            </Text>
+          </Pressable>
+          <Pressable
+            focusable={Platform.isTV}
             style={s.actionIconBtn}
             onPress={() => {
               setTargetTrack(item);
@@ -954,7 +974,7 @@ export default function LibraryCrew() {
             <Text style={s.actionIconText}>➕📂</Text>
           </Pressable>
           <Pressable
-            focusable={true}
+            focusable={Platform.isTV}
             style={s.actionIconBtn}
             onPress={() => descargarTrackCrew(item)}
             hitSlop={8}
@@ -963,7 +983,7 @@ export default function LibraryCrew() {
             <Text style={s.actionIconText}>⬇️</Text>
           </Pressable>
           <Pressable
-            focusable={true}
+            focusable={Platform.isTV}
             style={[s.actionIconBtn, s.deleteTrackBtn]}
             onPress={() => eliminar(item)}
             hitSlop={8}
@@ -974,7 +994,7 @@ export default function LibraryCrew() {
         </View>
       </View>
     );
-  }, [playingId, reproduciendo, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
+  }, [playingId, reproduciendo, getRating, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist]);
 
   const renderPlaylistCard = useCallback(({ item }: { item: CrewPlaylist }) => {
     const totalTracks = item.trackIds.filter(id => tracks.some(t => t.id === id)).length;
@@ -1266,12 +1286,24 @@ export default function LibraryCrew() {
                               <Text style={[s.trackTitle, isCurrent && s.trackTitleActive]} numberOfLines={1}>{item.title}</Text>
                               <Text style={s.trackMeta} numberOfLines={1}>
                                 {[item.artist, fmtTiempo(item.duration), fmtSize(item.file_size)].filter(Boolean).join(' · ')}
+                                {getRating(item.id) > 0 ? ` · ★ ${getRating(item.id)}` : ''}
                               </Text>
                             </View>
                           </Pressable>
                           <View style={s.trackActions}>
                             <Pressable
-                              focusable={true}
+                              focusable={Platform.isTV}
+                              style={s.actionIconBtn}
+                              onPress={() => setCalificandoTrack(item)}
+                              hitSlop={8}
+                              accessibilityLabel="Calificar canción"
+                            >
+                              <Text style={{ fontSize: 16, color: getRating(item.id) > 0 ? theme.colors.gold : 'rgba(255,255,255,0.3)' }}>
+                                {getRating(item.id) > 0 ? '★' : '☆'}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              focusable={Platform.isTV}
                               style={s.actionIconBtn}
                               onPress={() => alternarTrackEnPlaylist(selectedPlaylist, item.id)}
                               hitSlop={8}
@@ -1279,7 +1311,7 @@ export default function LibraryCrew() {
                               <Text style={{ color: '#ffaa66', fontSize: 13, fontWeight: '700' }}>Quitar</Text>
                             </Pressable>
                             <Pressable
-                              focusable={true}
+                              focusable={Platform.isTV}
                               style={[s.actionIconBtn, s.deleteTrackBtn]}
                               onPress={() => eliminar(item)}
                               hitSlop={8}
@@ -1382,6 +1414,11 @@ export default function LibraryCrew() {
                 <Text style={{ color: theme.colors.textDim, fontSize: 16 }}>✕</Text>
               </Pressable>
             </View>
+          </View>
+
+          {/* Calificación interactiva de 1 a 5 estrellas para la pista activa */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginVertical: 3 }}>
+            <StarRating trackId={playingTrack.id} size={22} showNumber={true} showLabel={true} />
           </View>
 
           {/* Fila de controles: Shuffle, Prev, Play/Pause, Next, Repeat, EQ */}
@@ -1731,6 +1768,39 @@ export default function LibraryCrew() {
           </View>
         </View>
       </Modal>
+
+      {/* ── Modal de Calificación de Canción en Library Crew ── */}
+      {calificandoTrack ? (
+        <Modal transparent visible animationType="fade" onRequestClose={() => setCalificandoTrack(null)}>
+          <Pressable
+            style={s.modalOverlay}
+            onPress={() => setCalificandoTrack(null)}
+          >
+            <Pressable style={[s.modalBox, { alignItems: 'center', padding: 22 }]} onPress={() => {}}>
+              <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '800', marginBottom: 8, letterSpacing: 0.5 }}>
+                CALIFICAR EN LIBRARY CREW
+              </Text>
+              <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 16 }} numberOfLines={2}>
+                {calificandoTrack.title}
+              </Text>
+              <StarRating
+                trackId={calificandoTrack.id}
+                size={34}
+                showNumber={true}
+                onRate={(stars) => {
+                  setRating(calificandoTrack.id, stars);
+                }}
+              />
+              <Pressable
+                style={[s.confirmBtn, { marginTop: 22, minWidth: 120, alignItems: 'center' }]}
+                onPress={() => setCalificandoTrack(null)}
+              >
+                <Text style={s.confirmBtnText}>Listo</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : null}
     </View>
   );
 }

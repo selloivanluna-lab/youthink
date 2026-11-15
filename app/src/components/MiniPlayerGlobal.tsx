@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { playerStore, PlayerState } from '../lib/playerStore';
 import { theme } from '../theme';
+import { useRatings } from '../lib/ratingsStore';
 import MarqueeText from './MarqueeText';
 
 interface MiniPlayerGlobalProps {
@@ -23,6 +24,7 @@ const TAB_BAR_HEIGHT = 49;
 export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlayerGlobalProps) {
   const [state, setState] = useState<PlayerState>(playerStore.getState());
   const insets = useSafeAreaInsets();
+  const { getRating } = useRatings();
 
   useEffect(() => {
     return playerStore.subscribe((next) => {
@@ -44,14 +46,9 @@ export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlay
     return null;
   }
 
-  // Si suena YouTube y estamos en la pestaña Play, Buscar.tsx ya tiene su reproductor.
-  if (actual.source !== 'crew' && actual.source !== 'download' && currentActiveTab === 'Play') {
-    return null;
-  }
-
   // En Web, si la fuente NO es 'crew' ni 'download', el miniplayer de YouTube lo renderiza el portal
   // persistente de Buscar.tsx para mantener el iframe montado sin duplicar la interfaz.
-  // Pero cuando suena Library Crew o una Descarga, MiniPlayerGlobal se encarga de mostrarlo tanto en Web como en móvil.
+  // En cambio en Android nativo, MiniPlayerGlobal es el ÚNICO miniplayer y debe estar visible siempre al minimizar.
   if (Platform.OS === 'web' && actual.source !== 'crew' && actual.source !== 'download') {
     return null;
   }
@@ -94,7 +91,7 @@ export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlay
       ]}
     >
       <Pressable
-        focusable={true}
+        focusable={Platform.isTV}
         style={s.touchable}
         onPress={handleExpand}
       >
@@ -115,13 +112,20 @@ export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlay
             style={s.title}
             speed={35}
           />
-          <Text style={s.artist} numberOfLines={1}>
-            {actual.channel || 'YouThink Music'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={[s.artist, { flexShrink: 1 }]} numberOfLines={1}>
+              {actual.channel || 'YouThink Music'}
+            </Text>
+            {getRating(actual.id) > 0 ? (
+              <Text style={{ color: theme.colors.gold, fontSize: 11, fontWeight: '700' }}>
+                ★ {getRating(actual.id)}
+              </Text>
+            ) : null}
+          </View>
         </View>
 
         <Pressable
-          focusable={true}
+          focusable={Platform.isTV}
           style={s.btn}
           onPress={(e) => {
             e.stopPropagation?.();
@@ -133,7 +137,7 @@ export default function MiniPlayerGlobal({ onPressExpand, currentTab }: MiniPlay
         </Pressable>
 
         <Pressable
-          focusable={true}
+          focusable={Platform.isTV}
           style={s.btn}
           onPress={(e) => {
             e.stopPropagation?.();

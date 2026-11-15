@@ -40,6 +40,8 @@ import { theme } from '../theme';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { playerStore } from '../lib/playerStore';
 import MarqueeText from '../components/MarqueeText';
+import StarRating from '../components/StarRating';
+import { useRatings } from '../lib/ratingsStore';
 import { guardarProgreso, guardarProgresoInmediato, obtenerProgreso, borrarProgreso } from '../lib/playbackHistory';
 
 // En Android se carga el botón nativo de Chromecast. En web el paquete ni se evalúa.
@@ -178,6 +180,8 @@ export default function Buscar() {
   const [cargandoPlaylistId, setCargandoPlaylistId] = useState<string | null>(null);
   const [guardandoPlaylistId, setGuardandoPlaylistId] = useState<string | null>(null);
   const [favoritosListasIds, setFavoritosListasIds] = useState<Set<string>>(new Set());
+  const { getRating, setRating } = useRatings();
+  const [calificandoItem, setCalificandoItem] = useState<{ id: string; title: string } | null>(null);
 
   // Cargar IDs de playlists marcadas como favoritas
   useEffect(() => {
@@ -3439,6 +3443,16 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
               </Pressable>
             </View>
 
+            {/* ── Calificación de 1 a 5 estrellas ── */}
+            {actual ? (
+              <View style={{ alignItems: 'center', marginVertical: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <Text style={{ color: theme.colors.textDim, fontSize: 11, fontWeight: '700', marginBottom: 4, letterSpacing: 0.5 }}>
+                  CALIFICACIÓN DEL TRACK
+                </Text>
+                <StarRating trackId={actual.id} size={28} showNumber={true} />
+              </View>
+            ) : null}
+
             {/* ── Like / Dislike (solo en modo radio) ── */}
             {autoExtenderRef.current && actual ? (
               <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 8, marginBottom: 2 }}>
@@ -3865,10 +3879,20 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                   {item.duration > 0 ? ` · ${fmtTiempo(item.duration)}` : ((item as any).durationText ? ` · ${(item as any).durationText}` : '')}
                   {item.isAlbumVideo ? ' · 💿 Álbum Completo' : ''}
                   {item.live ? ' · 🔴 EN VIVO' : ''}
+                  {getRating(item.id) > 0 ? ` · ★ ${getRating(item.id)}` : ''}
                 </Text>
               </View>
             </TvPressable>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+              <TvPressable
+                style={{ padding: 6, borderRadius: 8 }}
+                onPress={() => setCalificandoItem({ id: item.id, title: item.title })}
+                accessibilityLabel="Calificar canción"
+              >
+                <Text style={{ fontSize: 16, color: getRating(item.id) > 0 ? theme.colors.gold : 'rgba(255,255,255,0.3)' }}>
+                  {getRating(item.id) > 0 ? '★' : '☆'}
+                </Text>
+              </TvPressable>
               {actual ? (
                 <TvPressable
                   style={{ padding: 8, backgroundColor: theme.colors.surface2, borderRadius: 8 }}
@@ -4119,7 +4143,12 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                 <Image source={{ uri: actual.thumb }} style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#000' }} />
                 <View style={{ flex: 1, overflow: 'hidden' }}>
                   <MarqueeText text={actual.title || ''} style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }} speed={35} />
-                  <Text style={{ color: theme.colors.textDim, fontSize: 11 }} numberOfLines={1}>{actual.channel}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ color: theme.colors.textDim, fontSize: 11, flexShrink: 1 }} numberOfLines={1}>{actual.channel}</Text>
+                    {getRating(actual.id) > 0 ? (
+                      <Text style={{ color: theme.colors.gold, fontSize: 11, fontWeight: '700' }}>★ {getRating(actual.id)}</Text>
+                    ) : null}
+                  </View>
                 </View>
                 <Pressable focusable={true} onPress={togglePlay} style={{ padding: 8 }}>
                   <Text style={{ color: theme.colors.gold, fontSize: 18 }}>{reproduciendo ? '⏸' : '▶'}</Text>
@@ -4724,6 +4753,37 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
           </View>
         </View>
       </Modal>
+
+      {/* ── Modal de Calificación Rápida ── */}
+      {calificandoItem ? (
+        <Modal transparent visible animationType="fade" onRequestClose={() => setCalificandoItem(null)}>
+          <Pressable focusable={Platform.isTV} style={s.eqBackdrop} onPress={() => setCalificandoItem(null)}>
+            <Pressable focusable={Platform.isTV} style={[s.eqPanel, { alignItems: 'center', padding: 24 }]} onPress={() => {}}>
+              <Text style={{ color: theme.colors.gold, fontSize: 13, fontWeight: '800', marginBottom: 8, letterSpacing: 0.5 }}>
+                CALIFICAR CANCIÓN
+              </Text>
+              <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 16 }} numberOfLines={2}>
+                {calificandoItem.title}
+              </Text>
+              <StarRating
+                trackId={calificandoItem.id}
+                size={34}
+                showNumber={true}
+                onRate={(stars) => {
+                  setRating(calificandoItem.id, stars);
+                }}
+              />
+              <Pressable
+                focusable={Platform.isTV}
+                style={[s.plCreateBtn, { marginTop: 22, minWidth: 120 }]}
+                onPress={() => setCalificandoItem(null)}
+              >
+                <Text style={s.plCreateBtnText}>Listo</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : null}
 
       {/* ── Toast de feedback de radio ── */}
       {toastFeedback ? (
