@@ -3383,7 +3383,9 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
             </View>
 
             {/* ── Botones de Descarga y Lista ── */}
+            {/* En Web solo mostramos descarga si es track de Crew (R2). YouTube en Web no se puede descargar desde servidor. */}
             <View style={s.actionRow}>
+              {(Platform.OS !== 'web' || (actual as any)?.source === 'crew' || !!(actual as any)?.audio_url || actual?.url?.includes('r2.cloudflarestorage.com')) && (
               <Pressable focusable={true}
                 style={[s.actionBtn, descargando && { opacity: 0.5 }]}
                 onPress={descargar}
@@ -3400,6 +3402,7 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
                     : 'Descargar'}
                 </Text>
               </Pressable>
+              )}
               <Pressable focusable={true}
                 style={s.actionBtn}
                 onPress={abrirModalPlaylists}
