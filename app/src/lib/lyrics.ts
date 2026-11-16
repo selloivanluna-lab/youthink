@@ -83,7 +83,7 @@ export async function buscarLyrics(videoId: string, videoTitle: string, channel 
         if (durationSec && durationSec > 0) {
           params.set('duration', Math.round(durationSec).toString());
         }
-        const r = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
+        const r = await fetchConTimeout(`https://lrclib.net/api/get?${params.toString()}`, {}, 10000);
         if (r.ok) {
           result = await r.json();
         }
@@ -94,7 +94,7 @@ export async function buscarLyrics(videoId: string, videoTitle: string, channel 
     if (!result || (!result.syncedLyrics && !result.plainLyrics)) {
       try {
         const query = `${cleanTitle} ${artist}`.trim() || videoTitle;
-        const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+        const r = await fetchConTimeout(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`, {}, 10000);
         if (r.ok) {
           const list = await r.json();
           if (Array.isArray(list) && list.length > 0) {
@@ -131,7 +131,7 @@ export async function buscarLyrics(videoId: string, videoTitle: string, channel 
         const lyristQuery = encodeURIComponent(cleanTitle || videoTitle);
         const lyristArtist = encodeURIComponent(artist || '');
         const url = artist ? `https://lyrist.vercel.app/api/${lyristQuery}/${lyristArtist}` : `https://lyrist.vercel.app/api/${lyristQuery}`;
-        const resp = await fetch(url);
+        const resp = await fetchConTimeout(url, {}, 10000);
         if (resp.ok) {
           const lyristData = await resp.json();
           if (lyristData?.lyrics) {
@@ -166,11 +166,11 @@ Instrucciones estrictas:
         for (const model of geminiModels) {
           try {
             const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`;
-            const gRes = await fetch(gUrl, {
+            const gRes = await fetchConTimeout(gUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-            });
+            }, 20000);
             if (gRes.ok) {
               const gJson = await gRes.json();
               const cand = gJson.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -231,10 +231,33 @@ export function detectarLangPair(textSample: string): string {
   return 'en|es';
 }
 
+// Fetch con timeout usando AbortController — evita que la traducción se quede colgada indefinidamente
+async function fetchConTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Detecta si el texto ya está en español (evita traducir lo que no hace falta)
+function textoYaEsEspanol(lines: LyricLine[]): boolean {
+  const sample = lines.slice(0, Math.min(lines.length, 15)).map((l) => l.text).join(' ');
+  // Palabras típicas del español que rara vez aparecen en otros idiomas
+  const marcadores = /\b(que|pero|como|para|esto|cuando|tiene|puede|donde|porque|quiero|todo|nada|siempre|nunca|también|algo|estoy|eres|somos|corazón|amor|vida)\b/gi;
+  const hits = (sample.match(marcadores) || []).length;
+  const words = sample.split(/\s+/).length;
+  // Si más del 18% de las palabras son marcadores españoles, ya está en español
+  return words > 5 && hits / words > 0.18;
+}
+
 // Traduce los versos al español usando Gemini Flash (alta fidelidad y contexto musical) con fallback a MyMemory
 export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promise<LyricLine[]> {
-  // Usamos _v3 para invalidar traducciones erróneas previas guardadas en el storage
-  const cacheKey = `qp_lyrics_tr_v3_${videoId}`;
+  // Usamos _v4 para invalidar traducciones erróneas previas guardadas en el storage
+  const cacheKey = `qp_lyrics_tr_v4_${videoId}`;
   try {
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
@@ -242,6 +265,17 @@ export async function traducirLyrics(videoId: string, lines: LyricLine[]): Promi
       return lines.map((l, i) => ({ ...l, translation: trMap[i] || l.text }));
     }
   } catch {}
+
+  // Si la canción ya está en español, no traducimos
+  if (textoYaEsEspanol(lines)) {
+    const trMap: Record<number, string> = {};
+    const result = lines.map((l, i) => {
+      trMap[i] = l.text;
+      return { ...l, translation: l.text };
+    });
+    AsyncStorage.setItem(cacheKey, JSON.stringify(trMap)).catch(() => {});
+    return result;
+  }
 
   // Intento primario con Gemini (traducción poética, musical y coherente en bloque)
   if (GEMINI_KEY && lines.length > 0) {
@@ -259,12 +293,12 @@ Versos:
 ${JSON.stringify(originalLines)}`;
 
         // Modelos disponibles en orden de prioridad y resiliencia ante alta demanda
-        const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+        const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
         let success = false;
 
         for (const model of models) {
           try {
-            const r = await fetch(
+            const r = await fetchConTimeout(
               `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
               {
                 method: 'POST',
@@ -277,7 +311,8 @@ ${JSON.stringify(originalLines)}`;
                     responseMimeType: 'application/json',
                   },
                 }),
-              }
+              },
+              20000 // 20 segundos de timeout por modelo
             );
 
             if (r.ok) {
@@ -295,8 +330,12 @@ ${JSON.stringify(originalLines)}`;
                 success = true;
                 break;
               }
+              // Si el array vino con diferente cantidad, intentamos el siguiente modelo
             }
-          } catch {}
+          } catch (fetchErr) {
+            // Timeout o error de red — seguimos con el siguiente modelo
+            console.warn(`[traducirLyrics] ${model} falló:`, fetchErr);
+          }
         }
 
         if (!success) {
@@ -336,7 +375,11 @@ ${JSON.stringify(originalLines)}`;
         }
         try {
           const enc = encodeURIComponent(textoLimpio);
-          const r = await fetch(`https://api.mymemory.translated.net/get?q=${enc}&langpair=${langpair}`);
+          const r = await fetchConTimeout(
+            `https://api.mymemory.translated.net/get?q=${enc}&langpair=${langpair}`,
+            {},
+            10000 // 10 segundos por verso
+          );
           if (r.ok) {
             const data = await r.json();
             const status = data?.responseStatus;
