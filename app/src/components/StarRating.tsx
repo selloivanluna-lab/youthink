@@ -13,6 +13,7 @@ interface StarRatingProps {
   showLabel?: boolean;
   style?: StyleProp<ViewStyle>;
   starStyle?: StyleProp<TextStyle>;
+  maxStars?: number;
 }
 
 export default function StarRating({
@@ -25,6 +26,7 @@ export default function StarRating({
   showLabel = false,
   style,
   starStyle,
+  maxStars = 3,
 }: StarRatingProps) {
   const { ratings, setRating } = useRatings();
 
@@ -48,7 +50,7 @@ export default function StarRating({
         <Text style={styles.label}>Calificación:</Text>
       ) : null}
       <View style={styles.starsRow}>
-        {[1, 2, 3, 4, 5].map((star) => {
+        {[1, 2, 3].map((star) => {
           const isFilled = currentRating >= star;
           return (
             <Pressable
@@ -75,7 +77,7 @@ export default function StarRating({
       </View>
       {showNumber && currentRating > 0 ? (
         <Text style={[styles.ratingNumber, { fontSize: Math.max(11, size - 8) }]}>
-          {currentRating}/5
+          {currentRating}/3
         </Text>
       ) : null}
     </View>

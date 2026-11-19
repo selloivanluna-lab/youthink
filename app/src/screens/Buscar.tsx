@@ -182,6 +182,8 @@ export default function Buscar() {
   const [favoritosListasIds, setFavoritosListasIds] = useState<Set<string>>(new Set());
   const { getRating, setRating } = useRatings();
   const [calificandoItem, setCalificandoItem] = useState<{ id: string; title: string } | null>(null);
+  const [filtroEstrellas, setFiltroEstrellas] = useState<0|1|2|3>(0);
+  const [filtroEstrellasPl, setFiltroEstrellasPl] = useState<0|1|2|3>(0);
 
   // Cargar IDs de playlists marcadas como favoritas
   useEffect(() => {
@@ -1395,8 +1397,11 @@ export default function Buscar() {
     try { webViewCmd("var v=document.querySelector('video'); if(v){v.pause(); v.src=''; v.load();}"); } catch (_) {}
     if (Platform.OS !== 'web') setWebEmbedUri(null);
 
-    // Arrancar la reproducción con el tema semilla forzando audio
-    reproducir([seedItem], 0, true, true);
+    // Arrancar la reproducción con un tema aleatorio de la playlist para que sienta radio desde el inicio
+    const queueConSeed = Array.isArray(queue) && queue.length > 1 ? queue : [seed];
+    const idxAleatorio = Math.floor(Math.random() * queueConSeed.length);
+    const seedAleatoria: YtResult = { ...queueConSeed[idxAleatorio], kind: 'song' };
+    reproducir([seedAleatoria], 0, true, true);
 
     const estacionNombre = seed.channel
       ? `📻 Mix Playlist (${seed.channel})`
@@ -1406,19 +1411,27 @@ export default function Buscar() {
     navigation.navigate('Radio' as never);
 
     try {
-      const idsVistos = new Set<string>([seed.id]);
+      const idsVistos = new Set<string>([seed.id, seedAleatoria.id]);
       let tracksRadio: YtResult[] = [];
 
       const playlist = Array.isArray(queue) && queue.length > 1 ? queue : [];
 
-      // ── 1. Semillas distribuidas: inicio, medio y fin de la playlist ──────
-      //   Así la radio refleja el estilo GENERAL, no solo el primer tema.
+      // ── 1. Semillas distribuidas: inicio, 1/4, mitad, 3/4 y fin de la playlist ──
+      //   5 puntos de muestreo para capturar el ADN musical completo de la playlist.
       const semillas: YtResult[] = [seed];
       if (playlist.length >= 4) {
-        const mid = playlist[Math.floor(playlist.length / 2)];
-        const last = playlist[playlist.length - 1];
-        if (mid && mid.id !== seed.id) semillas.push(mid);
-        if (last && last.id !== seed.id && last.id !== mid?.id) semillas.push(last);
+        const idx25  = playlist[Math.floor(playlist.length * 0.25)];
+        const mid    = playlist[Math.floor(playlist.length / 2)];
+        const idx75  = playlist[Math.floor(playlist.length * 0.75)];
+        const last   = playlist[playlist.length - 1];
+        const candidatos = [idx25, mid, idx75, last];
+        const idsYa = new Set<string>([seed.id]);
+        for (const c of candidatos) {
+          if (c && !idsYa.has(c.id)) {
+            semillas.push(c);
+            idsYa.add(c.id);
+          }
+        }
       }
 
       // api.radio() en paralelo para todas las semillas
@@ -3769,7 +3782,38 @@ Contá algo interesante: curiosidades del artista, contexto del álbum, hito his
       {error ? <Text style={s.error}>{error}</Text> : null}
       {loading ? <ActivityIndicator color={theme.colors.gold} style={{ marginTop: 24 }} /> : null}
 
-      <FlatList style={{ flex: 1 }} data={results} keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
+      {results.length > 0 && results.some(r => r.kind !== 'playlist' && r.kind !== 'album') ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, marginBottom: 6 }}>
+          <Text style={{ color: theme.colors.textDim, fontSize: 11, fontWeight: '600' }}>★ Filtrar:</Text>
+          {([0, 1, 2, 3] as const).map((n) => (
+            <Pressable
+              key={n}
+              focusable={Platform.isTV}
+              onPress={() => setFiltroEstrellas(n)}
+              style={{
+                paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+                backgroundColor: filtroEstrellas === n ? theme.colors.gold + '33' : 'transparent',
+                borderWidth: 1, borderColor: filtroEstrellas === n ? theme.colors.gold : theme.colors.border,
+              }}
+            >
+              <Text style={{ color: filtroEstrellas === n ? theme.colors.gold : theme.colors.textDim, fontSize: 12, fontWeight: '700' }}>
+                {n === 0 ? 'Todos' : '★'.repeat(n)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      <FlatList style={{ flex: 1 }} data={
+        results.filter(it => {
+          if (it.kind === 'playlist' || it.kind === 'album') {
+            // No filtrar playlists por filtroEstrellas de canciones
+            return true;
+          }
+          if (filtroEstrellas > 0 && getRating(it.id) < filtroEstrellas) return false;
+          return true;
+        })
+      } keyExtractor={(it) => it.id} contentContainerStyle={{ paddingBottom: actual ? 90 : 24 }}
         renderItem={({ item, index }) => {
           const esPlaylist = item.kind === 'playlist' || item.kind === 'album';
           const esCargando = cargandoPlaylistId === item.id;

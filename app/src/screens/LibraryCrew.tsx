@@ -92,6 +92,7 @@ export default function LibraryCrew() {
   const [reproduciendo, setReproduciendo] = useState(false);
   const { getRating, setRating } = useRatings();
   const [calificandoTrack, setCalificandoTrack] = useState<CrewTrack | null>(null);
+  const [filtroEstrellas, setFiltroEstrellas] = useState<0|1|2|3>(0);
 
   // Sub-tabs de Library Crew: 'tracks' o 'playlists'
   const [activeTab, setActiveTab] = useState<'tracks' | 'playlists'>('tracks');
@@ -502,6 +503,11 @@ export default function LibraryCrew() {
       return true;
     });
   }, [tracks, checkSoyUploader, trackIdsEnPlaylistsPublicas, trackIdsEnCualquierPlaylist, trackFilter, searchQuery]);
+
+  const tracksConFiltroEstrellas = useMemo(() => {
+    if (filtroEstrellas === 0) return visibleTracks;
+    return visibleTracks.filter(t => getRating(t.id) >= filtroEstrellas);
+  }, [visibleTracks, filtroEstrellas, getRating]);
 
   // Conteo de tracks del usuario que están ocultos (sin playlist)
   const misTracksOcultosCount = useMemo(() => {
@@ -1155,6 +1161,27 @@ export default function LibraryCrew() {
             ) : null}
           </View>
 
+          {/* Filtro por calificación de estrellas */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, marginVertical: 6 }}>
+            <Text style={{ color: theme.colors.textDim, fontSize: 11, fontWeight: '600' }}>★ Filtrar:</Text>
+            {([0, 1, 2, 3] as const).map((n) => (
+              <Pressable
+                key={n}
+                focusable={Platform.isTV}
+                onPress={() => setFiltroEstrellas(n)}
+                style={{
+                  paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+                  backgroundColor: filtroEstrellas === n ? theme.colors.gold + '33' : 'transparent',
+                  borderWidth: 1, borderColor: filtroEstrellas === n ? theme.colors.gold : theme.colors.border,
+                }}
+              >
+                <Text style={{ color: filtroEstrellas === n ? theme.colors.gold : theme.colors.textDim, fontSize: 12, fontWeight: '700' }}>
+                  {n === 0 ? 'Todos' : '★'.repeat(n)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
           {/* Banner de Ayuda: Tracks sin playlist permanecen ocultos */}
           {misTracksOcultosCount > 0 && trackFilter !== 'hidden' ? (
             <Pressable
@@ -1198,7 +1225,7 @@ export default function LibraryCrew() {
             </View>
           ) : (
             <FlatList
-              data={visibleTracks}
+              data={tracksConFiltroEstrellas}
               keyExtractor={t => t.id}
               renderItem={renderTrack}
               keyboardShouldPersistTaps="handled"

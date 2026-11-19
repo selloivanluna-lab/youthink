@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config';
 
-const STORAGE_KEY = 'qp_song_ratings';
+const STORAGE_KEY = 'qp_song_ratings_3s';
 const ANON_KEY = SUPABASE_ANON_KEY || 'sb_publishable_BeiQBv-HywDeWRd_ydBx_g_K1ZbCRV4';
 const BASE_URL = SUPABASE_URL || 'https://prixtmnilittshdegrxq.supabase.co';
 
@@ -133,7 +133,7 @@ export const ratingsStore = {
 
     const current = currentRatings[key] || 0;
     // Si presiona la misma estrella, se desmarca (0 estrellas)
-    const newRating = current === stars ? 0 : Math.max(1, Math.min(5, stars));
+    const newRating = current === stars ? 0 : Math.max(1, Math.min(3, stars));
 
     if (newRating === 0) {
       delete currentRatings[key];
